@@ -11,13 +11,13 @@ M1 provides the executable API foundation and PostgreSQL Identity & Access schem
 
 ```bash
 cp .env.example .env
-docker compose up -d db
+docker compose up -d postgres
 bun install --frozen-lockfile
 bun run db:migrate
 bun run dev
 ```
 
-Compose publishes PostgreSQL on host port `5433` to avoid colliding with a conventional local PostgreSQL on `5432`; containers use `db:5432` internally.
+Compose publishes PostgreSQL on host port `5433` to avoid colliding with a conventional local PostgreSQL on `5432`; containers use `postgres:5432` internally. `docker compose up -d` runs the one-shot `migrate` service after PostgreSQL is healthy and starts the API only after migration success.
 
 The local API is available at:
 
@@ -36,14 +36,20 @@ Liveness is process-only. Readiness performs `select 1` against PostgreSQL and r
 | `bun run start` | Run the production bundle |
 | `bun run build` | Build to `dist/` with Bun |
 | `bun run typecheck` | Strict TypeScript check |
-| `bun test` | Unit tests |
+| `bun test` / `bun run test:unit` | Unit tests; PostgreSQL is not required |
 | `bun run test:integration` | Real temporary-PostgreSQL integration tests |
 | `bun run db:generate` | Generate deterministic SQL migrations from Drizzle schema |
 | `bun run db:migrate` | Apply generated migrations from source |
 | `bun run db:migrate:prod` | Apply generated migrations from the production bundle |
 | `bun run db:check` | Check Drizzle migration snapshot consistency |
 
-Integration tests require `TEST_ADMIN_DATABASE_URL` or `DATABASE_URL` pointing to a non-production PostgreSQL database whose user can create/drop temporary databases. Each test run creates only a randomly named `pip_pip_v3_test_*` database and removes it afterward.
+Integration tests require an explicit `TEST_ADMIN_DATABASE_URL` pointing to local/Compose PostgreSQL whose user can create/drop databases:
+
+```bash
+TEST_ADMIN_DATABASE_URL=postgresql://pip_pip_dev:pip_pip_dev_only@localhost:5433/pip_pip_v3 bun run test:integration
+```
+
+The test runner refuses non-local hosts and production-looking database names. Each run creates only a cryptographically random `pip_pip_v3_test_*` database, applies the full migration history, and removes that isolated database afterward. It never falls back to the application `DATABASE_URL`.
 
 ## Configuration
 
@@ -71,6 +77,11 @@ All variables are startup-validated:
 - Driver `ACTIVE` status requires a photo object key.
 - A partial unique index permits only one unrevoked driver-app session per account. The future login transaction must revoke the old device before inserting its replacement.
 - The final-active-SUPER_ADMIN rule and ADMIN city-scope/role consistency require atomic service/database enforcement in a later milestone; M1 stores the necessary assignments/scopes but does not implement those workflows.
+- PostgreSQL email uniqueness is applied to required `email_normalized` values. The display/original email is not unique; PostgreSQL's multiple-NULL behavior is irrelevant because normalized email is non-null on every email row.
+
+## Request IDs
+
+`X-Request-Id` may contain 1–128 ASCII letters, digits, `.`, `_`, `:`, or `-`, and must start with a letter or digit. Missing or invalid values are replaced with a cryptographically random UUID. The same constrained textual representation is returned in the response header, used in structured logs, and stored as `audit_logs.request_correlation_id`; user-controlled values are never logged unbounded.
 
 ## Sensitive data and audit metadata
 

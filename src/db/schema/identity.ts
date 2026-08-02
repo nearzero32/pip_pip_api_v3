@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -13,6 +14,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  varchar,
 } from "drizzle-orm/pg-core";
 
 const instant = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
@@ -115,6 +117,7 @@ export const passwordResetTokens = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     accountId: uuid("account_id").notNull().references(() => accounts.id),
+    passwordCredentialId: uuid("password_credential_id").notNull().references(() => passwordCredentials.id),
     tokenVerifier: text("token_verifier").notNull().unique(),
     verifierKeyVersion: text("verifier_key_version"),
     expiresAt: instant("expires_at").notNull(),
@@ -125,6 +128,7 @@ export const passwordResetTokens = pgTable(
   },
   (table) => [
     index("password_reset_account_requested_idx").on(table.accountId, table.requestedAt),
+    index("password_reset_credential_requested_idx").on(table.passwordCredentialId, table.requestedAt),
     index("password_reset_expires_idx").on(table.expiresAt),
     check("password_reset_expiry_window_chk", sql`${table.expiresAt} = ${table.requestedAt} + interval '15 minutes'`),
   ],
@@ -182,12 +186,21 @@ export const staffProfiles = pgTable(
     status: staffProfileStatus("status").notNull().default("INVITED"),
     displayName: text("display_name"),
     employeeReference: text("employee_reference").unique(),
+    invitedByStaffId: uuid("invited_by_staff_id"),
     statusReasonCode: text("status_reason_code"),
     statusChangedAt: instant("status_changed_at").notNull().defaultNow(),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
-  (table) => [index("staff_profiles_status_idx").on(table.status)],
+  (table) => [
+    foreignKey({
+      name: "staff_profiles_invited_by_staff_id_fk",
+      columns: [table.invitedByStaffId],
+      foreignColumns: [table.id],
+    }),
+    index("staff_profiles_status_idx").on(table.status),
+    index("staff_profiles_invited_by_idx").on(table.invitedByStaffId),
+  ],
 );
 
 export const driverApplications = pgTable(
@@ -420,11 +433,19 @@ export const sessionRefreshTokens = pgTable(
     issuedAt: instant("issued_at").notNull().defaultNow(),
     rotatedAt: instant("rotated_at"),
     revokedAt: instant("revoked_at"),
+    replacedById: uuid("replaced_by_id"),
   },
   (table) => [
+    foreignKey({
+      name: "session_refresh_tokens_replaced_by_id_fk",
+      columns: [table.replacedById],
+      foreignColumns: [table.id],
+    }),
     uniqueIndex("session_refresh_generation_uidx").on(table.sessionId, table.generation),
     uniqueIndex("session_refresh_current_uidx").on(table.sessionId).where(sql`${table.rotatedAt} is null and ${table.revokedAt} is null`),
+    uniqueIndex("session_refresh_replaced_by_uidx").on(table.replacedById).where(sql`${table.replacedById} is not null`),
     check("session_refresh_generation_nonnegative_chk", sql`${table.generation} >= 0`),
+    check("session_refresh_replacement_state_chk", sql`${table.replacedById} is null or ${table.rotatedAt} is not null`),
   ],
 );
 
@@ -451,10 +472,17 @@ export const otpChallenges = pgTable(
     createdAt: instant("created_at").notNull().defaultNow(),
   },
   (table) => [
+    foreignKey({
+      name: "otp_challenges_replacement_challenge_id_fk",
+      columns: [table.replacementChallengeId],
+      foreignColumns: [table.id],
+    }),
     uniqueIndex("otp_current_phone_purpose_uidx").on(table.phoneE164, table.purpose).where(sql`${table.consumedAt} is null and ${table.invalidatedAt} is null`),
     index("otp_phone_purpose_created_idx").on(table.phoneE164, table.purpose, table.createdAt),
     index("otp_account_created_idx").on(table.accountId, table.createdAt),
     index("otp_expires_idx").on(table.expiresAt),
+    index("otp_replacement_challenge_idx").on(table.replacementChallengeId),
+    index("otp_resulting_session_idx").on(table.resultingSessionId),
     check("otp_phone_e164_format_chk", sql`${table.phoneE164} ~ '^\\+[1-9][0-9]{1,14}$'`),
     check("otp_attempts_chk", sql`${table.maxAttempts} = 5 and ${table.attemptCount} between 0 and ${table.maxAttempts}`),
     check("otp_expiry_window_chk", sql`${table.expiresAt} = ${table.createdAt} + interval '5 minutes'`),
@@ -474,7 +502,7 @@ export const auditLogs = pgTable(
     targetId: text("target_id"),
     outcome: auditOutcome("outcome").notNull(),
     reasonCode: text("reason_code"),
-    requestCorrelationId: text("request_correlation_id"),
+    requestCorrelationId: varchar("request_correlation_id", { length: 128 }),
     ipAddressCoarse: text("ip_address_coarse"),
     userAgentSummary: text("user_agent_summary"),
     redactedMetadata: jsonb("redacted_metadata").$type<Record<string, unknown>>().notNull().default({}),
@@ -485,5 +513,7 @@ export const auditLogs = pgTable(
     index("audit_logs_target_occurred_idx").on(table.targetType, table.targetId, table.occurredAt),
     index("audit_logs_event_occurred_idx").on(table.eventType, table.occurredAt),
     index("audit_logs_correlation_idx").on(table.requestCorrelationId),
+    index("audit_logs_actor_session_occurred_idx").on(table.actorSessionId, table.occurredAt),
+    check("audit_logs_request_id_format_chk", sql`${table.requestCorrelationId} is null or ${table.requestCorrelationId} ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'`),
   ],
 );

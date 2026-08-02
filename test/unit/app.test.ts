@@ -38,8 +38,10 @@ describe("API foundation", () => {
     const app = appWith();
     const absent = await app.handle(new Request("http://localhost/health/live"));
     const invalid = await app.handle(new Request("http://localhost/health/live", { headers: { "x-request-id": "invalid request id" } }));
+    const tooLong = await app.handle(new Request("http://localhost/health/live", { headers: { "x-request-id": `a${"b".repeat(128)}` } }));
     expect(absent.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
     expect(invalid.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+    expect(tooLong.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   test("returns a safe unexpected-error response", async () => {

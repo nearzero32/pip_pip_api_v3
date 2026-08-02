@@ -5,28 +5,39 @@ import { migrate } from "drizzle-orm/bun-sql/migrator";
 import { createApp } from "../../src/app";
 import { silentLogger } from "../../src/observability/logger";
 
-const adminUrl = process.env.TEST_ADMIN_DATABASE_URL ?? process.env.DATABASE_URL;
-const run = adminUrl ? describe : describe.skip;
+const adminUrl = process.env.TEST_ADMIN_DATABASE_URL;
 
-async function expectDatabaseRejection(operation: PromiseLike<unknown>): Promise<void> {
-  try {
-    await operation;
-    throw new Error("Expected PostgreSQL to reject the operation");
-  } catch (error) {
-    expect(error).toBeInstanceOf(Error);
-  }
+function validateTestAdminUrl(raw: string | undefined): string {
+  if (!raw) throw new Error("TEST_ADMIN_DATABASE_URL is required for integration tests");
+  const url = new URL(raw);
+  if (!new Set(["postgres:", "postgresql:"]).has(url.protocol)) throw new Error("TEST_ADMIN_DATABASE_URL must be PostgreSQL");
+  if (!["localhost", "127.0.0.1", "db"].includes(url.hostname)) throw new Error("Integration tests may only use a local or Compose PostgreSQL host");
+  if (/prod|production/i.test(url.pathname)) throw new Error("Integration tests refuse production-looking database names");
+  return raw;
 }
 
-run("PostgreSQL identity foundation", () => {
+const validatedAdminUrl = validateTestAdminUrl(adminUrl);
+
+async function expectDatabaseRejection(operation: PromiseLike<unknown>): Promise<void> {
+  let rejected = false;
+  try {
+    await operation;
+  } catch (error) {
+    rejected = true;
+    expect(error).toBeInstanceOf(Error);
+  }
+  expect(rejected).toBeTrue();
+}
+
+describe("PostgreSQL identity foundation", () => {
   const databaseName = `pip_pip_v3_test_${crypto.randomUUID().replaceAll("-", "")}`;
   let admin: SQL;
   let client: SQL;
 
   beforeAll(async () => {
-    if (!adminUrl) throw new Error("TEST_ADMIN_DATABASE_URL or DATABASE_URL is required");
-    admin = new SQL(adminUrl, { max: 1 });
+    admin = new SQL(validatedAdminUrl, { max: 1 });
     await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
-    const url = new URL(adminUrl);
+    const url = new URL(validatedAdminUrl);
     url.pathname = `/${databaseName}`;
     client = new SQL(url.toString(), { max: 5 });
     await migrate(drizzle({ client }), { migrationsFolder: "./drizzle" });
@@ -101,5 +112,40 @@ run("PostgreSQL identity foundation", () => {
     const missing = crypto.randomUUID();
     await expectDatabaseRejection(client`insert into customer_profiles (account_id) values (${missing})`);
     await expectDatabaseRejection(client`insert into driver_applications (account_id) values (${missing})`);
+  });
+
+  test("enforces every invalid driver document type and side combination", async () => {
+    const [owner] = await client<{ id: string }[]>`insert into accounts default values returning id`;
+    const [application] = await client<{ id: string }[]>`insert into driver_applications (account_id) values (${owner!.id}) returning id`;
+    for (const [type, side] of [["CONTRACT", "FRONT"], ["NATIONAL_ID", "SINGLE"], ["RESIDENCE_CARD", "SINGLE"]] as const) {
+      await expectDatabaseRejection(client.unsafe(
+        "insert into driver_application_documents (driver_application_id, application_version, document_type, side, object_key, uploaded_by_account_id) values ($1, 1, $2, $3, $4, $5)",
+        [application!.id, type, side, `driver-documents/invalid-${type}-${side}`, owner!.id],
+      ));
+    }
+  });
+
+  test("enforces invitation, refresh replacement, OTP replacement, and password credential foreign keys", async () => {
+    const missing = crypto.randomUUID();
+    const [account] = await client<{ id: string }[]>`insert into accounts default values returning id`;
+    await expectDatabaseRejection(client`insert into staff_profiles (account_id, invited_by_staff_id) values (${account!.id}, ${missing})`);
+    await expectDatabaseRejection(client`insert into password_reset_tokens (account_id, password_credential_id, token_verifier, expires_at) values (${account!.id}, ${missing}, 'reset-verifier', now() + interval '15 minutes')`);
+    await expectDatabaseRejection(client`insert into otp_challenges (purpose, application_type, phone_e164, otp_keyed_verifier, verifier_key_version, expires_at, resend_available_at, replacement_challenge_id) values ('LOGIN', 'CUSTOMER_APP', '+9647700000001', 'otp-verifier', 'v1', now() + interval '5 minutes', now() + interval '60 seconds', ${missing})`);
+    const [session] = await client<{ id: string }[]>`insert into sessions (account_id, application_type, authentication_method, device_name, absolute_expires_at) values (${account!.id}, 'CUSTOMER_APP', 'PHONE_OTP', 'test device', now() + interval '1 day') returning id`;
+    await expectDatabaseRejection(client`insert into session_refresh_tokens (session_id, generation, token_verifier, rotated_at, replaced_by_id) values (${session!.id}, 0, 'refresh-verifier', now(), ${missing})`);
+  });
+
+  test("identity history does not cascade when an account deletion is attempted", async () => {
+    const [account] = await client<{ id: string }[]>`insert into accounts default values returning id`;
+    await client`insert into customer_profiles (account_id) values (${account!.id})`;
+    await expectDatabaseRejection(client`delete from accounts where id = ${account!.id}`);
+    expect(Number((await client<{ count: string }[]>`select count(*)::text as count from customer_profiles where account_id = ${account!.id}`)[0]!.count)).toBe(1);
+  });
+
+  test("stores constrained textual API request IDs in audit logs", async () => {
+    const requestId = "edge-gateway:request_2026.08.02";
+    await client`insert into audit_logs (event_type, outcome, request_correlation_id) values ('TEST_EVENT', 'SUCCESS', ${requestId})`;
+    expect((await client<{ request_id: string }[]>`select request_correlation_id as request_id from audit_logs where request_correlation_id = ${requestId}`)[0]?.request_id).toBe(requestId);
+    await expectDatabaseRejection(client`insert into audit_logs (event_type, outcome, request_correlation_id) values ('TEST_EVENT', 'SUCCESS', 'unsafe request id')`);
   });
 });
