@@ -1,0 +1,6 @@
+DROP INDEX "driver_documents_slot_uidx";--> statement-breakpoint
+CREATE UNIQUE INDEX "driver_documents_current_slot_uidx" ON "driver_application_documents" USING btree ("driver_application_id","application_version","document_type","side") WHERE "driver_application_documents"."invalidated_at" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "otp_current_phone_purpose_uidx" ON "otp_challenges" USING btree ("phone_e164","purpose") WHERE "otp_challenges"."consumed_at" is null and "otp_challenges"."invalidated_at" is null;--> statement-breakpoint
+ALTER TABLE "password_reset_tokens" ADD CONSTRAINT "password_reset_expiry_window_chk" CHECK ("password_reset_tokens"."expires_at" = "password_reset_tokens"."requested_at" + interval '15 minutes');--> statement-breakpoint
+ALTER TABLE "sessions" ADD CONSTRAINT "sessions_max_lifetime_chk" CHECK ("sessions"."absolute_expires_at" <= "sessions"."created_at" + interval '30 days');--> statement-breakpoint
+ALTER TABLE "sessions" ADD CONSTRAINT "sessions_auth_method_chk" CHECK (("sessions"."application_type" = 'DASHBOARD' and "sessions"."authentication_method" = 'PASSWORD_TOTP') or ("sessions"."application_type" in ('CUSTOMER_APP', 'DRIVER_APP') and "sessions"."authentication_method" = 'PHONE_OTP'));
