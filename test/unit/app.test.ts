@@ -93,6 +93,8 @@ describe("API foundation", () => {
     expect(document.paths["/api/v1/mobile/customer/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
     expect(document.paths["/api/v1/mobile/driver/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
     expect(document.paths["/api/v1/dashboard/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
+    const openApiText=JSON.stringify(document);
+    for(const field of ["appType","applicationType","application","audience","clientType"]) expect(openApiText.includes(`\"${field}\"`)).toBeFalse();
   });
 
   test("returns a stable safe validation error", async () => {

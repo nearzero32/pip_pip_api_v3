@@ -57,6 +57,9 @@ export function createApp(dependencies: AppDependencies) {
       if (code === "VALIDATION") {
         return status(422, { error: { code: "VALIDATION_FAILED", message: "The request is invalid" }, request_id: requestId });
       }
+      if (code === "PARSE") {
+        return status(422, { error: { code: "VALIDATION_FAILED", message: "The request is invalid" }, request_id: requestId });
+      }
       dependencies.logger.error({ event: "unexpected_error", path, request_id: requestId, error_name: error instanceof Error ? error.name : "UnknownError" });
       return status(500, {
         error: { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred" },
