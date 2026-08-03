@@ -6,11 +6,14 @@ import type { Logger } from "./observability/logger";
 import { resolveRequestId } from "./shared/request-id";
 import type { AuthModule } from "./modules/auth/auth-module";
 import { authRoutes } from "./modules/auth/routes";
+import type { GeographyService } from "./modules/geography/service";
+import { geographyRoutes } from "./modules/geography/routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
   production: boolean;
   authModule?: AuthModule;
+  geographyService?: GeographyService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -25,6 +28,10 @@ export function createApp(dependencies: AppDependencies) {
           { name: "Mobile — Customer Authentication", description: "Customer phone OTP authentication" },
           { name: "Mobile — Driver Authentication", description: "Driver phone and numeric access-code authentication" },
           { name: "Dashboard — Authentication", description: "Dashboard email and password authentication" },
+          { name: "Dashboard — Governorates", description: "Governorate administration" },
+          { name: "Dashboard — Cities", description: "City administration" },
+          { name: "Mobile — Customer Cities", description: "Active cities for Customer Mobile" },
+          { name: "Mobile — Driver Cities", description: "Active cities for Driver Mobile" },
         ],
         components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } } },
       },
@@ -67,5 +74,6 @@ export function createApp(dependencies: AppDependencies) {
       });
     })
     .use(healthRoutes(dependencies))
-    .use(dependencies.authModule ? authRoutes(dependencies.authModule) : new Elysia());
+    .use(dependencies.authModule ? authRoutes(dependencies.authModule) : new Elysia())
+    .use(dependencies.authModule && dependencies.geographyService ? geographyRoutes(dependencies.authModule, dependencies.geographyService) : new Elysia());
 }

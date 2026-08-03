@@ -1,0 +1,18 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { SQL } from "bun";
+import { applyMigrations } from "../../src/db/migration-runner";
+
+const adminUrl=process.env.TEST_ADMIN_DATABASE_URL;
+if(!adminUrl)throw new Error("TEST_ADMIN_DATABASE_URL is required");
+const parsed=new URL(adminUrl);
+if(!["localhost","127.0.0.1"].includes(parsed.hostname)||/prod/i.test(parsed.pathname))throw new Error("Unsafe integration database");
+
+describe("M3-A governorates and cities",()=>{
+  const databaseName=`pip_pip_v3_geo_${crypto.randomUUID().replaceAll("-","")}`;let admin:SQL,db:SQL;const governorateId="22222222-2222-4222-8222-000000000001";
+  beforeAll(async()=>{admin=new SQL(adminUrl!,{max:1});await admin.unsafe(`create database "${databaseName}"`);const url=new URL(adminUrl!);url.pathname=`/${databaseName}`;db=new SQL(url.toString(),{max:5});await applyMigrations(db);},30000);
+  afterAll(async()=>{await db?.close();await admin?.unsafe(`drop database if exists "${databaseName}" with(force)`);await admin?.close();});
+  test("has the M3-A schema without code, visibility, or geographic fields",async()=>{const rows=await db<{table_name:string;column_name:string}[]>`select table_name,column_name from information_schema.columns where table_name in ('governorates','cities')`;expect(rows.filter(x=>x.table_name==='governorates').map(x=>x.column_name)).toEqual(expect.arrayContaining(["id","name_ar","name_en","status","display_order","created_at","updated_at"]));expect(rows.some(x=>["code","slug","is_visible","is_display","boundary","polygon","geometry","zone_id"].includes(x.column_name))).toBeFalse();});
+  test("stable governorate seed pattern is idempotent and preserves management changes",async()=>{await db`insert into governorates(id,name_ar,name_en,status,display_order) values(${governorateId},'بغداد','Baghdad','ACTIVE',1) on conflict(id) do nothing`;await db`update governorates set status='INACTIVE',display_order=99 where id=${governorateId}`;await db`insert into governorates(id,name_ar,name_en,status,display_order) values(${governorateId},'بغداد','Baghdad','ACTIVE',1) on conflict(id) do nothing`;const[row]=await db<{status:string;display_order:number}[]>`select status,display_order from governorates where id=${governorateId}`;expect(row).toEqual({status:"INACTIVE",display_order:99});});
+  test("city defaults to DRAFT and governorate suspension does not mutate city status",async()=>{const[city]=await db<{id:string;status:string}[]>`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,display_order) values(${governorateId},'مدينة اختبار','Test City',33.3152,44.3661,1) returning id,status`;expect(city!.status).toBe("DRAFT");await db`update cities set status='ACTIVE' where id=${city!.id}`;await db`update governorates set status='INACTIVE' where id=${governorateId}`;const[row]=await db<{status:string;governorate_status:string}[]>`select c.status,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where c.id=${city!.id}`;expect(row).toEqual({status:"ACTIVE",governorate_status:"INACTIVE"});});
+  test("database rejects invalid coordinates and negative display order",async()=>{for(const operation of [db`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,display_order) values(${governorateId},'x','x',91,0,0)`,db`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,display_order) values(${governorateId},'x','x',0,0,-1)`]){let rejected=false;try{await operation;}catch(error){rejected=true;expect(error).toBeInstanceOf(Error);}expect(rejected).toBeTrue();}});
+});

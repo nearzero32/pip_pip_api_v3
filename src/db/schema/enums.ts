@@ -28,3 +28,5 @@ export const mfaCredentialStatus = pgEnum("mfa_credential_status", ["PENDING", "
 export const applicationType = pgEnum("application_type", ["CUSTOMER_APP", "DRIVER_APP", "DASHBOARD"]);
 export const authenticationMethod = pgEnum("authentication_method", ["PHONE_OTP", "PASSWORD_TOTP", "PASSWORD", "DRIVER_ACCESS_CODE"]);
 export const auditOutcome = pgEnum("audit_outcome", ["SUCCESS", "FAILURE", "DENIED"]);
+export const governorateStatus = pgEnum("governorate_status", ["ACTIVE", "INACTIVE"]);
+export const cityStatus = pgEnum("city_status", ["DRAFT", "ACTIVE", "SUSPENDED", "ARCHIVED"]);

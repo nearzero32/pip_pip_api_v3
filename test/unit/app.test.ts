@@ -3,6 +3,7 @@ import { createApp } from "../../src/app";
 import { silentLogger } from "../../src/observability/logger";
 import type { AuthModule } from "../../src/modules/auth/auth-module";
 import { AppError } from "../../src/errors/app-error";
+import type { GeographyService } from "../../src/modules/geography/service";
 
 function appWith(readinessCheck: () => Promise<void> = async () => undefined) {
   return createApp({ logger: silentLogger, production: false, readinessCheck });
@@ -75,6 +76,14 @@ describe("API foundation", () => {
     const document = await response.json() as { info: { title: string }; paths: Record<string, unknown> };
     expect(document.info.title).toBe("pip_pip_api_v3");
     expect(document.paths["/health/live"]).toBeDefined();
+  });
+
+  test("registers M3-A geography routes without prohibited request fields", async () => {
+    const app=createApp({logger:silentLogger,production:false,readinessCheck:async()=>undefined,authModule:fakeModule(),geographyService:{} as GeographyService});
+    const document=await (await app.handle(new Request("http://localhost/openapi/json"))).json() as {paths:Record<string,unknown>};
+    for(const path of ["/api/v1/dashboard/governorates","/api/v1/dashboard/governorates/{governorateId}","/api/v1/dashboard/cities","/api/v1/dashboard/cities/{cityId}","/api/v1/dashboard/cities/{cityId}/activate","/api/v1/dashboard/cities/{cityId}/suspend","/api/v1/dashboard/cities/{cityId}/archive","/api/v1/mobile/customer/cities","/api/v1/mobile/driver/cities"]) expect(document.paths[path]).toBeDefined();
+    const geographyText=JSON.stringify(Object.fromEntries(Object.entries(document.paths).filter(([path])=>path.includes("governorates")||path.includes("cities")).map(([path,operations])=>[path,Object.fromEntries(Object.entries(operations as Record<string,unknown>).map(([method,operation])=>[method,{requestBody:(operation as {requestBody?:unknown}).requestBody,parameters:(operation as {parameters?:unknown}).parameters}]))])));
+    for(const field of ["code","slug","isVisible","isDisplay","boundary","polygon","geometry","zoneId"]) expect(geographyText.includes(`\"${field}\"`)).toBeFalse();
   });
 
   test("registers every application route under /api/v1 with no unprefixed aliases", async () => {

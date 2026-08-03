@@ -59,6 +59,19 @@ Dashboard (`DASHBOARD`, audience `dashboard`, maximum three sessions):
 
 Driver login accepts a normalized phone and an ASCII-digit string `code` of 6–12 characters. Leading zeroes are significant. The nullable legacy-upgrade field stores only its Argon2id hash; Drivers without a hash fail with the same public error as unknown phones and wrong codes. Driver OTP and Driver `logout-all` do not exist.
 
+### M3-A Governorates and Cities
+
+Dashboard administration is available under `/api/v1/dashboard` for authenticated staff. Governorate mutation and all City mutations require `SUPER_ADMIN`; Governorates have no CRUD create/delete routes. Cities use `DRAFT`, `ACTIVE`, `SUSPENDED`, and terminal `ARCHIVED` states. Mobile Customer and Driver city reads are audience-bound and return only ACTIVE Cities whose Governorate is ACTIVE.
+
+The reference Governorate seed is idempotent and preserves later administrator changes:
+
+```bash
+bun run db:migrate
+bun run db:seed
+```
+
+No Governorate or City has a code, slug, visibility Boolean, Zone, boundary, geometry, or PostGIS field.
+
 The development OTP adapter never returns or logs an OTP. Automated tests inject a capture-only adapter. No production SMS adapter is included, so production startup intentionally rejects the unsafe development/test adapters.
 
 Liveness is process-only. Readiness checks PostgreSQL and Redis independently and returns `503` with a non-sensitive component status when either dependency is unavailable.
@@ -76,6 +89,8 @@ Liveness is process-only. Readiness checks PostgreSQL and Redis independently an
 | `bun run db:generate` | Generate deterministic SQL migrations from Drizzle schema |
 | `bun run db:migrate` | Apply generated migrations from source |
 | `bun run db:migrate:prod` | Apply generated migrations from the production bundle |
+| `bun run db:seed` | Idempotently insert the 18 initial Iraqi Governorates |
+| `bun run db:seed:prod` | Run the Governorate seed from the production bundle |
 | `bun run db:check` | Check Drizzle migration snapshot consistency |
 
 Integration tests require explicit local PostgreSQL and Redis URLs:

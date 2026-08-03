@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun dist/index.js",
-    "build": "bun build src/index.ts src/db/migrate.ts --outdir dist --target bun --minify",
+    "build": "bun build src/index.ts src/db/migrate.ts src/db/seed.ts --outdir dist --target bun --minify",
     "typecheck": "tsc --noEmit",
     "test": "bun test test/unit",
     "test:unit": "bun test test/unit",
@@ -17,6 +17,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun src/db/migrate.ts",
     "db:migrate:prod": "bun dist/db/migrate.js",
+    "db:seed": "bun src/db/seed.ts",
+    "db:seed:prod": "bun dist/db/seed.js",
     "db:check": "drizzle-kit check"
   },
   "dependencies": {

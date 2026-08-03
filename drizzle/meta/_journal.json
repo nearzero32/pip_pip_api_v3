@@ -57,6 +57,13 @@
       "when": 1785723926841,
       "tag": "0007_driver_access_code_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785740786146,
+      "tag": "0008_simple_nehzno",
+      "breakpoints": true
     }
   ]
 }
