@@ -44,22 +44,21 @@ const cityDto = t.Object({
   archivedAt: t.Nullable(dateSchema),
   governorate: govSummary,
 });
-const mobileGov = t.Object({
+const publicGov = t.Object({
   id: t.String({ format: "uuid" }),
   nameAr: t.String(),
   nameEn: t.String(),
 });
-const mobileCity = t.Object({
+const publicCity = t.Object({
   id: t.String({ format: "uuid" }),
   nameAr: t.String(),
   nameEn: t.String(),
-  latitude: t.Number(),
-  longitude: t.Number(),
-  displayOrder: t.Integer(),
-  governorate: mobileGov,
+  latitude: t.Union([t.Number(), t.Null()]),
+  longitude: t.Union([t.Number(), t.Null()]),
+  governorate: publicGov,
 });
 const cityResponse = paginated(cityDto);
-const mobileCityResponse = paginated(mobileCity);
+const publicCityResponse = paginated(publicCity);
 const cityCreateErrors = { ...standardErrors, 403: errorResponse };
 const cityTransitionErrors = {
   ...standardErrors,
@@ -67,7 +66,7 @@ const cityTransitionErrors = {
   404: errorResponse,
   409: errorResponse,
 };
-const publicMobileListErrors = {
+const publicListErrors = {
   422: errorResponse,
   500: errorResponse,
   503: errorResponse,
@@ -254,8 +253,8 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
       },
     )
     .get(
-      "/api/v1/mobile/customer/cities",
-      async ({ query }) => service.list({ ...query, mobile: true }),
+      "/api/v1/public/cities",
+      async ({ query }) => service.listPublic(query),
       {
         query: t.Object(
           {
@@ -265,27 +264,14 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
           },
           { additionalProperties: false },
         ),
-        response: { 200: mobileCityResponse, ...publicMobileListErrors },
+        response: { 200: publicCityResponse, ...publicListErrors },
         detail: {
-          tags: ["Mobile — Customer Cities"],
-        },
-      },
-    )
-    .get(
-      "/api/v1/mobile/driver/cities",
-      async ({ query }) => service.list({ ...query, mobile: true }),
-      {
-        query: t.Object(
-          {
-            page: t.Optional(t.Numeric({ minimum: 1 })),
-            limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
-            search: t.Optional(t.String({ maxLength: 100 })),
-          },
-          { additionalProperties: false },
-        ),
-        response: { 200: mobileCityResponse, ...publicMobileListErrors },
-        detail: {
-          tags: ["Mobile — Driver Cities"],
+          tags: ["Public — Geography"],
+          summary: "List active cities for pre-login selection",
+          description:
+            "Returns only ACTIVE cities belonging to ACTIVE governorates. " +
+            "No access token is required. Shared by Customer and Driver apps " +
+            "before login or registration. Administrative status filters are not accepted.",
         },
       },
     );

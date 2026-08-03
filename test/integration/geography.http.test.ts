@@ -567,66 +567,70 @@ describe("M3-A Geography HTTP routes", () => {
     });
   });
 
-  describe("Mobile routes", () => {
+  describe("Public cities", () => {
     let activeVisible = "";
     let draftId = "";
     let suspendedId = "";
     let archivedId = "";
     let inactiveGovCity = "";
+    let orderCityFirst = "";
+    let orderCitySecond = "";
+    let orderCityThird = "";
+    let orderGovB = "";
 
     beforeAll(async () => {
-      const create = async (nameEn: string) => {
+      const create = async (
+        nameEn: string,
+        displayOrder: number,
+        governorateId = seededGovernorateId,
+      ) => {
         const response = await harness.app.handle(
           jsonRequest("/api/v1/dashboard/cities", {
             method: "POST",
             token: superToken,
             body: {
-              governorateId: seededGovernorateId,
+              governorateId,
               nameAr: nameEn,
               nameEn,
               latitude: 33.5,
               longitude: 44.5,
-              displayOrder: 20,
+              displayOrder,
             },
           }),
         );
+        expect(response.status).toBe(200);
         return ((await response.json()) as { id: string }).id;
       };
-      activeVisible = await create("Mobile Active");
-      await harness.app.handle(
-        jsonRequest(`/api/v1/dashboard/cities/${activeVisible}/activate`, {
-          method: "POST",
-          token: superToken,
-        }),
-      );
-      draftId = await create("Mobile Draft");
-      suspendedId = await create("Mobile Suspended");
-      await harness.app.handle(
-        jsonRequest(`/api/v1/dashboard/cities/${suspendedId}/activate`, {
-          method: "POST",
-          token: superToken,
-        }),
-      );
+      const activate = async (id: string) => {
+        const response = await harness.app.handle(
+          jsonRequest(`/api/v1/dashboard/cities/${id}/activate`, {
+            method: "POST",
+            token: superToken,
+          }),
+        );
+        expect(response.status).toBe(200);
+      };
+
+      activeVisible = await create("Public Active", 20);
+      await activate(activeVisible);
+      draftId = await create("Public Draft", 21);
+      suspendedId = await create("Public Suspended", 22);
+      await activate(suspendedId);
       await harness.app.handle(
         jsonRequest(`/api/v1/dashboard/cities/${suspendedId}/suspend`, {
           method: "POST",
           token: superToken,
         }),
       );
-      archivedId = await create("Mobile Archived");
+      archivedId = await create("Public Archived", 23);
       await harness.app.handle(
         jsonRequest(`/api/v1/dashboard/cities/${archivedId}/archive`, {
           method: "POST",
           token: superToken,
         }),
       );
-      inactiveGovCity = await create("Inactive Gov City");
-      await harness.app.handle(
-        jsonRequest(`/api/v1/dashboard/cities/${inactiveGovCity}/activate`, {
-          method: "POST",
-          token: superToken,
-        }),
-      );
+      inactiveGovCity = await create("Inactive Gov City", 24);
+      await activate(inactiveGovCity);
       await harness.app.handle(
         jsonRequest(`/api/v1/dashboard/governorates/${seededGovernorateId}`, {
           method: "PATCH",
@@ -638,6 +642,20 @@ describe("M3-A Geography HTTP routes", () => {
         { status: string }[]
       >`select status from cities where id=${inactiveGovCity}`;
       expect(row!.status).toBe("ACTIVE");
+
+      // Deterministic order fixture:
+      // Gov A (seeded, display_order=1): city Zebra order=2, city Alpha order=2 → Alpha before Zebra by name
+      // Gov B (display_order=0): city Early order=1 → before all Gov A cities
+      const [govB] = await harness.client<
+        { id: string }[]
+      >`insert into governorates(id,name_ar,name_en,status,display_order) values(${crypto.randomUUID()},'محافظة ترتيب','Order Gov B','ACTIVE',0) returning id`;
+      orderGovB = govB!.id;
+      orderCityFirst = await create("Early", 1, orderGovB);
+      await activate(orderCityFirst);
+      orderCityThird = await create("Zebra", 2);
+      await activate(orderCityThird);
+      orderCitySecond = await create("Alpha", 2);
+      await activate(orderCitySecond);
     });
 
     afterAll(async () => {
@@ -650,7 +668,7 @@ describe("M3-A Geography HTTP routes", () => {
       );
     });
 
-    test("Customer and Driver see only ACTIVE cities under ACTIVE governorates", async () => {
+    test("GET /api/v1/public/cities succeeds without a token and needs no Customer/Driver/Dashboard token", async () => {
       await harness.app.handle(
         jsonRequest(`/api/v1/dashboard/governorates/${seededGovernorateId}`, {
           method: "PATCH",
@@ -658,29 +676,75 @@ describe("M3-A Geography HTTP routes", () => {
           body: { status: "ACTIVE" },
         }),
       );
-      for (const path of [
-        "/api/v1/mobile/customer/cities",
-        "/api/v1/mobile/driver/cities",
-      ]) {
-        const response = await harness.app.handle(jsonRequest(path));
+      const bare = await harness.app.handle(
+        jsonRequest("/api/v1/public/cities"),
+      );
+      expect(bare.status).toBe(200);
+
+      const withJunk = await harness.app.handle(
+        new Request("http://localhost/api/v1/public/cities", {
+          headers: {
+            authorization: "Bearer not-a-valid-token",
+            "x-request-id": "public-cities-junk-auth",
+          },
+        }),
+      );
+      expect(withJunk.status).toBe(200);
+
+      for (const token of [customerToken, driverToken, supportToken]) {
+        const response = await harness.app.handle(
+          jsonRequest("/api/v1/public/cities", { token }),
+        );
         expect(response.status).toBe(200);
-        const body = (await response.json()) as {
-          data: Record<string, unknown>[];
-        };
-        const ids = body.data.map((row) => row.id);
-        expect(ids).toContain(activeVisible);
-        expect(ids).not.toContain(draftId);
-        expect(ids).not.toContain(suspendedId);
-        expect(ids).not.toContain(archivedId);
-        for (const row of body.data) {
-          expect(typeof row.latitude).toBe("number");
-          expect(typeof row.longitude).toBe("number");
-          expect(row).not.toHaveProperty("status");
-          expect(row).not.toHaveProperty("archivedAt");
-          expect(row).not.toHaveProperty("governorate_id");
-          expect(row).not.toHaveProperty("name_ar");
-          expect(row).toHaveProperty("governorate");
-        }
+      }
+    });
+
+    test("returns only ACTIVE cities under ACTIVE governorates and excludes draft/suspended/archived/inactive-gov", async () => {
+      await harness.app.handle(
+        jsonRequest(`/api/v1/dashboard/governorates/${seededGovernorateId}`, {
+          method: "PATCH",
+          token: superToken,
+          body: { status: "ACTIVE" },
+        }),
+      );
+      const response = await harness.app.handle(
+        jsonRequest("/api/v1/public/cities?limit=100"),
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: Record<string, unknown>[];
+      };
+      const ids = body.data.map((row) => row.id);
+      expect(ids).toContain(activeVisible);
+      expect(ids).toContain(orderCityFirst);
+      expect(ids).not.toContain(draftId);
+      expect(ids).not.toContain(suspendedId);
+      expect(ids).not.toContain(archivedId);
+
+      for (const row of body.data) {
+        expect(typeof row.latitude === "number" || row.latitude === null).toBe(
+          true,
+        );
+        expect(
+          typeof row.longitude === "number" || row.longitude === null,
+        ).toBe(true);
+        expect(row).not.toHaveProperty("status");
+        expect(row).not.toHaveProperty("archivedAt");
+        expect(row).not.toHaveProperty("createdAt");
+        expect(row).not.toHaveProperty("updatedAt");
+        expect(row).not.toHaveProperty("displayOrder");
+        expect(row).not.toHaveProperty("governorateId");
+        expect(row).not.toHaveProperty("governorate_id");
+        expect(row).not.toHaveProperty("name_ar");
+        expect(row).not.toHaveProperty("name_en");
+        expect(row).not.toHaveProperty("city_display_order");
+        expect(row).not.toHaveProperty("governorate_display_order");
+        expect(row).toHaveProperty("nameAr");
+        expect(row).toHaveProperty("nameEn");
+        expect(row).toHaveProperty("governorate");
+        const gov = row.governorate as Record<string, unknown>;
+        expect(gov).not.toHaveProperty("status");
+        expect(gov).not.toHaveProperty("displayOrder");
       }
 
       await harness.app.handle(
@@ -690,17 +754,23 @@ describe("M3-A Geography HTTP routes", () => {
           body: { status: "INACTIVE" },
         }),
       );
+      const [cityStatus] = await harness.client<
+        { status: string }[]
+      >`select status from cities where id=${inactiveGovCity}`;
+      expect(cityStatus!.status).toBe("ACTIVE");
+
       const hidden = await harness.app.handle(
-        jsonRequest("/api/v1/mobile/customer/cities"),
+        jsonRequest("/api/v1/public/cities?limit=100"),
       );
       const hiddenIds = (
         (await hidden.json()) as { data: { id: string }[] }
       ).data.map((row) => row.id);
       expect(hiddenIds).not.toContain(activeVisible);
       expect(hiddenIds).not.toContain(inactiveGovCity);
+      expect(hiddenIds).toContain(orderCityFirst);
     });
 
-    test("mobile city lists are public and query cannot override visibility", async () => {
+    test("query parameters cannot expose hidden cities", async () => {
       await harness.app.handle(
         jsonRequest(`/api/v1/dashboard/governorates/${seededGovernorateId}`, {
           method: "PATCH",
@@ -708,25 +778,114 @@ describe("M3-A Geography HTTP routes", () => {
           body: { status: "ACTIVE" },
         }),
       );
-      expect(
-        (await harness.app.handle(jsonRequest("/api/v1/mobile/customer/cities")))
-          .status,
-      ).toBe(200);
-      expect(
-        (await harness.app.handle(jsonRequest("/api/v1/mobile/driver/cities")))
-          .status,
-      ).toBe(200);
       const override = await harness.app.handle(
         jsonRequest(
-          "/api/v1/mobile/customer/cities?status=DRAFT&mobile=false",
+          "/api/v1/public/cities?status=DRAFT&status=ARCHIVED&mobile=false&governorateId=00000000-0000-4000-8000-000000000099",
         ),
       );
-      expect(override.status).toBe(200);
-      const overrideIds = (
-        (await override.json()) as { data: { id: string; nameEn?: string }[] }
+      // Unknown query keys are rejected by additionalProperties:false → 422,
+      // or if coerced away still must not leak drafts.
+      expect([200, 422]).toContain(override.status);
+      if (override.status === 200) {
+        const overrideIds = (
+          (await override.json()) as { data: { id: string }[] }
+        ).data.map((row) => row.id);
+        expect(overrideIds).not.toContain(draftId);
+        expect(overrideIds).not.toContain(archivedId);
+        expect(overrideIds).toContain(activeVisible);
+      }
+
+      const searchDraft = await harness.app.handle(
+        jsonRequest("/api/v1/public/cities?search=Public%20Draft&limit=100"),
+      );
+      expect(searchDraft.status).toBe(200);
+      const searchIds = (
+        (await searchDraft.json()) as { data: { id: string }[] }
       ).data.map((row) => row.id);
-      expect(overrideIds).not.toContain(draftId);
-      expect(overrideIds).toContain(activeVisible);
+      expect(searchIds).not.toContain(draftId);
+    });
+
+    test("enforces deterministic ordering by governorate displayOrder, city displayOrder, nameEn, id", async () => {
+      await harness.app.handle(
+        jsonRequest(`/api/v1/dashboard/governorates/${seededGovernorateId}`, {
+          method: "PATCH",
+          token: superToken,
+          body: { status: "ACTIVE" },
+        }),
+      );
+      const response = await harness.app.handle(
+        jsonRequest("/api/v1/public/cities?limit=100"),
+      );
+      const ids = (
+        (await response.json()) as { data: { id: string }[] }
+      ).data.map((row) => row.id);
+      const iFirst = ids.indexOf(orderCityFirst);
+      const iSecond = ids.indexOf(orderCitySecond);
+      const iThird = ids.indexOf(orderCityThird);
+      expect(iFirst).toBeGreaterThanOrEqual(0);
+      expect(iSecond).toBeGreaterThanOrEqual(0);
+      expect(iThird).toBeGreaterThanOrEqual(0);
+      expect(iFirst).toBeLessThan(iSecond);
+      expect(iSecond).toBeLessThan(iThird);
+      expect(ids.filter((id) =>
+        [orderCityFirst, orderCitySecond, orderCityThird].includes(id),
+      )).toEqual([orderCityFirst, orderCitySecond, orderCityThird]);
+    });
+
+    test("public cities route is read-only and mutations remain SUPER_ADMIN protected", async () => {
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest("/api/v1/public/cities", {
+              method: "POST",
+              body: { nameEn: "nope" },
+            }),
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest("/api/v1/public/cities", { method: "DELETE" }),
+          )
+        ).status,
+      ).toBe(404);
+
+      const forbidden = await harness.app.handle(
+        jsonRequest("/api/v1/dashboard/cities", {
+          method: "POST",
+          token: supportToken,
+          body: {
+            governorateId: seededGovernorateId,
+            nameAr: "denied",
+            nameEn: "denied",
+            latitude: 1,
+            longitude: 1,
+            displayOrder: 0,
+          },
+        }),
+      );
+      expect(forbidden.status).toBe(403);
+
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest("/api/v1/mobile/customer/cities"),
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await harness.app.handle(jsonRequest("/api/v1/mobile/driver/cities"))
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest("/api/v1/public/governorates"),
+          )
+        ).status,
+      ).toBe(404);
     });
   });
 });

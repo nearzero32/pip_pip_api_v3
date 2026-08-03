@@ -36,6 +36,11 @@ export const numberValue = (value: unknown) => {
   return n;
 };
 
+export const numberOrNull = (value: unknown): number | null => {
+  if (value == null) return null;
+  return numberValue(value);
+};
+
 export const dateSchema = t.String({ format: "date-time" });
 
 export const pageQuery = {

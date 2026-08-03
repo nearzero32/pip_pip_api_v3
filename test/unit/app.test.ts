@@ -81,7 +81,10 @@ describe("API foundation", () => {
   test("registers M3-A geography routes without prohibited request fields", async () => {
     const app=createApp({logger:silentLogger,production:false,readinessCheck:async()=>undefined,authModule:fakeModule(),geographyService:{} as GeographyService});
     const document=await (await app.handle(new Request("http://localhost/openapi/json"))).json() as {paths:Record<string,unknown>};
-    for(const path of ["/api/v1/dashboard/governorates","/api/v1/dashboard/governorates/{governorateId}","/api/v1/dashboard/cities","/api/v1/dashboard/cities/{cityId}","/api/v1/dashboard/cities/{cityId}/activate","/api/v1/dashboard/cities/{cityId}/suspend","/api/v1/dashboard/cities/{cityId}/archive","/api/v1/mobile/customer/cities","/api/v1/mobile/driver/cities"]) expect(document.paths[path]).toBeDefined();
+    for(const path of ["/api/v1/dashboard/governorates","/api/v1/dashboard/governorates/{governorateId}","/api/v1/dashboard/cities","/api/v1/dashboard/cities/{cityId}","/api/v1/dashboard/cities/{cityId}/activate","/api/v1/dashboard/cities/{cityId}/suspend","/api/v1/dashboard/cities/{cityId}/archive","/api/v1/public/cities"]) expect(document.paths[path]).toBeDefined();
+    expect(document.paths["/api/v1/mobile/customer/cities"]).toBeUndefined();
+    expect(document.paths["/api/v1/mobile/driver/cities"]).toBeUndefined();
+    expect(document.paths["/api/v1/public/governorates"]).toBeUndefined();
     const geographyText=JSON.stringify(Object.fromEntries(Object.entries(document.paths).filter(([path])=>path.includes("governorates")||path.includes("cities")).map(([path,operations])=>[path,Object.fromEntries(Object.entries(operations as Record<string,unknown>).map(([method,operation])=>[method,{requestBody:(operation as {requestBody?:unknown}).requestBody,parameters:(operation as {parameters?:unknown}).parameters}]))])));
     for(const field of ["code","slug","isVisible","isDisplay","boundary","polygon","geometry","zoneId"]) expect(geographyText.includes(`\"${field}\"`)).toBeFalse();
   });
@@ -146,11 +149,19 @@ describe("API foundation", () => {
     expect(JSON.stringify(cityPost)).toContain("longitude");
     expect(JSON.stringify(cityPost)).toMatch(/"type"\s*:\s*"number"/);
 
-    const mobile =
-      document.paths["/api/v1/mobile/customer/cities"]!.get!.responses!["200"]!;
-    const mobileText = JSON.stringify(mobile);
-    expect(mobileText).not.toContain("archivedAt");
-    expect(mobileText).not.toContain('"status"');
+    const publicCities =
+      document.paths["/api/v1/public/cities"]!.get!.responses!["200"]!;
+    const publicText = JSON.stringify(publicCities);
+    expect(publicText).not.toContain("archivedAt");
+    expect(publicText).not.toContain("createdAt");
+    expect(publicText).not.toContain("updatedAt");
+    expect(publicText).not.toContain("displayOrder");
+    expect(publicText).not.toContain('"status"');
+    expect(publicText).not.toMatch(/"type"\s*:\s*"Any"/i);
+    expect(publicText).toContain("latitude");
+    expect(publicText).toContain("longitude");
+    expect(publicText).toMatch(/"type"\s*:\s*"number"/);
+    expect(publicText).toMatch(/"type"\s*:\s*"null"|null/);
 
     // Elysia currently emits empty requestBody.content; required:true still marks the body mandatory.
     // Empty PATCH rejection is proven by the runtime validation test below.
@@ -173,12 +184,16 @@ describe("API foundation", () => {
     expect(responseKeys("/api/v1/dashboard/cities/{cityId}/activate", "post")).toEqual(
       expect.arrayContaining(["403", "404", "409"]),
     );
-    expect(responseKeys("/api/v1/mobile/customer/cities", "get")).not.toContain("403");
-    expect(responseKeys("/api/v1/mobile/customer/cities", "get")).not.toContain("401");
-    expect(responseKeys("/api/v1/mobile/driver/cities", "get")).not.toContain("409");
-    expect(responseKeys("/api/v1/mobile/driver/cities", "get")).not.toContain("401");
-    expect(document.paths["/api/v1/mobile/customer/cities"]!.get!.security).toBeUndefined();
-    expect(document.paths["/api/v1/mobile/driver/cities"]!.get!.security).toBeUndefined();
+    expect(responseKeys("/api/v1/public/cities", "get")).toEqual(
+      expect.arrayContaining(["200", "422", "500", "503"]),
+    );
+    expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("401");
+    expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("403");
+    expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("404");
+    expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("409");
+    expect(document.paths["/api/v1/public/cities"]!.get!.security).toBeUndefined();
+    expect(document.paths["/api/v1/mobile/customer/cities"]).toBeUndefined();
+    expect(document.paths["/api/v1/mobile/driver/cities"]).toBeUndefined();
   });
 
   test("empty City PATCH is invalid at runtime", async () => {

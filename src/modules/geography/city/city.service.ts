@@ -4,7 +4,7 @@ import type {
   AuthIdentity,
   SessionService,
 } from "../../auth/sessions/session-service";
-import { clean, dateValue, numberValue, pageOf } from "../shared";
+import { clean, dateValue, numberOrNull, numberValue, pageOf } from "../shared";
 
 /** Exact City → Governorate FK name from drizzle/0008_simple_nehzno.sql */
 export const CITY_GOVERNORATE_FK_CONSTRAINT =
@@ -53,13 +53,13 @@ export const cityDto = (row: Record<string, unknown>): any => ({
   governorate: governorateSummary(row),
 });
 
-const mobileCityDto = (row: Record<string, unknown>): any => ({
+/** Pre-login selection DTO: no administrative or internal fields. */
+export const publicCityDto = (row: Record<string, unknown>): any => ({
   id: row.id,
   nameAr: row.name_ar,
   nameEn: row.name_en,
-  latitude: numberValue(row.latitude),
-  longitude: numberValue(row.longitude),
-  displayOrder: row.display_order,
+  latitude: numberOrNull(row.latitude),
+  longitude: numberOrNull(row.longitude),
   governorate: {
     id: row.governorate_id,
     nameAr: row.governorate_name_ar,
@@ -83,19 +83,41 @@ export class CityService {
     search?: string;
     page?: number;
     limit?: number;
-    mobile?: boolean;
   }) {
     const { page, limit } = pageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const search = input.search?.trim() || null;
     const rows = await this
-      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where (${input.governorateId ?? null}::uuid is null or c.governorate_id=${input.governorateId ?? null}) and (${input.mobile ? "ACTIVE" : (input.status ?? null)}::text is null or c.status=${input.mobile ? "ACTIVE" : (input.status ?? null)}::city_status) and (${input.mobile ? "ACTIVE" : null}::text is null or g.status='ACTIVE') and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
+      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where (${input.governorateId ?? null}::uuid is null or c.governorate_id=${input.governorateId ?? null}) and (${input.status ?? null}::text is null or c.status=${input.status ?? null}::city_status) and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
     const [count] = await this
-      .client`select count(*)::text total from cities c join governorates g on g.id=c.governorate_id where (${input.governorateId ?? null}::uuid is null or c.governorate_id=${input.governorateId ?? null}) and (${input.mobile ? "ACTIVE" : (input.status ?? null)}::text is null or c.status=${input.mobile ? "ACTIVE" : (input.status ?? null)}::city_status) and (${input.mobile ? "ACTIVE" : null}::text is null or g.status='ACTIVE') and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
-    const data = rows.map((row: Record<string, unknown>) =>
-      input.mobile ? mobileCityDto(row) : cityDto(row),
-    );
-    return { data, page, limit, total: Number(count?.total ?? 0) };
+      .client`select count(*)::text total from cities c join governorates g on g.id=c.governorate_id where (${input.governorateId ?? null}::uuid is null or c.governorate_id=${input.governorateId ?? null}) and (${input.status ?? null}::text is null or c.status=${input.status ?? null}::city_status) and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
+    return {
+      data: rows.map((row: Record<string, unknown>) => cityDto(row)),
+      page,
+      limit,
+      total: Number(count?.total ?? 0),
+    };
+  }
+
+  /**
+   * Public pre-login City selection.
+   * Always restricted to ACTIVE cities under ACTIVE governorates.
+   * Query params cannot widen visibility.
+   */
+  async listPublic(input: { search?: string; page?: number; limit?: number }) {
+    const { page, limit } = pageOf(input.page, input.limit);
+    const offset = (page - 1) * limit;
+    const search = input.search?.trim() || null;
+    const rows = await this
+      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.display_order governorate_display_order,c.display_order city_display_order from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by g.display_order asc,c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
+    const [count] = await this
+      .client`select count(*)::text total from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
+    return {
+      data: rows.map((row: Record<string, unknown>) => publicCityDto(row)),
+      page,
+      limit,
+      total: Number(count?.total ?? 0),
+    };
   }
 
   async get(id: string) {

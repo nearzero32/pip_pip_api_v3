@@ -30,8 +30,11 @@ export function createApp(dependencies: AppDependencies) {
           { name: "Dashboard — Authentication", description: "Dashboard email and password authentication" },
           { name: "Dashboard — Governorates", description: "Governorate administration" },
           { name: "Dashboard — Cities", description: "City administration" },
-          { name: "Mobile — Customer Cities", description: "Active cities for Customer Mobile" },
-          { name: "Mobile — Driver Cities", description: "Active cities for Driver Mobile" },
+          {
+            name: "Public — Geography",
+            description:
+              "Unauthenticated geography reads for pre-login City selection (active cities under active governorates only)",
+          },
         ],
         components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } } },
       },
