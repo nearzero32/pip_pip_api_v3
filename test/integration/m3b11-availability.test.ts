@@ -205,7 +205,7 @@ describe("M3-B1.1 City availability and session revocation", () => {
       ),
       "utf8",
     );
-    expect(citySource).toContain("this.client.begin(async (tx) =>");
+    expect(citySource).toContain("beginWithGeographyRetry");
     expect(citySource).toContain("revokeDashboardSessionsForCities");
     expect(citySource).toContain("CITY_UNAVAILABLE");
     const govSource = readFileSync(
@@ -215,7 +215,7 @@ describe("M3-B1.1 City availability and session revocation", () => {
       ),
       "utf8",
     );
-    expect(govSource).toContain("this.client.begin(async (tx) =>");
+    expect(govSource).toContain("beginWithGeographyRetry");
     expect(govSource).toContain("GOVERNORATE_UNAVAILABLE");
   });
 

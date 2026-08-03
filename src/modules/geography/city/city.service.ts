@@ -4,8 +4,14 @@ import type {
   AuthIdentity,
   SessionService,
 } from "../../auth/sessions/session-service";
-import { clean, dateValue, numberOrNull, numberValue, pageOf } from "../shared";
+import {
+  beginWithGeographyRetry,
+  lockCityGeography,
+  lockCityReassignment,
+  readCityOperability,
+} from "../geography-locks";
 import { revokeDashboardSessionsForCities } from "../operational-sessions";
+import { clean, dateValue, numberOrNull, numberValue, pageOf } from "../shared";
 
 /** Exact City → Governorate FK name from drizzle/0008_simple_nehzno.sql */
 export const CITY_GOVERNORATE_FK_CONSTRAINT =
@@ -189,22 +195,89 @@ export class CityService {
         input.latitude === undefined,
         input.longitude === undefined,
       );
-    let row: Record<string, unknown> | undefined;
-    try {
-      [row] = await this
-        .client`update cities set governorate_id=coalesce(${input.governorateId ?? null},governorate_id),name_ar=coalesce(${input.nameAr === undefined ? null : clean(input.nameAr, "Arabic name")},name_ar),name_en=coalesce(${input.nameEn === undefined ? null : clean(input.nameEn, "English name")},name_en),latitude=coalesce(${input.latitude ?? null},latitude),longitude=coalesce(${input.longitude ?? null},longitude),display_order=coalesce(${input.displayOrder ?? null},display_order),updated_at=now() where id=${id} and status<>'ARCHIVED' returning *`;
-    } catch (error) {
-      if (isCityGovernorateForeignKeyViolation(error))
-        throw new AppError(422, "INVALID_GOVERNORATE", "Governorate not found");
-      throw error;
-    }
-    if (!row)
-      throw new AppError(
-        404,
-        "CITY_NOT_FOUND_OR_ARCHIVED",
-        "City not found or archived",
-      );
-    return this.get(String((row as Record<string, unknown>).id));
+
+    const nameAr =
+      input.nameAr === undefined ? null : clean(input.nameAr, "Arabic name");
+    const nameEn =
+      input.nameEn === undefined ? null : clean(input.nameEn, "English name");
+
+    return beginWithGeographyRetry(this.client, async (tx) => {
+      try {
+        if (input.governorateId !== undefined) {
+          const { before } = await lockCityReassignment(
+            tx,
+            id,
+            input.governorateId,
+          );
+          if (before.cityStatus === "ARCHIVED")
+            throw new AppError(
+              404,
+              "CITY_NOT_FOUND_OR_ARCHIVED",
+              "City not found or archived",
+            );
+
+          const [targetGov] = await tx<{ id: string; status: string }[]>`
+            select id::text as id, status::text as status
+            from governorates where id = ${input.governorateId}`;
+          if (!targetGov)
+            throw new AppError(422, "INVALID_GOVERNORATE", "Governorate not found");
+
+          const [row] = await tx`
+            update cities set
+              governorate_id = ${input.governorateId},
+              name_ar = coalesce(${nameAr}, name_ar),
+              name_en = coalesce(${nameEn}, name_en),
+              latitude = coalesce(${input.latitude ?? null}, latitude),
+              longitude = coalesce(${input.longitude ?? null}, longitude),
+              display_order = coalesce(${input.displayOrder ?? null}, display_order),
+              updated_at = now()
+            where id = ${id} and status <> 'ARCHIVED'
+            returning id`;
+          if (!row)
+            throw new AppError(
+              404,
+              "CITY_NOT_FOUND_OR_ARCHIVED",
+              "City not found or archived",
+            );
+
+          const after = await readCityOperability(tx, id);
+          if (before.operational && !after.operational) {
+            await revokeDashboardSessionsForCities(
+              this.sessions,
+              tx,
+              [id],
+              "CITY_UNAVAILABLE",
+            );
+          }
+        } else {
+          const [row] = await tx`
+            update cities set
+              name_ar = coalesce(${nameAr}, name_ar),
+              name_en = coalesce(${nameEn}, name_en),
+              latitude = coalesce(${input.latitude ?? null}, latitude),
+              longitude = coalesce(${input.longitude ?? null}, longitude),
+              display_order = coalesce(${input.displayOrder ?? null}, display_order),
+              updated_at = now()
+            where id = ${id} and status <> 'ARCHIVED'
+            returning id`;
+          if (!row)
+            throw new AppError(
+              404,
+              "CITY_NOT_FOUND_OR_ARCHIVED",
+              "City not found or archived",
+            );
+        }
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        if (isCityGovernorateForeignKeyViolation(error))
+          throw new AppError(422, "INVALID_GOVERNORATE", "Governorate not found");
+        throw error;
+      }
+
+      const [full] =
+        await tx`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where c.id=${id}`;
+      return cityDto(full as Record<string, unknown>);
+    });
   }
 
   private validateCoordinates(
@@ -233,18 +306,15 @@ export class CityService {
     target: "ACTIVE" | "SUSPENDED" | "ARCHIVED",
   ) {
     this.superAdmin(identity);
-    return this.client.begin(async (tx) => {
-      const [current] = await tx<
-        { status: string }[]
-      >`select status from cities where id=${id} for update`;
-      if (!current) throw new AppError(404, "CITY_NOT_FOUND", "City not found");
+    return beginWithGeographyRetry(this.client, async (tx) => {
+      const state = await lockCityGeography(tx, id);
       const allowed: Record<string, string[]> = {
         DRAFT: ["ACTIVE", "ARCHIVED"],
         ACTIVE: ["SUSPENDED", "ARCHIVED"],
         SUSPENDED: ["ACTIVE", "ARCHIVED"],
         ARCHIVED: [],
       };
-      if (!allowed[current.status]?.includes(target))
+      if (!allowed[state.cityStatus]?.includes(target))
         throw new AppError(
           409,
           "INVALID_CITY_STATUS_TRANSITION",
@@ -253,7 +323,7 @@ export class CityService {
       const [row] =
         await tx`update cities set status=${target}::city_status,archived_at=${target === "ARCHIVED" ? new Date() : null},updated_at=now() where id=${id} returning *`;
       const becameUnavailable =
-        current.status === "ACTIVE" &&
+        state.cityStatus === "ACTIVE" &&
         (target === "SUSPENDED" || target === "ARCHIVED");
       if (becameUnavailable) {
         await revokeDashboardSessionsForCities(

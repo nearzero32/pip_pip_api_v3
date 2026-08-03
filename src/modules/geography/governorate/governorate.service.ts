@@ -4,8 +4,9 @@ import type {
   AuthIdentity,
   SessionService,
 } from "../../auth/sessions/session-service";
-import { dateValue, pageOf } from "../shared";
+import { beginWithGeographyRetry, lockGovernorateAndCities } from "../geography-locks";
 import { revokeDashboardSessionsForCities } from "../operational-sessions";
+import { dateValue, pageOf } from "../shared";
 
 export const governorateDto = (row: Record<string, unknown>): any => ({
   id: row.id,
@@ -82,10 +83,15 @@ export class GovernorateService {
     )
       throw new AppError(422, "VALIDATION_FAILED", "Invalid display order");
 
-    return this.client.begin(async (tx) => {
+    return beginWithGeographyRetry(this.client, async (tx) => {
+      const cityIds =
+        input.status !== undefined
+          ? await lockGovernorateAndCities(tx, id)
+          : [];
+
       const [current] = await tx<
         { status: string }[]
-      >`select status::text as status from governorates where id=${id} for update`;
+      >`select status::text as status from governorates where id=${id}`;
       if (!current)
         throw new AppError(404, "GOVERNORATE_NOT_FOUND", "Governorate not found");
 
@@ -102,12 +108,10 @@ export class GovernorateService {
       const becameUnavailable =
         current.status === "ACTIVE" && input.status === "INACTIVE";
       if (becameUnavailable) {
-        const cities = await tx<{ id: string }[]>`
-          select id::text as id from cities where governorate_id = ${id}`;
         await revokeDashboardSessionsForCities(
           this.sessions,
           tx,
-          cities.map((city) => city.id),
+          cityIds,
           "GOVERNORATE_UNAVAILABLE",
         );
       }

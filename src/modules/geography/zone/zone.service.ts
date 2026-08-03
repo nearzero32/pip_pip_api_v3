@@ -3,6 +3,12 @@ import { AppError } from "../../../errors/app-error";
 import { requireCityPermission } from "../../auth/staff/authorization";
 import { assertActiveCity } from "../../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../../auth/sessions/session-service";
+import {
+  assertCityOperability,
+  beginWithGeographyRetry,
+  lockCityGeography,
+  lockZoneOverlap,
+} from "../geography-locks";
 import { clean, dateValue, pageOf } from "../shared";
 import {
   parseCoordinate,
@@ -57,10 +63,6 @@ export const publicZoneDto = (row: ZoneRow): any => ({
   name: row.name,
   boundary: parseBoundaryDto(row.boundary_geojson),
 });
-
-const lockCity = async (tx: SQL, cityId: string) => {
-  await tx`select pg_advisory_xact_lock(hashtextextended(${`zone:${cityId}`}, 0))`;
-};
 
 const fetchZone = async (
   db: SQL,
@@ -159,8 +161,8 @@ export class ZoneService {
   constructor(private client: SQL) {}
 
   /**
-   * Trusted City authorization + live permission + current City/Governorate operability.
-   * City comes only from the authenticated identity (via requireCityPermission).
+   * Early rejection only — authoritative operability is re-checked under
+   * geography locks inside the mutation transaction.
    */
   private async authorizeOperationalCity(
     identity: AuthIdentity,
@@ -190,8 +192,10 @@ export class ZoneService {
     }
     const polygon = parseGeoJsonPolygon(input.boundary);
 
-    return this.client.begin(async (tx) => {
-      await lockCity(tx, cityId);
+    return beginWithGeographyRetry(this.client, async (tx) => {
+      const state = await lockCityGeography(tx, cityId);
+      assertCityOperability(state);
+      await lockZoneOverlap(tx, cityId);
       const geojson = await buildValidatedGeometry(tx, polygon);
       await assertNoPositiveAreaOverlap(tx, cityId, geojson, null);
       let insertedId: string;
@@ -293,8 +297,10 @@ export class ZoneService {
     const status = hasStatus ? (input.status as "ACTIVE" | "INACTIVE") : null;
     const polygon = hasBoundary ? parseGeoJsonPolygon(input.boundary) : null;
 
-    return this.client.begin(async (tx) => {
-      await lockCity(tx, cityId);
+    return beginWithGeographyRetry(this.client, async (tx) => {
+      const state = await lockCityGeography(tx, cityId);
+      assertCityOperability(state);
+      await lockZoneOverlap(tx, cityId);
       const [existing] = await tx<{ id: string; status: string }[]>`
         select id::text as id, status::text as status
         from zones
@@ -346,8 +352,10 @@ export class ZoneService {
       identity,
       "zones.archive",
     );
-    return this.client.begin(async (tx) => {
-      await lockCity(tx, cityId);
+    return beginWithGeographyRetry(this.client, async (tx) => {
+      const state = await lockCityGeography(tx, cityId);
+      assertCityOperability(state);
+      await lockZoneOverlap(tx, cityId);
       const [existing] = await tx<{ id: string; status: string }[]>`
         select id::text as id, status::text as status
         from zones

@@ -1,5 +1,6 @@
 import type { SQL } from "bun";
 import { AppError } from "../../../errors/app-error";
+import { isCityOperational } from "../../geography/geography-locks";
 import type { DashboardScopeClaims } from "../tokens/access-token";
 import { isEmployeeRoleCode } from "./permissions";
 
@@ -140,6 +141,6 @@ export async function assertActiveCity(
     join governorates g on g.id = c.governorate_id
     where c.id = ${cityId}`;
   if (!row) throw new AppError(404, "CITY_NOT_FOUND", "City not found");
-  if (row.city_status !== "ACTIVE" || row.governorate_status !== "ACTIVE")
+  if (!isCityOperational(row.city_status, row.governorate_status))
     throw new AppError(409, "CITY_NOT_ACTIVE", "City is not active");
 }
