@@ -100,68 +100,214 @@ describe("API foundation", () => {
     const document = (await (
       await app.handle(new Request("http://localhost/openapi/json"))
     ).json()) as {
+      components?: { schemas?: Record<string, unknown> };
       paths: Record<
         string,
         Record<
           string,
           {
             requestBody?: { content?: Record<string, { schema?: unknown }> };
-            responses?: Record<string, { content?: Record<string, { schema?: unknown }> }>;
+            responses?: Record<
+              string,
+              { content?: Record<string, { schema?: unknown }> }
+            >;
             security?: unknown;
           }
         >
       >;
     };
 
-    const assertNoAny = (value: unknown, path: string) => {
-      if (!value || typeof value !== "object") return;
-      const record = value as Record<string, unknown>;
+    type JsonSchema = Record<string, unknown>;
+
+    const resolveLocalRef = (
+      schema: unknown,
+      seen: Set<string>,
+    ): unknown => {
+      if (!schema || typeof schema !== "object" || Array.isArray(schema))
+        return schema;
+      const ref = (schema as JsonSchema).$ref;
+      if (typeof ref !== "string") return schema;
+      const match = /^#\/components\/schemas\/([^/]+)$/.exec(ref);
+      if (!match) throw new Error(`Unsupported OpenAPI $ref: ${ref}`);
+      if (seen.has(ref)) throw new Error(`Cyclic OpenAPI $ref: ${ref}`);
+      const target = document.components?.schemas?.[match[1]!];
+      if (target == null) throw new Error(`Unresolved OpenAPI $ref: ${ref}`);
+      seen.add(ref);
+      return resolveLocalRef(target, seen);
+    };
+
+    /** True when a schema node itself is unconstrained (not composition wrappers). */
+    const isUnconstrainedSchemaNode = (schema: unknown): boolean => {
+      if (schema === true) return true;
+      if (schema == null || typeof schema !== "object" || Array.isArray(schema))
+        return false;
+      const record = schema as JsonSchema;
+      const keys = Object.keys(record);
+      if (keys.length === 0) return true;
+      if (record.type === "Any" || record.type === "any") return true;
+      const hasShape =
+        "type" in record ||
+        "properties" in record ||
+        "items" in record ||
+        "anyOf" in record ||
+        "oneOf" in record ||
+        "allOf" in record ||
+        "$ref" in record ||
+        "enum" in record ||
+        "const" in record ||
+        "additionalProperties" in record;
+      return !hasShape;
+    };
+
+    const assertConstrainedGeographySuccessSchema = (
+      schema: unknown,
+      path: string,
+      seenRefs = new Set<string>(),
+    ) => {
+      const resolved = resolveLocalRef(schema, new Set(seenRefs));
+      if (isUnconstrainedSchemaNode(resolved)) {
+        throw new Error(`Unconstrained OpenAPI success schema at ${path}`);
+      }
+      if (!resolved || typeof resolved !== "object" || Array.isArray(resolved))
+        return;
+      const record = resolved as JsonSchema;
       if (record.type === "Any" || record.type === "any") {
         throw new Error(`Unexpected Any schema at ${path}`);
       }
-      for (const [key, child] of Object.entries(record)) {
-        assertNoAny(child, `${path}.${key}`);
+      if (Array.isArray(record.anyOf)) {
+        for (const [i, child] of record.anyOf.entries()) {
+          assertConstrainedGeographySuccessSchema(
+            child,
+            `${path}.anyOf[${i}]`,
+            seenRefs,
+          );
+        }
+      }
+      if (Array.isArray(record.oneOf)) {
+        for (const [i, child] of record.oneOf.entries()) {
+          assertConstrainedGeographySuccessSchema(
+            child,
+            `${path}.oneOf[${i}]`,
+            seenRefs,
+          );
+        }
+      }
+      if (Array.isArray(record.allOf)) {
+        for (const [i, child] of record.allOf.entries()) {
+          assertConstrainedGeographySuccessSchema(
+            child,
+            `${path}.allOf[${i}]`,
+            seenRefs,
+          );
+        }
+      }
+      if (record.properties && typeof record.properties === "object") {
+        for (const [key, child] of Object.entries(
+          record.properties as Record<string, unknown>,
+        )) {
+          assertConstrainedGeographySuccessSchema(
+            child,
+            `${path}.properties.${key}`,
+            seenRefs,
+          );
+        }
+      }
+      if ("items" in record) {
+        assertConstrainedGeographySuccessSchema(
+          record.items,
+          `${path}.items`,
+          seenRefs,
+        );
+      }
+      if (
+        "additionalProperties" in record &&
+        typeof record.additionalProperties === "object"
+      ) {
+        assertConstrainedGeographySuccessSchema(
+          record.additionalProperties,
+          `${path}.additionalProperties`,
+          seenRefs,
+        );
       }
     };
+
+    const schemaTypes = (schema: unknown): string[] => {
+      const resolved = resolveLocalRef(schema, new Set());
+      if (!resolved || typeof resolved !== "object" || Array.isArray(resolved))
+        return [];
+      const record = resolved as JsonSchema;
+      if (typeof record.type === "string") return [record.type];
+      if (Array.isArray(record.type))
+        return record.type.filter((value): value is string => typeof value === "string");
+      const collected: string[] = [];
+      for (const key of ["anyOf", "oneOf"] as const) {
+        const variants = record[key];
+        if (!Array.isArray(variants)) continue;
+        for (const variant of variants) {
+          collected.push(...schemaTypes(variant));
+        }
+      }
+      if (record.nullable === true && collected.length === 0 && !record.type) {
+        // OpenAPI 3.0 nullable without composition is handled by callers via type+nullable
+      }
+      return collected;
+    };
+
+    const isNumberOrNullSchema = (schema: unknown): boolean => {
+      const resolved = resolveLocalRef(schema, new Set());
+      if (!resolved || typeof resolved !== "object" || Array.isArray(resolved))
+        return false;
+      const record = resolved as JsonSchema;
+      const types = schemaTypes(resolved);
+      if (types.includes("number") && types.includes("null")) return true;
+      if (record.type === "number" && record.nullable === true) return true;
+      return false;
+    };
+
+    const publicSuccessSchema = resolveLocalRef(
+      document.paths["/api/v1/public/cities"]!.get!.responses!["200"]!
+        .content!["application/json"]!.schema,
+      new Set(),
+    ) as JsonSchema;
+    const publicItems = resolveLocalRef(
+      (publicSuccessSchema.properties as JsonSchema)?.data &&
+        ((publicSuccessSchema.properties as JsonSchema).data as JsonSchema)
+          .items,
+      new Set(),
+    ) as JsonSchema;
+    const publicCityProperties = (publicItems.properties ?? {}) as Record<
+      string,
+      unknown
+    >;
+    expect(isNumberOrNullSchema(publicCityProperties.latitude)).toBeTrue();
+    expect(isNumberOrNullSchema(publicCityProperties.longitude)).toBeTrue();
+    expect(publicCityProperties).not.toHaveProperty("archivedAt");
+    expect(publicCityProperties).not.toHaveProperty("createdAt");
+    expect(publicCityProperties).not.toHaveProperty("updatedAt");
+    expect(publicCityProperties).not.toHaveProperty("displayOrder");
+    expect(publicCityProperties).not.toHaveProperty("status");
 
     const geographyPaths = Object.entries(document.paths).filter(
       ([path]) => path.includes("governorates") || path.includes("cities"),
     );
     for (const [path, methods] of geographyPaths) {
       for (const [method, operation] of Object.entries(methods)) {
-        assertNoAny(operation, `${path}.${method}`);
+        const success =
+          operation.responses?.["200"]?.content?.["application/json"]?.schema;
+        expect(success).toBeDefined();
+        assertConstrainedGeographySuccessSchema(
+          success,
+          `${path}.${method}.responses.200`,
+        );
       }
     }
 
     const cityPost =
       document.paths["/api/v1/dashboard/cities"]!.post!.responses!["200"]!
         .content!["application/json"]!.schema as Record<string, unknown>;
-    const cityProps = (cityPost.properties ?? cityPost) as Record<
-      string,
-      { type?: string; properties?: Record<string, { type?: string }> }
-    >;
-    const resolved =
-      "properties" in cityPost
-        ? (cityPost.properties as Record<string, { type?: string }>)
-        : cityProps;
-    expect(resolved.latitude?.type === "number" || JSON.stringify(cityPost).includes('"latitude"')).toBeTrue();
     expect(JSON.stringify(cityPost)).toContain("latitude");
     expect(JSON.stringify(cityPost)).toContain("longitude");
     expect(JSON.stringify(cityPost)).toMatch(/"type"\s*:\s*"number"/);
-
-    const publicCities =
-      document.paths["/api/v1/public/cities"]!.get!.responses!["200"]!;
-    const publicText = JSON.stringify(publicCities);
-    expect(publicText).not.toContain("archivedAt");
-    expect(publicText).not.toContain("createdAt");
-    expect(publicText).not.toContain("updatedAt");
-    expect(publicText).not.toContain("displayOrder");
-    expect(publicText).not.toContain('"status"');
-    expect(publicText).not.toMatch(/"type"\s*:\s*"Any"/i);
-    expect(publicText).toContain("latitude");
-    expect(publicText).toContain("longitude");
-    expect(publicText).toMatch(/"type"\s*:\s*"number"/);
-    expect(publicText).toMatch(/"type"\s*:\s*"null"|null/);
 
     // Elysia currently emits empty requestBody.content; required:true still marks the body mandatory.
     // Empty PATCH rejection is proven by the runtime validation test below.
@@ -184,13 +330,12 @@ describe("API foundation", () => {
     expect(responseKeys("/api/v1/dashboard/cities/{cityId}/activate", "post")).toEqual(
       expect.arrayContaining(["403", "404", "409"]),
     );
-    expect(responseKeys("/api/v1/public/cities", "get")).toEqual(
-      expect.arrayContaining(["200", "422", "500", "503"]),
-    );
+    expect(responseKeys("/api/v1/public/cities", "get")).toEqual(["200", "422", "500"]);
     expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("401");
     expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("403");
     expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("404");
     expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("409");
+    expect(responseKeys("/api/v1/public/cities", "get")).not.toContain("503");
     expect(document.paths["/api/v1/public/cities"]!.get!.security).toBeUndefined();
     expect(document.paths["/api/v1/mobile/customer/cities"]).toBeUndefined();
     expect(document.paths["/api/v1/mobile/driver/cities"]).toBeUndefined();

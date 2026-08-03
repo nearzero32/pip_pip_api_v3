@@ -69,7 +69,6 @@ const cityTransitionErrors = {
 const publicListErrors = {
   422: errorResponse,
   500: errorResponse,
-  503: errorResponse,
 };
 const cityIdParam = t.Object(
   { cityId: t.String({ format: "uuid" }) },
