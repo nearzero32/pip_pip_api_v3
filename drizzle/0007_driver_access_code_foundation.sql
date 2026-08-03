@@ -1,0 +1,5 @@
+ALTER TABLE "sessions" DROP CONSTRAINT "sessions_auth_method_chk";--> statement-breakpoint
+ALTER TABLE "driver_profiles" ADD COLUMN "access_code_hash" text;--> statement-breakpoint
+CREATE INDEX "sessions_account_application_active_idx" ON "sessions" USING btree ("account_id","application_type","revoked_at","created_at");--> statement-breakpoint
+UPDATE "sessions" SET "revoked_at"=coalesce("revoked_at",now()),"revocation_reason"=coalesce("revocation_reason",'AUTH_METHOD_RETIRED'),"authentication_method"='DRIVER_ACCESS_CODE',"updated_at"=now() WHERE "application_type"='DRIVER_APP' AND "authentication_method"='PHONE_OTP';--> statement-breakpoint
+ALTER TABLE "sessions" ADD CONSTRAINT "sessions_auth_method_chk" CHECK (("sessions"."application_type" = 'DASHBOARD' and "sessions"."authentication_method" = 'PASSWORD') or ("sessions"."application_type" = 'CUSTOMER_APP' and "sessions"."authentication_method" = 'PHONE_OTP') or ("sessions"."application_type" = 'DRIVER_APP' and "sessions"."authentication_method" = 'DRIVER_ACCESS_CODE'));

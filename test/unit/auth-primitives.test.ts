@@ -50,10 +50,11 @@ describe("M2 security primitives", () => {
     let now=0; const limiter=new InMemoryRateLimiter(()=>now); const policy={limit:2,windowSeconds:10};
     expect((await limiter.consume("key",policy)).allowed).toBeTrue(); expect((await limiter.consume("key",policy)).allowed).toBeTrue(); expect((await limiter.consume("key",policy)).allowed).toBeFalse();
     now=10_001; expect((await limiter.consume("key",policy)).allowed).toBeTrue();
-    expect(rateLimitKey("otp","+9647700000000","127.0.0.1")).toStartWith("auth:otp:");
+    expect(rateLimitKey("customer","otp","phone","digest")).toStartWith("auth:customer:otp:");
+    expect(rateLimitKey("driver","login","phone","digest")).not.toBe(rateLimitKey("customer","login","phone","digest"));
   });
   test("recursively redacts nested arrays, aliases, headers, cookies, and error metadata", () => {
-    const value=redact({Password:"x",accessToken:"a",apiKey:"b",nested:[{refresh_token:"y",Authorization:"Bearer z",cookie:"sid=x"}],error:{databaseUrl:"postgres://secret",clientSecret:"c",safe:"ok"}}) as Record<string,unknown>;
-    expect(JSON.stringify(value)).not.toContain("Bearer z"); expect(JSON.stringify(value)).not.toContain("postgres://secret"); expect(JSON.stringify(value)).toContain("[REDACTED]"); expect(JSON.stringify(value)).toContain("ok");
+    const value=redact({Password:"x",accessCode:"001927",accessCodeHash:"hash",otpCode:"123456",accessToken:"a",apiKey:"b",nested:[{refresh_token:"y",Authorization:"Bearer z",cookie:"sid=x"}],error:{databaseUrl:"postgres://secret",clientSecret:"c",safe:"ok"}}) as Record<string,unknown>;
+    expect(JSON.stringify(value)).not.toContain("Bearer z"); expect(JSON.stringify(value)).not.toContain("001927"); expect(JSON.stringify(value)).not.toContain("123456"); expect(JSON.stringify(value)).not.toContain("postgres://secret"); expect(JSON.stringify(value)).toContain("[REDACTED]"); expect(JSON.stringify(value)).toContain("ok");
   });
 });

@@ -1,4 +1,4 @@
-const secretKeys = /(^|_)(password|password_hash|hash|otp|token|authorization|cookie|secret|private_key|signing_key|hmac_key|api_key|provider_key|database_url|redis_url|credential)(_|$)/i;
+const secretKeys = /(^|_)(password|password_hash|hash|code|access_code|access_code_hash|otp|otp_code|otp_verifier|token|authorization|cookie|set_cookie|secret|private_key|signing_key|hmac_key|api_key|provider_key|database_url|redis_url|credential)(_|$)/i;
 const canonicalKey = (key: string): string => key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replaceAll("-", "_");
 export function redact(value: unknown, seen = new WeakSet<object>()): unknown {
   if (Array.isArray(value)) return value.map((item) => redact(item, seen));

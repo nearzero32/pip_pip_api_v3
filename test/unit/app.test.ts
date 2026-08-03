@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
 import { silentLogger } from "../../src/observability/logger";
-import type { AuthService } from "../../src/modules/auth/auth-service";
+import type { AuthModule } from "../../src/modules/auth/auth-module";
 import { AppError } from "../../src/errors/app-error";
 
 function appWith(readinessCheck: () => Promise<void> = async () => undefined) {
   return createApp({ logger: silentLogger, production: false, readinessCheck });
 }
+const fakeModule = (overrides: Partial<AuthModule> = {}): AuthModule => {
+  const empty = new Proxy({}, { get: () => async () => ({}) });
+  return { customer: empty, driver: empty, dashboard: empty, sessions: empty, ...overrides } as AuthModule;
+};
 
 describe("API foundation", () => {
   test("liveness has a stable response and does not call PostgreSQL", async () => {
@@ -74,24 +78,26 @@ describe("API foundation", () => {
   });
 
   test("registers every application route under /api/v1 with no unprefixed aliases", async () => {
-    const fake = new Proxy({}, { get: () => async () => ({}) }) as AuthService;
-    const app = createApp({ logger: silentLogger, production: false, readinessCheck: async () => undefined, authService: fake });
-    const document = await (await app.handle(new Request("http://localhost/openapi/json"))).json() as { paths: Record<string,Record<string,{requestBody?:unknown;responses?:unknown}>> };
+    const app = createApp({ logger: silentLogger, production: false, readinessCheck: async () => undefined, authModule: fakeModule() });
+    const document = await (await app.handle(new Request("http://localhost/openapi/json"))).json() as { paths: Record<string,Record<string,{requestBody?:unknown;responses?:unknown;security?:unknown}>> };
     const applicationPaths=Object.keys(document.paths).filter(path=>path.includes("auth"));
-    expect(applicationPaths.length).toBe(8);
-    expect(applicationPaths.every(path=>path.startsWith("/api/v1/auth/"))).toBeTrue();
-    expect(applicationPaths.some(path=>path.startsWith("/v1/")||path.startsWith("/auth/"))).toBeFalse();
+    expect(applicationPaths.length).toBe(18);
+    expect(applicationPaths.every(path=>path.startsWith("/api/v1/mobile/customer/")||path.startsWith("/api/v1/mobile/driver/")||path.startsWith("/api/v1/dashboard/"))).toBeTrue();
+    expect(applicationPaths.some(path=>path.startsWith("/api/v1/auth/")||path.startsWith("/v1/")||path.startsWith("/auth/"))).toBeFalse();
     for (const path of applicationPaths) {
       const operation = Object.values(document.paths[path]!).find(value=>value && typeof value==="object" && "responses" in value);
       expect(operation?.responses).toBeDefined();
     }
-    expect(document.paths["/api/v1/auth/phone/otp/request"]?.post?.requestBody).toBeDefined();
+    expect(document.paths["/api/v1/mobile/customer/auth/otp/request"]?.post?.requestBody).toBeDefined();
+    expect(document.paths["/api/v1/mobile/driver/auth/otp/request"]).toBeUndefined();
+    expect(document.paths["/api/v1/mobile/customer/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
+    expect(document.paths["/api/v1/mobile/driver/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
+    expect(document.paths["/api/v1/dashboard/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
   });
 
   test("returns a stable safe validation error", async () => {
-    const fake = new Proxy({}, { get: () => async () => ({}) }) as AuthService;
-    const app = createApp({ logger: silentLogger, production: true, readinessCheck: async () => undefined, authService: fake });
-    const response = await app.handle(new Request("http://localhost/api/v1/auth/staff/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "not-an-email" }) }));
+    const app = createApp({ logger: silentLogger, production: true, readinessCheck: async () => undefined, authModule: fakeModule() });
+    const response = await app.handle(new Request("http://localhost/api/v1/dashboard/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "not-an-email" }) }));
     expect(response.status).toBe(422);
     const body = await response.json() as {error:{code:string;message:string};request_id:string};
     expect(body.error).toEqual({code:"VALIDATION_FAILED",message:"The request is invalid"});
@@ -101,19 +107,25 @@ describe("API foundation", () => {
 
   test("OTP request is generic 202 and staff failures are enumeration-safe", async () => {
     const challengeId=crypto.randomUUID();
-    const fake = new Proxy({
-      requestOtp: async()=>challengeId,
-      staffLogin: async()=>{throw new AppError(401,"AUTHENTICATION_FAILED","Authentication failed");},
-    }, { get: (target, property) => Reflect.get(target, property) ?? (async()=>({})) }) as unknown as AuthService;
-    const app=createApp({logger:silentLogger,production:true,readinessCheck:async()=>undefined,authService:fake});
-    const otp=await app.handle(new Request("http://localhost/api/v1/auth/phone/otp/request",{method:"POST",headers:{"content-type":"application/json","x-request-id":"otp-public-request"},body:JSON.stringify({phone:"+9647700000000",application_type:"CUSTOMER_APP"})}));
+    const customer=new Proxy({requestOtp:async()=>challengeId},{get:(target,property)=>Reflect.get(target,property)??(async()=>({}))});
+    const dashboard=new Proxy({login:async()=>{throw new AppError(401,"INVALID_CREDENTIALS","Invalid credentials");}},{get:(target,property)=>Reflect.get(target,property)??(async()=>({}))});
+    const app=createApp({logger:silentLogger,production:true,readinessCheck:async()=>undefined,authModule:fakeModule({customer,dashboard} as unknown as Partial<AuthModule>)});
+    const otp=await app.handle(new Request("http://localhost/api/v1/mobile/customer/auth/otp/request",{method:"POST",headers:{"content-type":"application/json","x-request-id":"otp-public-request"},body:JSON.stringify({phone:"+9647700000000"})}));
     expect(otp.status).toBe(202);
     const otpBody=await otp.json() as Record<string,unknown>;
     expect(otpBody).toEqual({accepted:true,challenge_id:challengeId,request_id:"otp-public-request"});
     expect("otp" in otpBody).toBeFalse();
     expect(JSON.stringify(otpBody)).not.toMatch(/password|refresh_token|access_token/i);
-    const staff=await app.handle(new Request("http://localhost/api/v1/auth/staff/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email:"unknown@example.com",password:"a sufficiently long password",device_name:"browser"})}));
+    const staff=await app.handle(new Request("http://localhost/api/v1/dashboard/auth/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email:"unknown@example.com",password:"a sufficiently long password",device_name:"browser"})}));
     expect(staff.status).toBe(401);
-    expect((await staff.json() as {error:{code:string}}).error.code).toBe("AUTHENTICATION_FAILED");
+    expect((await staff.json() as {error:{code:string}}).error.code).toBe("INVALID_CREDENTIALS");
+  });
+
+  test("rejects obsolete routes and client-controlled authentication context", async () => {
+    let called=0;const customer=new Proxy({requestOtp:async()=>{called++;return crypto.randomUUID();}},{get:(target,property)=>Reflect.get(target,property)??(async()=>({}))});
+    const app=createApp({logger:silentLogger,production:false,readinessCheck:async()=>undefined,authModule:fakeModule({customer} as unknown as Partial<AuthModule>)});
+    for(const path of["/api/v1/auth/phone/otp/request","/api/v1/mobile/driver/auth/otp/request","/v1/auth/phone/otp/request","/auth/phone/otp/request"]){const response=await app.handle(new Request(`http://localhost${path}`,{method:"POST",headers:{"content-type":"application/json"},body:"{}"}));expect(response.status).toBe(404);}
+    const injected=await app.handle(new Request("http://localhost/api/v1/mobile/customer/auth/otp/request",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({phone:"+9647700000000",applicationType:"DRIVER_APP"})}));
+    expect(injected.status).toBe(422);expect(called).toBe(0);
   });
 });

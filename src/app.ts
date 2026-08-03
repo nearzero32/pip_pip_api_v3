@@ -4,13 +4,13 @@ import { AppError } from "./errors/app-error";
 import { healthRoutes, type HealthDependencies } from "./health/routes";
 import type { Logger } from "./observability/logger";
 import { resolveRequestId } from "./shared/request-id";
-import type { AuthService } from "./modules/auth/auth-service";
+import type { AuthModule } from "./modules/auth/auth-module";
 import { authRoutes } from "./modules/auth/routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
   production: boolean;
-  authService?: AuthService;
+  authModule?: AuthModule;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -20,7 +20,13 @@ export function createApp(dependencies: AppDependencies) {
       specPath: "/openapi/json",
       documentation: {
         info: { title: "pip_pip_api_v3", version: "0.2.0", description: "Identity, authentication, and session security API" },
-        tags: [{ name: "Health", description: "Runtime health probes" }, { name: "Authentication", description: "Customer, driver, and Dashboard authentication" }],
+        tags: [
+          { name: "Health", description: "Runtime health probes" },
+          { name: "Mobile — Customer Authentication", description: "Customer phone OTP authentication" },
+          { name: "Mobile — Driver Authentication", description: "Driver phone and numeric access-code authentication" },
+          { name: "Dashboard — Authentication", description: "Dashboard email and password authentication" },
+        ],
+        components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } } },
       },
     }))
     .derive(({ request, set }) => {
@@ -38,9 +44,10 @@ export function createApp(dependencies: AppDependencies) {
         duration_ms: Math.round((performance.now() - requestStartedAt) * 100) / 100,
       });
     })
-    .onError(({ error, code, request, requestId }) => {
+    .onError(({ error, code, request, requestId, set }) => {
       const path = new URL(request.url, "http://localhost").pathname;
       if (error instanceof AppError) {
+        if (error.retryAfterSeconds) set.headers["retry-after"] = String(error.retryAfterSeconds);
         dependencies.logger.warn({ event: "request_error", code: error.publicCode, path, request_id: requestId });
         return status(error.statusCode, { error: { code: error.publicCode, message: error.message }, request_id: requestId });
       }
@@ -57,5 +64,5 @@ export function createApp(dependencies: AppDependencies) {
       });
     })
     .use(healthRoutes(dependencies))
-    .use(dependencies.authService ? authRoutes(dependencies.authService) : new Elysia());
+    .use(dependencies.authModule ? authRoutes(dependencies.authModule) : new Elysia());
 }

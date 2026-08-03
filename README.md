@@ -1,6 +1,6 @@
 # pip_pip_api_v3
 
-M1 provides the executable API and Identity & Access database foundation. M2 adds Customer/Driver phone OTP authentication, staff password authentication, Ed25519 access tokens, rotating refresh sessions, Redis abuse controls, and session management. Legacy v2 is migration evidence only.
+M1 provides the executable API and Identity & Access database foundation. M2 adds Customer phone OTP, Driver phone plus permanent numeric access-code authentication, Dashboard password authentication, Ed25519 access tokens, rotating refresh sessions, Redis abuse controls, and application-scoped session management. Legacy v2 is migration evidence only.
 
 ## Requirements
 
@@ -26,18 +26,38 @@ The local API is available at:
 - OpenAPI UI: `http://localhost:3000/openapi`
 - OpenAPI JSON: `http://localhost:3000/openapi/json`
 
-All Customer App, Driver App, and Dashboard APIs use the single global prefix `/api/v1`. No unprefixed application aliases are exposed.
+All public application APIs use one of the authoritative server-owned boundaries below. No shared `/api/v1/auth`, unprefixed, or compatibility aliases are exposed, and request input cannot select an application or JWT audience.
 
 ### M2 authentication endpoints
 
-- `POST /api/v1/auth/phone/otp/request`
-- `POST /api/v1/auth/phone/otp/verify`
-- `POST /api/v1/auth/staff/login`
-- `POST /api/v1/auth/token/refresh`
-- `POST /api/v1/auth/logout`
-- `POST /api/v1/auth/logout-all`
-- `GET /api/v1/auth/sessions`
-- `DELETE /api/v1/auth/sessions/:sessionId`
+Customer Mobile (`CUSTOMER_APP`, audience `customer-app`, maximum five sessions):
+
+- `POST /api/v1/mobile/customer/auth/otp/request`
+- `POST /api/v1/mobile/customer/auth/otp/verify`
+- `POST /api/v1/mobile/customer/auth/token/refresh`
+- `POST /api/v1/mobile/customer/auth/logout`
+- `POST /api/v1/mobile/customer/auth/logout-all`
+- `GET /api/v1/mobile/customer/auth/sessions`
+- `DELETE /api/v1/mobile/customer/auth/sessions/:sessionId`
+
+Driver Mobile (`DRIVER_APP`, audience `driver-app`, one replaceable session):
+
+- `POST /api/v1/mobile/driver/auth/login`
+- `POST /api/v1/mobile/driver/auth/token/refresh`
+- `POST /api/v1/mobile/driver/auth/logout`
+- `GET /api/v1/mobile/driver/auth/sessions`
+- `DELETE /api/v1/mobile/driver/auth/sessions/:sessionId`
+
+Dashboard (`DASHBOARD`, audience `dashboard`, maximum three sessions):
+
+- `POST /api/v1/dashboard/auth/login`
+- `POST /api/v1/dashboard/auth/token/refresh`
+- `POST /api/v1/dashboard/auth/logout`
+- `POST /api/v1/dashboard/auth/logout-all`
+- `GET /api/v1/dashboard/auth/sessions`
+- `DELETE /api/v1/dashboard/auth/sessions/:sessionId`
+
+Driver login accepts a normalized phone and an ASCII-digit string `code` of 6–12 characters. Leading zeroes are significant. The nullable legacy-upgrade field stores only its Argon2id hash; Drivers without a hash fail with the same public error as unknown phones and wrong codes. Driver OTP and Driver `logout-all` do not exist.
 
 The development OTP adapter never returns or logs an OTP. Automated tests inject a capture-only adapter. No production SMS adapter is included, so production startup intentionally rejects the unsafe development/test adapters.
 

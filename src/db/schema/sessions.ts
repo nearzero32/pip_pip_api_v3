@@ -28,11 +28,12 @@ export const sessions = pgTable(
   (table) => [
     uniqueIndex("sessions_one_driver_session_uidx").on(table.accountId).where(sql`${table.applicationType} = 'DRIVER_APP' and ${table.revokedAt} is null`),
     index("sessions_account_active_expiry_idx").on(table.accountId, table.revokedAt, table.absoluteExpiresAt),
+    index("sessions_account_application_active_idx").on(table.accountId, table.applicationType, table.revokedAt, table.createdAt),
     index("sessions_expiry_idx").on(table.absoluteExpiresAt),
     index("sessions_account_device_idx").on(table.accountId, table.deviceId),
     check("sessions_expiry_after_creation_chk", sql`${table.absoluteExpiresAt} > ${table.createdAt}`),
     check("sessions_max_lifetime_chk", sql`${table.absoluteExpiresAt} <= ${table.createdAt} + interval '30 days'`),
-    check("sessions_auth_method_chk", sql`(${table.applicationType} = 'DASHBOARD' and ${table.authenticationMethod} = 'PASSWORD') or (${table.applicationType} in ('CUSTOMER_APP', 'DRIVER_APP') and ${table.authenticationMethod} = 'PHONE_OTP')`),
+    check("sessions_auth_method_chk", sql`(${table.applicationType} = 'DASHBOARD' and ${table.authenticationMethod} = 'PASSWORD') or (${table.applicationType} = 'CUSTOMER_APP' and ${table.authenticationMethod} = 'PHONE_OTP') or (${table.applicationType} = 'DRIVER_APP' and ${table.authenticationMethod} = 'DRIVER_ACCESS_CODE')`),
     check("sessions_revocation_reason_chk", sql`${table.revokedAt} is null or ${table.revocationReason} is not null`),
   ],
 );

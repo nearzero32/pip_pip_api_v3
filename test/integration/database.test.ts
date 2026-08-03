@@ -166,9 +166,14 @@ describe("PostgreSQL identity foundation", () => {
       await upgrade`insert into sessions(account_id,application_type,authentication_method,device_name,absolute_expires_at) values(${account!.id},'DASHBOARD','PASSWORD_TOTP','legacy dashboard',now()+interval '1 day')`;
       await applySqlFile(upgrade, "./drizzle/0004_supreme_cardiac.sql");
       await applySqlFile(upgrade, "./drizzle/0005_m2_auth_foundation.sql");
+      await applySqlFile(upgrade, "./drizzle/0006_square_gertrude_yorkes.sql");
+      await applySqlFile(upgrade, "./drizzle/0007_driver_access_code_foundation.sql");
       const [row] = await upgrade<{authentication_method:string}[]>`select authentication_method::text authentication_method from sessions`;
       expect(row!.authentication_method).toBe("PASSWORD");
       await expectDatabaseRejection(upgrade`insert into sessions(account_id,application_type,authentication_method,device_name,absolute_expires_at) values(${account!.id},'DASHBOARD','PASSWORD_TOTP','invalid',now()+interval '1 day')`);
+      const [column]=await upgrade<{is_nullable:string}[]>`select is_nullable from information_schema.columns where table_name='driver_profiles' and column_name='access_code_hash'`;
+      expect(column!.is_nullable).toBe("YES");
+      await expectDatabaseRejection(upgrade`insert into sessions(account_id,application_type,authentication_method,device_name,absolute_expires_at) values(${account!.id},'DRIVER_APP','PHONE_OTP','invalid driver auth',now()+interval '1 day')`);
     } finally {
       await upgrade.close();
       await admin.unsafe(`DROP DATABASE IF EXISTS "${upgradeName}" WITH (FORCE)`);

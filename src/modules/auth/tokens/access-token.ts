@@ -1,7 +1,8 @@
 import { decodeBase64Url, encodeBase64Url } from "../shared/encoding";
+import type { AuthApplication } from "../core/context";
 
-export type AuthApplication = "CUSTOMER_APP" | "DRIVER_APP" | "DASHBOARD";
-const audiences: Record<AuthApplication, string> = { CUSTOMER_APP: "pip-pip-customer", DRIVER_APP: "pip-pip-driver", DASHBOARD: "pip-pip-dashboard" };
+export type { AuthApplication } from "../core/context";
+const audiences: Record<AuthApplication, string> = { CUSTOMER_APP: "customer-app", DRIVER_APP: "driver-app", DASHBOARD: "dashboard" };
 export interface AccessTokenClaims { accountId: string; sessionId: string; applicationType: AuthApplication }
 export interface VerifiedAccessToken extends AccessTokenClaims { tokenId: string; expiresAt: number }
 

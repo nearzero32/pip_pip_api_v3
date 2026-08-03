@@ -46,6 +46,7 @@ export const driverProfiles = pgTable(
     approvedApplicationId: uuid("approved_application_id").notNull().unique().references(() => driverApplications.id),
     legacyVehicleDescription: text("legacy_vehicle_description"),
     driverPhotoObjectKey: text("driver_photo_object_key"),
+    accessCodeHash: text("access_code_hash"),
     statusReasonCode: text("status_reason_code"),
     statusChangedAt: instant("status_changed_at").notNull().defaultNow(),
     createdAt: instant("created_at").notNull().defaultNow(),

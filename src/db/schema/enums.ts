@@ -26,5 +26,5 @@ export const roleScopeType = pgEnum("role_scope_type", ["GLOBAL", "CITY"]);
 export const mfaMethod = pgEnum("mfa_method", ["TOTP"]);
 export const mfaCredentialStatus = pgEnum("mfa_credential_status", ["PENDING", "ACTIVE", "RESET", "REMOVED"]);
 export const applicationType = pgEnum("application_type", ["CUSTOMER_APP", "DRIVER_APP", "DASHBOARD"]);
-export const authenticationMethod = pgEnum("authentication_method", ["PHONE_OTP", "PASSWORD_TOTP", "PASSWORD"]);
+export const authenticationMethod = pgEnum("authentication_method", ["PHONE_OTP", "PASSWORD_TOTP", "PASSWORD", "DRIVER_ACCESS_CODE"]);
 export const auditOutcome = pgEnum("audit_outcome", ["SUCCESS", "FAILURE", "DENIED"]);
