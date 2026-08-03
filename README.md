@@ -5,7 +5,7 @@ M1 provides the executable API and Identity & Access database foundation. M2 add
 ## Requirements
 
 - Bun 1.3.14
-- Docker with Compose, or PostgreSQL 17 and Redis 7.4 for local execution
+- Docker with Compose, or PostgreSQL 17 with PostGIS 3.5 and Redis 7.4 for local execution
 
 ## Local development
 
@@ -17,7 +17,11 @@ bun run db:migrate
 bun run dev
 ```
 
-Compose publishes PostgreSQL on host port `5433` and Redis on `6380` to avoid conventional local ports; containers use `postgres:5432` and `redis:6379` internally. The one-shot `migrate` service runs after PostgreSQL is healthy. The API starts only after PostgreSQL and Redis are healthy and migrations succeed.
+Compose builds and runs `pip_pip_v3/postgis:17-3.5` from `docker/postgres-postgis` (PostgreSQL 17.6 Alpine + PostGIS 3.5.x). Upstream equivalent image is `postgis/postgis:17-3.5` (same majors). It publishes PostgreSQL on host port `5433` and Redis on `6380` to avoid conventional local ports; containers use `postgres:5432` and `redis:6379` internally. The one-shot `migrate` service runs after PostgreSQL is healthy. The API starts only after PostgreSQL and Redis are healthy and migrations succeed.
+
+### Production database (PostGIS)
+
+Production must run PostgreSQL 17 with PostGIS 3.5 available (same majors as Compose and integration tests). Recommended image: `postgis/postgis:17-3.5`, or an equivalent image that provides those majors. Migration `0010_lucky_korvac` executes `CREATE EXTENSION IF NOT EXISTS postgis;` and creates `zones.boundary` as `geometry(Polygon,4326)` with a GIST index. Enable PostGIS packages before applying that migration; plain PostgreSQL without PostGIS is not supported.
 
 The local API is available at:
 
@@ -70,7 +74,7 @@ bun run db:migrate
 bun run db:seed
 ```
 
-No Governorate or City has a code, slug, visibility Boolean, Zone, boundary, geometry, or PostGIS field.
+No Governorate or City has a code, slug, visibility Boolean, or City-boundary geometry. Zones are City-scoped PostGIS polygons (`geometry(Polygon,4326)`) managed under M3-B1.
 
 The development OTP adapter never returns or logs an OTP. Automated tests inject a capture-only adapter. No production SMS adapter is included, so production startup intentionally rejects the unsafe development/test adapters.
 
@@ -85,7 +89,7 @@ Liveness is process-only. Readiness checks PostgreSQL and Redis independently an
 | `bun run build` | Build to `dist/` with Bun |
 | `bun run typecheck` | Strict TypeScript check |
 | `bun test` / `bun run test:unit` | Unit tests; PostgreSQL is not required |
-| `bun run test:integration` | Real temporary-PostgreSQL integration tests |
+| `bun run test:integration` | Real temporary-PostGIS integration tests (requires Compose PostGIS image `pip_pip_v3/postgis:17-3.5`) |
 | `bun run db:generate` | Generate deterministic SQL migrations from Drizzle schema |
 | `bun run db:migrate` | Apply generated migrations from source |
 | `bun run db:migrate:prod` | Apply generated migrations from the production bundle |
@@ -157,4 +161,4 @@ No schema column stores plaintext passwords, OTPs, raw access/refresh/reset toke
 
 ## Intentionally deferred
 
-MFA, TOTP application behavior, recovery codes, password reset, forgot-password, staff invitations, real SMS delivery, driver onboarding/submission/review, cities, zones, PostGIS, Orders, Carts, Merchants, Wallets, Notifications, object storage, v2 migration, queues, background jobs, and frontend code are not implemented. Existing M1 tables for deferred MFA/reset foundations remain unused.
+MFA, TOTP application behavior, recovery codes, password reset, forgot-password, staff invitations, real SMS delivery, driver onboarding/submission/review, pricing/delivery fees, Orders, Carts, Merchants, Wallets, Notifications, object storage, v2 migration, queues, background jobs, and frontend code are not implemented. Existing M1 tables for deferred MFA/reset foundations remain unused.

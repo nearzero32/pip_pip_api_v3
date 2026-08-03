@@ -32,9 +32,14 @@ export function createApp(dependencies: AppDependencies) {
           { name: "Dashboard — Governorates", description: "Governorate administration" },
           { name: "Dashboard — Cities", description: "City administration" },
           {
+            name: "Dashboard — Zones",
+            description:
+              "City-scoped Zone administration for ADMIN and granted employees. SUPER_ADMIN has no Zone access.",
+          },
+          {
             name: "Public — Geography",
             description:
-              "Unauthenticated geography reads for pre-login City selection (active cities under active governorates only)",
+              "Unauthenticated geography reads for pre-login City selection and City-scoped Zone lookup via X-City-Id",
           },
         ],
         components: {

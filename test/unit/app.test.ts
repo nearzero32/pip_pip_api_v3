@@ -90,11 +90,11 @@ describe("API foundation", () => {
   test("registers M3-A geography routes without prohibited request fields", async () => {
     const app=createApp({logger:silentLogger,production:false,readinessCheck:async()=>undefined,authModule:fakeModule(),geographyService:{} as GeographyService});
     const document=await (await app.handle(new Request("http://localhost/openapi/json"))).json() as {paths:Record<string,unknown>};
-    for(const path of ["/api/v1/dashboard/governorates","/api/v1/dashboard/governorates/{governorateId}","/api/v1/dashboard/cities","/api/v1/dashboard/cities/{cityId}","/api/v1/dashboard/cities/{cityId}/activate","/api/v1/dashboard/cities/{cityId}/suspend","/api/v1/dashboard/cities/{cityId}/archive","/api/v1/public/cities"]) expect(document.paths[path]).toBeDefined();
+    for(const path of ["/api/v1/dashboard/governorates","/api/v1/dashboard/governorates/{governorateId}","/api/v1/dashboard/cities","/api/v1/dashboard/cities/{cityId}","/api/v1/dashboard/cities/{cityId}/activate","/api/v1/dashboard/cities/{cityId}/suspend","/api/v1/dashboard/cities/{cityId}/archive","/api/v1/public/cities","/api/v1/dashboard/zones","/api/v1/dashboard/zones/{zoneId}","/api/v1/public/zones","/api/v1/public/zones/resolve"]) expect(document.paths[path]).toBeDefined();
     expect(document.paths["/api/v1/mobile/customer/cities"]).toBeUndefined();
     expect(document.paths["/api/v1/mobile/driver/cities"]).toBeUndefined();
     expect(document.paths["/api/v1/public/governorates"]).toBeUndefined();
-    const geographyText=JSON.stringify(Object.fromEntries(Object.entries(document.paths).filter(([path])=>path.includes("governorates")||path.includes("cities")).map(([path,operations])=>[path,Object.fromEntries(Object.entries(operations as Record<string,unknown>).map(([method,operation])=>[method,{requestBody:(operation as {requestBody?:unknown}).requestBody,parameters:(operation as {parameters?:unknown}).parameters}]))])));
+    const geographyText=JSON.stringify(Object.fromEntries(Object.entries(document.paths).filter(([path])=>path.includes("governorates")||path.includes("/cities")).map(([path,operations])=>[path,Object.fromEntries(Object.entries(operations as Record<string,unknown>).map(([method,operation])=>[method,{requestBody:(operation as {requestBody?:unknown}).requestBody,parameters:(operation as {parameters?:unknown}).parameters}]))])));
     for(const field of ["code","slug","isVisible","isDisplay","boundary","polygon","geometry","zoneId"]) expect(geographyText.includes(`\"${field}\"`)).toBeFalse();
   });
 

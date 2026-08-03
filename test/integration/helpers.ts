@@ -130,6 +130,13 @@ export async function createIntegrationHarness(options?: {
   const tracked = options?.trackClient ? trackSql(raw) : undefined;
   const client = tracked?.client ?? raw;
   await applyMigrations(raw);
+  const [postgis] = await raw<{ installed: boolean }[]>`
+    select exists(select 1 from pg_extension where extname = 'postgis') as installed`;
+  if (!postgis?.installed) {
+    throw new Error(
+      "PostGIS extension is required for integration tests; use postgis/postgis:17-3.5",
+    );
+  }
   if (options?.seed !== false) await seedGovernorates(raw);
   const clock = { value: Date.now(), advance: () => { clock.value += 3_600_001; } };
   const delivery = new TestOtpDelivery();

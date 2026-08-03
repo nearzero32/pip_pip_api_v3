@@ -30,3 +30,4 @@ export const authenticationMethod = pgEnum("authentication_method", ["PHONE_OTP"
 export const auditOutcome = pgEnum("audit_outcome", ["SUCCESS", "FAILURE", "DENIED"]);
 export const governorateStatus = pgEnum("governorate_status", ["ACTIVE", "INACTIVE"]);
 export const cityStatus = pgEnum("city_status", ["DRAFT", "ACTIVE", "SUSPENDED", "ARCHIVED"]);
+export const zoneStatus = pgEnum("zone_status", ["ACTIVE", "INACTIVE", "ARCHIVED"]);

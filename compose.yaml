@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgres:17.6-alpine
+    image: pip_pip_v3/postgis:17-3.5
+    build:
+      context: ./docker/postgres-postgis
     restart: unless-stopped
     environment:
       POSTGRES_DB: pip_pip_v3

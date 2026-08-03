@@ -71,6 +71,13 @@
       "when": 1785750963217,
       "tag": "0009_easy_morg",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785762048838,
+      "tag": "0010_lucky_korvac",
+      "breakpoints": true
     }
   ]
 }
