@@ -15,26 +15,74 @@ const clean = (value: string, field: string) => {
   if (!result) throw new AppError(422, "VALIDATION_FAILED", `Invalid ${field}`);
   return result;
 };
-const dateValue = (value: unknown) => value instanceof Date ? value.toISOString() : value == null ? null : new Date(String(value)).toISOString();
-const numberValue = (value: unknown) => { const n = typeof value === "number" ? value : Number(value); if (!Number.isFinite(n)) throw new AppError(500, "INTERNAL_ERROR", "Invalid coordinate value"); return n; };
+const dateValue = (value: unknown) =>
+  value instanceof Date
+    ? value.toISOString()
+    : value == null
+      ? null
+      : new Date(String(value)).toISOString();
+const numberValue = (value: unknown) => {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n))
+    throw new AppError(500, "INTERNAL_ERROR", "Invalid coordinate value");
+  return n;
+};
 const sqlCode = (error: unknown): string | undefined => {
   if (!error || typeof error !== "object") return undefined;
   const record = error as Record<string, unknown>;
   if (typeof record.code === "string") return record.code;
   return sqlCode(record.cause);
 };
-const governorateSummary = (row: Record<string, unknown>): any => ({ id: row.governorate_id, nameAr: row.governorate_name_ar, nameEn: row.governorate_name_en, status: row.governorate_status });
-const governorateDto = (row: Record<string, unknown>): any => ({ id: row.id, nameAr: row.name_ar, nameEn: row.name_en, status: row.status, displayOrder: row.display_order, createdAt: dateValue(row.created_at), updatedAt: dateValue(row.updated_at) });
-const cityDto = (row: Record<string, unknown>): any => ({ id: row.id, governorateId: row.governorate_id, nameAr: row.name_ar, nameEn: row.name_en, latitude: numberValue(row.latitude), longitude: numberValue(row.longitude), status: row.status, displayOrder: row.display_order, createdAt: dateValue(row.created_at), updatedAt: dateValue(row.updated_at), archivedAt: dateValue(row.archived_at), governorate: governorateSummary(row) });
-const mobileCityDto = (row: Record<string, unknown>): any => ({ id: row.id, nameAr: row.name_ar, nameEn: row.name_en, latitude: numberValue(row.latitude), longitude: numberValue(row.longitude), displayOrder: row.display_order, governorate: { id: row.governorate_id, nameAr: row.governorate_name_ar, nameEn: row.governorate_name_en } });
+const governorateSummary = (row: Record<string, unknown>): any => ({
+  id: row.governorate_id,
+  nameAr: row.governorate_name_ar,
+  nameEn: row.governorate_name_en,
+  status: row.governorate_status,
+});
+const governorateDto = (row: Record<string, unknown>): any => ({
+  id: row.id,
+  nameAr: row.name_ar,
+  nameEn: row.name_en,
+  status: row.status,
+  displayOrder: row.display_order,
+  createdAt: dateValue(row.created_at),
+  updatedAt: dateValue(row.updated_at),
+});
+const cityDto = (row: Record<string, unknown>): any => ({
+  id: row.id,
+  governorateId: row.governorate_id,
+  nameAr: row.name_ar,
+  nameEn: row.name_en,
+  latitude: numberValue(row.latitude),
+  longitude: numberValue(row.longitude),
+  status: row.status,
+  displayOrder: row.display_order,
+  createdAt: dateValue(row.created_at),
+  updatedAt: dateValue(row.updated_at),
+  archivedAt: dateValue(row.archived_at),
+  governorate: governorateSummary(row),
+});
+const mobileCityDto = (row: Record<string, unknown>): any => ({
+  id: row.id,
+  nameAr: row.name_ar,
+  nameEn: row.name_en,
+  latitude: numberValue(row.latitude),
+  longitude: numberValue(row.longitude),
+  displayOrder: row.display_order,
+  governorate: {
+    id: row.governorate_id,
+    nameAr: row.governorate_name_ar,
+    nameEn: row.governorate_name_en,
+  },
+});
 
 export class GeographyService {
   constructor(
     private client: SQL,
     private sessions: SessionService,
-  ) { }
-  private async superAdmin(identity: AuthIdentity) {
-    await this.sessions.requireSuperAdmin(identity);
+  ) {}
+  private superAdmin(identity: AuthIdentity) {
+    this.sessions.requireSuperAdmin(identity);
   }
   async governorates(input: {
     search?: string;
@@ -59,16 +107,25 @@ export class GeographyService {
     const [count] = await this.client<
       { total: string }[]
     >`select count(*)::text total from governorates where (${search} is null or name_ar ilike ${`%${search}%`} or name_en ilike ${`%${search}%`}) and (${input.status ?? null} is null or status=${input.status ?? null}::governorate_status)`;
-    return { data: rows.map((row) => governorateDto(row)), page, limit, total: Number(count?.total ?? 0) };
+    return {
+      data: rows.map((row) => governorateDto(row)),
+      page,
+      limit,
+      total: Number(count?.total ?? 0),
+    };
   }
   async updateGovernorate(
     identity: AuthIdentity,
     id: string,
     input: { status?: "ACTIVE" | "INACTIVE"; displayOrder?: number },
   ) {
-    await this.superAdmin(identity);
+    this.superAdmin(identity);
     if (Object.keys(input).length === 0)
-      throw new AppError(422, "VALIDATION_FAILED", "At least one field is required");
+      throw new AppError(
+        422,
+        "VALIDATION_FAILED",
+        "At least one field is required",
+      );
     if (input.status === undefined && input.displayOrder === undefined)
       throw new AppError(
         422,
@@ -101,7 +158,9 @@ export class GeographyService {
       .client`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where (${input.governorateId ?? null} is null or c.governorate_id=${input.governorateId ?? null}) and (${input.mobile ? "ACTIVE" : (input.status ?? null)} is null or c.status=${input.mobile ? "ACTIVE" : (input.status ?? null)}::city_status) and (${input.mobile ? "ACTIVE" : null} is null or g.status='ACTIVE') and (${search} is null or c.name_ar ilike ${`%${search}%`} or c.name_en ilike ${`%${search}%`}) order by c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
     const [count] = await this
       .client`select count(*)::text total from cities c join governorates g on g.id=c.governorate_id where (${input.governorateId ?? null} is null or c.governorate_id=${input.governorateId ?? null}) and (${input.mobile ? "ACTIVE" : (input.status ?? null)} is null or c.status=${input.mobile ? "ACTIVE" : (input.status ?? null)}::city_status) and (${input.mobile ? "ACTIVE" : null} is null or g.status='ACTIVE') and (${search} is null or c.name_ar ilike ${`%${search}%`} or c.name_en ilike ${`%${search}%`})`;
-    const data = rows.map((row: Record<string, unknown>) => input.mobile ? mobileCityDto(row) : cityDto(row));
+    const data = rows.map((row: Record<string, unknown>) =>
+      input.mobile ? mobileCityDto(row) : cityDto(row),
+    );
     return { data, page, limit, total: Number(count?.total ?? 0) };
   }
   async city(id: string) {
@@ -121,7 +180,7 @@ export class GeographyService {
       displayOrder: number;
     },
   ) {
-    await this.superAdmin(identity);
+    this.superAdmin(identity);
     this.validateCoordinates(
       input.latitude,
       input.longitude,
@@ -151,9 +210,13 @@ export class GeographyService {
       displayOrder?: number;
     },
   ) {
-    await this.superAdmin(identity);
+    this.superAdmin(identity);
     if (Object.keys(input).length === 0)
-      throw new AppError(422, "VALIDATION_FAILED", "At least one field is required");
+      throw new AppError(
+        422,
+        "VALIDATION_FAILED",
+        "At least one field is required",
+      );
     if (
       input.latitude !== undefined ||
       input.longitude !== undefined ||
@@ -171,7 +234,8 @@ export class GeographyService {
       [row] = await this
         .client`update cities set governorate_id=coalesce(${input.governorateId ?? null},governorate_id),name_ar=coalesce(${input.nameAr === undefined ? null : clean(input.nameAr, "Arabic name")},name_ar),name_en=coalesce(${input.nameEn === undefined ? null : clean(input.nameEn, "English name")},name_en),latitude=coalesce(${input.latitude ?? null},latitude),longitude=coalesce(${input.longitude ?? null},longitude),display_order=coalesce(${input.displayOrder ?? null},display_order),updated_at=now() where id=${id} and status<>'ARCHIVED' returning *`;
     } catch (error) {
-      if (sqlCode(error) === "23503") throw new AppError(422, "INVALID_GOVERNORATE", "Governorate not found");
+      if (sqlCode(error) === "23503")
+        throw new AppError(422, "INVALID_GOVERNORATE", "Governorate not found");
       throw error;
     }
     if (!row)
@@ -206,7 +270,7 @@ export class GeographyService {
     id: string,
     target: "ACTIVE" | "SUSPENDED" | "ARCHIVED",
   ) {
-    await this.superAdmin(identity);
+    this.superAdmin(identity);
     return this.client.begin(async (tx) => {
       const [current] = await tx<
         { status: string }[]
@@ -226,7 +290,8 @@ export class GeographyService {
         );
       const [row] =
         await tx`update cities set status=${target}::city_status,archived_at=${target === "ARCHIVED" ? new Date() : null},updated_at=now() where id=${id} returning *`;
-      const [full] = await tx`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where c.id=${String((row as Record<string, unknown>).id)}`;
+      const [full] =
+        await tx`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where c.id=${String((row as Record<string, unknown>).id)}`;
       return cityDto(full as Record<string, unknown>);
     });
   }

@@ -39,12 +39,26 @@ describe("M2 security primitives", () => {
   });
   test("signs and strictly validates EdDSA issuer audience expiry and application", async () => {
     const service = new Ed25519AccessTokenService({issuer:"issuer",keyId:"kid",privateKeyBase64:privateKey,publicKeyBase64:publicKey,lifetimeSeconds:600});
-    const signed = await service.sign({accountId:crypto.randomUUID(),sessionId:crypto.randomUUID(),applicationType:"CUSTOMER_APP"},1000);
-    expect((await service.verify(signed.token,"CUSTOMER_APP",1001)).applicationType).toBe("CUSTOMER_APP");
+    const signed = await service.sign({accountId:crypto.randomUUID(),sessionId:crypto.randomUUID(),applicationType:"CUSTOMER_APP",roles:["SUPER_ADMIN"]},1000);
+    const verified = await service.verify(signed.token,"CUSTOMER_APP",1001);
+    expect(verified.applicationType).toBe("CUSTOMER_APP");
+    expect(verified.roles).toEqual([]);
     await expect(service.verify(signed.token,"DRIVER_APP",1001)).rejects.toThrow();
     await expect(service.verify(signed.token,"CUSTOMER_APP",1600)).rejects.toThrow();
     const wrongIssuer = new Ed25519AccessTokenService({issuer:"other",keyId:"kid",privateKeyBase64:privateKey,publicKeyBase64:publicKey,lifetimeSeconds:600});
     await expect(wrongIssuer.verify(signed.token,"CUSTOMER_APP",1001)).rejects.toThrow();
+  });
+  test("embeds Dashboard role claims and rejects forged or cross-audience role use", async () => {
+    const service = new Ed25519AccessTokenService({issuer:"issuer",keyId:"kid",privateKeyBase64:privateKey,publicKeyBase64:publicKey,lifetimeSeconds:600});
+    const accountId = crypto.randomUUID(), sessionId = crypto.randomUUID();
+    const dashboard = await service.sign({accountId,sessionId,applicationType:"DASHBOARD",roles:["SUPER_ADMIN","SUPPORT"]},1000);
+    expect((await service.verify(dashboard.token,"DASHBOARD",1001)).roles).toEqual(["SUPER_ADMIN","SUPPORT"]);
+    await expect(service.verify(dashboard.token,"CUSTOMER_APP",1001)).rejects.toThrow();
+    const forgedPayload = Buffer.from(JSON.stringify({iss:"issuer",aud:"dashboard",sub:accountId,sid:sessionId,app:"DASHBOARD",roles:["SUPER_ADMIN"],iat:1000,exp:1600,jti:crypto.randomUUID()})).toString("base64url");
+    const [header] = dashboard.token.split(".");
+    await expect(service.verify(`${header}.${forgedPayload}.AAAA`, "DASHBOARD", 1001)).rejects.toThrow();
+    const customer = await service.sign({accountId,sessionId,applicationType:"CUSTOMER_APP",roles:[]},1000);
+    expect((await service.verify(customer.token,"CUSTOMER_APP",1001)).roles).toEqual([]);
   });
   test("rate limiter is deterministic and honors TTL", async () => {
     let now=0; const limiter=new InMemoryRateLimiter(()=>now); const policy={limit:2,windowSeconds:10};
