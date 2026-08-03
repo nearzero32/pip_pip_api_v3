@@ -10,7 +10,16 @@ function appWith(readinessCheck: () => Promise<void> = async () => undefined) {
 }
 const fakeModule = (overrides: Partial<AuthModule> = {}): AuthModule => {
   const empty = new Proxy({}, { get: () => async () => ({}) });
-  return { customer: empty, driver: empty, dashboard: empty, sessions: empty, roles: empty, ...overrides } as AuthModule;
+  return {
+    customer: empty,
+    driver: empty,
+    dashboard: empty,
+    sessions: empty,
+    roles: empty,
+    staff: empty,
+    client: empty,
+    ...overrides,
+  } as AuthModule;
 };
 
 describe("API foundation", () => {
@@ -353,6 +362,8 @@ describe("API foundation", () => {
             sessionId: crypto.randomUUID(),
             applicationType: "DASHBOARD",
             roles: ["SUPER_ADMIN"],
+            scopeType: "GLOBAL",
+            cityId: null,
           }),
           requireSuperAdmin: () => undefined,
         } as never,

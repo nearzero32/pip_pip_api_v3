@@ -28,6 +28,7 @@ export function createApp(dependencies: AppDependencies) {
           { name: "Mobile — Customer Authentication", description: "Customer phone OTP authentication" },
           { name: "Mobile — Driver Authentication", description: "Driver phone and numeric access-code authentication" },
           { name: "Dashboard — Authentication", description: "Dashboard email and password authentication" },
+          { name: "Dashboard — Staff", description: "SUPER_ADMIN ADMIN management and ADMIN employee management" },
           { name: "Dashboard — Governorates", description: "Governorate administration" },
           { name: "Dashboard — Cities", description: "City administration" },
           {
@@ -36,7 +37,21 @@ export function createApp(dependencies: AppDependencies) {
               "Unauthenticated geography reads for pre-login City selection (active cities under active governorates only)",
           },
         ],
-        components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } } },
+        components: {
+          securitySchemes: {
+            bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+          },
+          parameters: {
+            CityIdHeader: {
+              name: "X-City-Id",
+              in: "header",
+              required: true,
+              description:
+                "Canonical public/mobile City selection header. UUID of an ACTIVE City under an ACTIVE Governorate. Not an authentication credential and never overrides Dashboard signed City scope.",
+              schema: { type: "string", format: "uuid" },
+            },
+          },
+        },
       },
     }))
     .derive(({ request, set }) => {

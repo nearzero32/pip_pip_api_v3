@@ -20,11 +20,20 @@ export const DASHBOARD_ROLE_CODES = [
 export type DashboardRoleCode = (typeof DASHBOARD_ROLE_CODES)[number];
 const dashboardRoleSet = new Set<string>(DASHBOARD_ROLE_CODES);
 
+export type DashboardScopeType = "GLOBAL" | "CITY";
+
+export type DashboardScopeClaims =
+  | { scopeType: "GLOBAL"; cityId: null }
+  | { scopeType: "CITY"; cityId: string };
+
 export interface AccessTokenClaims {
   accountId: string;
   sessionId: string;
   applicationType: AuthApplication;
   roles: string[];
+  /** Present only for Dashboard tokens. */
+  scopeType?: DashboardScopeType | null;
+  cityId?: string | null;
 }
 
 export interface VerifiedAccessToken extends AccessTokenClaims {
@@ -35,6 +44,12 @@ export interface VerifiedAccessToken extends AccessTokenClaims {
 const isDashboardRoleCode = (value: unknown): value is DashboardRoleCode =>
   typeof value === "string" && dashboardRoleSet.has(value);
 
+const isUuid = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+
 const parseRolesClaim = (
   value: unknown,
   applicationType: AuthApplication,
@@ -43,6 +58,34 @@ const parseRolesClaim = (
   if (!Array.isArray(value)) throw new Error("INVALID_TOKEN");
   if (!value.every(isDashboardRoleCode)) throw new Error("INVALID_TOKEN");
   return [...value];
+};
+
+const parseDashboardScope = (
+  payload: Record<string, unknown>,
+  roles: string[],
+): DashboardScopeClaims => {
+  const scopeType = payload.scopeType;
+  const cityId = payload.cityId;
+  if (scopeType === "GLOBAL") {
+    if (cityId !== null) throw new Error("INVALID_TOKEN");
+    if (!roles.includes("SUPER_ADMIN")) throw new Error("INVALID_TOKEN");
+    if (roles.some((role) => role !== "SUPER_ADMIN"))
+      throw new Error("INVALID_TOKEN");
+    return { scopeType: "GLOBAL", cityId: null };
+  }
+  if (scopeType === "CITY") {
+    if (!isUuid(cityId)) throw new Error("INVALID_TOKEN");
+    if (roles.includes("SUPER_ADMIN")) throw new Error("INVALID_TOKEN");
+    if (
+      !roles.includes("ADMIN") &&
+      !roles.some((role) =>
+        ["OPERATIONS", "ACCOUNTANT", "SUPPORT"].includes(role),
+      )
+    )
+      throw new Error("INVALID_TOKEN");
+    return { scopeType: "CITY", cityId };
+  }
+  throw new Error("INVALID_TOKEN");
 };
 
 export class Ed25519AccessTokenService {
@@ -83,6 +126,16 @@ export class Ed25519AccessTokenService {
       input.applicationType === "DASHBOARD"
         ? input.roles.filter(isDashboardRoleCode)
         : [];
+    const scopePayload =
+      input.applicationType === "DASHBOARD"
+        ? {
+            scopeType: input.scopeType ?? null,
+            cityId: input.cityId ?? null,
+          }
+        : {};
+    if (input.applicationType === "DASHBOARD") {
+      parseDashboardScope(scopePayload, roles);
+    }
     const header = encodeBase64Url(
       JSON.stringify({ alg: "EdDSA", typ: "JWT", kid: this.config.keyId }),
     );
@@ -94,6 +147,7 @@ export class Ed25519AccessTokenService {
         sid: input.sessionId,
         app: input.applicationType,
         roles,
+        ...scopePayload,
         iat: now,
         exp: expiresAt,
         jti: crypto.randomUUID(),
@@ -144,7 +198,8 @@ export class Ed25519AccessTokenService {
     const p = JSON.parse(
       new TextDecoder().decode(decodeBase64Url(rawPayload)),
     ) as Record<string, unknown>;
-    if (p.aud !== audiences[expectedApplication]) throw new Error("INVALID_TOKEN");
+    if (p.aud !== audiences[expectedApplication])
+      throw new Error("INVALID_TOKEN");
     if (
       p.iss !== this.config.issuer ||
       p.app !== expectedApplication ||
@@ -159,11 +214,17 @@ export class Ed25519AccessTokenService {
     )
       throw new Error("INVALID_TOKEN");
     const roles = parseRolesClaim(p.roles, expectedApplication);
+    const scope =
+      expectedApplication === "DASHBOARD"
+        ? parseDashboardScope(p, roles)
+        : { scopeType: null as null, cityId: null as null };
     return {
       accountId: p.sub,
       sessionId: p.sid,
       applicationType: expectedApplication,
       roles,
+      scopeType: scope.scopeType,
+      cityId: scope.cityId,
       tokenId: p.jti,
       expiresAt: p.exp,
     };

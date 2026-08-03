@@ -78,6 +78,7 @@ export { requestIdOf };
 export const assertAllowedBodyKeys = (body: unknown, allowed: Set<string>) => {
   if (!body || typeof body !== "object" || Array.isArray(body)) return;
   for (const key of Object.keys(body as Record<string, unknown>)) {
-    if (!allowed.has(key)) throw new Error("GEOGRAPHY_UNKNOWN_PROPERTY");
+    if (!allowed.has(key))
+      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
   }
 };

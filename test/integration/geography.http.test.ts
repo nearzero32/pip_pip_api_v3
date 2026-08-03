@@ -30,10 +30,21 @@ describe("M3-A Geography HTTP routes", () => {
       password,
       roles: ["SUPER_ADMIN"],
     });
+    const cityIdForStaff = (
+      await harness.client<{ id: string }[]>`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,status,display_order) values(${seededGovernorateId},'طاقم','Staff City',33.3,44.4,'ACTIVE',1) returning id`
+    )[0]!.id;
+    const adminId = await createStaffAccount(harness.auth, harness.client, {
+      email: "geo-city-admin@example.com",
+      password,
+      roles: ["ADMIN"],
+      cityId: cityIdForStaff,
+    });
     await createStaffAccount(harness.auth, harness.client, {
       email: "geo-support@example.com",
       password,
       roles: ["SUPPORT"],
+      cityId: cityIdForStaff,
+      managedByAccountId: adminId,
     });
     superToken = (
       await harness.auth.dashboard.login({

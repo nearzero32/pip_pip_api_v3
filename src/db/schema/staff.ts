@@ -4,6 +4,7 @@ import { boolean, check, foreignKey, index, pgTable, primaryKey, text, uniqueInd
 import { accounts } from "./accounts";
 import { instant } from "./columns";
 import { recordStatus, roleScopeType, staffProfileStatus, staffRoleCode } from "./enums";
+import { cities } from "./geography";
 
 export const staffProfiles = pgTable(
   "staff_profiles",
@@ -14,6 +15,8 @@ export const staffProfiles = pgTable(
     displayName: text("display_name"),
     employeeReference: text("employee_reference").unique(),
     invitedByStaffId: uuid("invited_by_staff_id"),
+    /** Owning ADMIN account for employees; null for SUPER_ADMIN and ADMIN. */
+    managedByAccountId: uuid("managed_by_account_id").references(() => accounts.id),
     statusReasonCode: text("status_reason_code"),
     statusChangedAt: instant("status_changed_at").notNull().defaultNow(),
     createdAt: instant("created_at").notNull().defaultNow(),
@@ -27,6 +30,7 @@ export const staffProfiles = pgTable(
     }),
     index("staff_profiles_status_idx").on(table.status),
     index("staff_profiles_invited_by_idx").on(table.invitedByStaffId),
+    index("staff_profiles_managed_by_idx").on(table.managedByAccountId),
   ],
 );
 
@@ -87,8 +91,15 @@ export const accountRoleScopes = pgTable(
   (table) => [
     uniqueIndex("account_role_scopes_global_uidx").on(table.accountRoleId).where(sql`${table.scopeType} = 'GLOBAL'`),
     uniqueIndex("account_role_scopes_city_uidx").on(table.accountRoleId, table.scopeReferenceId).where(sql`${table.scopeType} = 'CITY'`),
+    /** At most one CITY scope per role assignment (ADMIN/employee exactly one City). */
+    uniqueIndex("account_role_scopes_one_city_uidx").on(table.accountRoleId).where(sql`${table.scopeType} = 'CITY'`),
     index("account_role_scopes_lookup_idx").on(table.scopeType, table.scopeReferenceId),
     check("account_role_scopes_reference_chk", sql`(${table.scopeType} = 'GLOBAL' and ${table.scopeReferenceId} is null) or (${table.scopeType} = 'CITY' and ${table.scopeReferenceId} is not null)`),
+    foreignKey({
+      name: "account_role_scopes_city_id_cities_id_fk",
+      columns: [table.scopeReferenceId],
+      foreignColumns: [cities.id],
+    }),
   ],
 );
 
@@ -103,6 +114,33 @@ export const rolePermissions = pgTable(
   (table) => [
     primaryKey({ name: "role_permissions_pk", columns: [table.roleId, table.permissionId] }),
     index("role_permissions_permission_role_idx").on(table.permissionId, table.roleId),
+  ],
+);
+
+/**
+ * Explicit per-account permission grants for City employees.
+ * ADMIN authority is implicit for its City; grants are not used for ADMIN/SUPER_ADMIN.
+ * Evaluated from DB on each authorization check (not signed into JWTs).
+ */
+export const accountPermissionGrants = pgTable(
+  "account_permission_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id").notNull().references(() => accounts.id),
+    permissionId: uuid("permission_id").notNull().references(() => permissions.id),
+    grantedAt: instant("granted_at").notNull().defaultNow(),
+    grantedByAccountId: uuid("granted_by_account_id").notNull().references(() => accounts.id),
+    revokedAt: instant("revoked_at"),
+    revokedByAccountId: uuid("revoked_by_account_id").references(() => accounts.id),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("account_permission_grants_active_uidx")
+      .on(table.accountId, table.permissionId)
+      .where(sql`${table.revokedAt} is null`),
+    index("account_permission_grants_account_idx").on(table.accountId, table.revokedAt),
+    index("account_permission_grants_permission_idx").on(table.permissionId),
   ],
 );
 

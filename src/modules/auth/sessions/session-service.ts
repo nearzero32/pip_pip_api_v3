@@ -7,12 +7,16 @@ import type { HmacSecretVerifier } from "../shared/secret-verifier";
 import type { Ed25519AccessTokenService } from "../tokens/access-token";
 import type { AuthenticationContext, AuthApplication } from "../core/context";
 import type { SecurityAuditWriter } from "../audit/audit-writer";
+import { loadTrustedDashboardContext } from "../staff/dashboard-scope";
+import { requireSuperAdmin as assertSuperAdmin } from "../staff/authorization";
 
 export type AuthIdentity = {
   accountId: string;
   sessionId: string;
   applicationType: AuthApplication;
   roles: string[];
+  scopeType: "GLOBAL" | "CITY" | null;
+  cityId: string | null;
 };
 export type SessionResult = {
   access_token: string;
@@ -69,30 +73,22 @@ export class SessionService {
     return { sessionId, refreshToken };
   }
 
-  private async loadDashboardRoles(
-    client: SQL,
-    accountId: string,
-  ): Promise<string[]> {
-    const rows = await client<
-      { code: string }[]
-    >`select r.code::text as code from account_roles ar join roles r on r.id=ar.role_id where ar.account_id=${accountId} and ar.revoked_at is null and r.status='ACTIVE' and ar.valid_from<=now() and (ar.valid_until is null or ar.valid_until>now()) order by r.code`;
-    return rows.map((row) => row.code);
-  }
-
   async result(
     accountId: string,
     created: { sessionId: string; refreshToken: string },
     context: AuthenticationContext,
   ): Promise<SessionResult> {
-    const roles =
+    const dashboard =
       context.applicationType === "DASHBOARD"
-        ? await this.loadDashboardRoles(this.client, accountId)
-        : [];
+        ? await loadTrustedDashboardContext(this.client, accountId)
+        : null;
     const access = await this.tokens.sign({
       accountId,
       sessionId: created.sessionId,
       applicationType: context.applicationType,
-      roles,
+      roles: dashboard?.roles ?? [],
+      scopeType: dashboard?.scopeType ?? null,
+      cityId: dashboard?.cityId ?? null,
     });
     return {
       access_token: access.token,
@@ -105,8 +101,8 @@ export class SessionService {
 
   /**
    * Per-request eligibility without consulting account_roles/roles.
-   * Dashboard authorization uses signed token role claims; role revocation
-   * invalidates sessions through DashboardRoleService instead.
+   * Dashboard authorization uses signed token role/scope claims; role and City
+   * changes revoke sessions through staff services instead.
    */
   private async stateAllowed(client: SQL, row: SessionRow): Promise<boolean> {
     const found =
@@ -125,6 +121,8 @@ export class SessionService {
         sessionId: verified.sessionId,
         applicationType: verified.applicationType,
         roles: verified.roles,
+        scopeType: verified.scopeType ?? null,
+        cityId: verified.cityId ?? null,
       };
     } catch {
       throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
@@ -343,11 +341,15 @@ export class SessionService {
   }
 
   requireSuperAdmin(identity: AuthIdentity): void {
-    if (
-      identity.applicationType !== "DASHBOARD" ||
-      !identity.roles.includes("SUPER_ADMIN")
-    ) {
-      throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
-    }
+    assertSuperAdmin(identity);
+  }
+
+  async revokeDashboardSessionsForAccounts(
+    tx: SQL,
+    accountIds: string[],
+    reason: string,
+  ) {
+    if (!accountIds.length) return;
+    await tx`update sessions set revoked_at=now(),revocation_reason=${reason},updated_at=now() where account_id in ${tx(accountIds)} and application_type='DASHBOARD' and revoked_at is null`;
   }
 }

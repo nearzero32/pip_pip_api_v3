@@ -4,12 +4,7 @@ import type { DashboardRoleCode } from "../tokens/access-token";
 import { DASHBOARD_ROLE_CODES } from "../tokens/access-token";
 
 export type RoleAssignmentResult = {
-  /** True when an assignment row was inserted or revoked. False when the request was a no-op. */
   changed: boolean;
-  /**
-   * Sessions are revoked only when `changed` is true.
-   * Idempotent no-ops (already assigned / already revoked) do not revoke Dashboard sessions.
-   */
   sessionsRevoked: boolean;
 };
 
@@ -19,7 +14,7 @@ const isRoleCode = (value: string): value is DashboardRoleCode =>
 /**
  * Canonical Dashboard role-assignment mutations.
  * Role row changes and Dashboard session revocation always share one transaction.
- * Callers must not update `account_roles` directly in application code.
+ * SUPER_ADMIN assignments receive a GLOBAL scope automatically.
  */
 export class DashboardRoleService {
   constructor(private client: SQL) {}
@@ -29,6 +24,8 @@ export class DashboardRoleService {
     roleCode: string;
     grantedByAccountId: string;
     reason?: string;
+    /** Required for CITY-scoped roles when attaching scope in the same call. */
+    cityId?: string;
   }): Promise<RoleAssignmentResult> {
     if (!isRoleCode(input.roleCode))
       throw new AppError(422, "VALIDATION_FAILED", "Invalid role code");
@@ -40,8 +37,40 @@ export class DashboardRoleService {
       const [existing] = await tx<
         { id: string }[]
       >`select id from account_roles where account_id=${input.accountId} and role_id=${role.id} and revoked_at is null for update`;
-      if (existing) return { changed: false, sessionsRevoked: false };
-      await tx`insert into account_roles(account_id,role_id,granted_by_account_id,reason)values(${input.accountId},${role.id},${input.grantedByAccountId},${input.reason ?? null})`;
+      let accountRoleId = existing?.id;
+      let changed = false;
+      if (!existing) {
+        const [inserted] = await tx<
+          { id: string }[]
+        >`insert into account_roles(account_id,role_id,granted_by_account_id,reason)values(${input.accountId},${role.id},${input.grantedByAccountId},${input.reason ?? null}) returning id`;
+        accountRoleId = inserted!.id;
+        changed = true;
+      }
+      if (input.roleCode === "SUPER_ADMIN") {
+        await tx`update staff_profiles set managed_by_account_id=null,updated_at=now() where account_id=${input.accountId}`;
+        const [scope] = await tx<
+          { id: string }[]
+        >`select id from account_role_scopes where account_role_id=${accountRoleId!} and scope_type='GLOBAL'`;
+        if (!scope) {
+          await tx`insert into account_role_scopes(account_role_id,scope_type,scope_reference_id,created_by_account_id)values(${accountRoleId!},'GLOBAL',null,${input.grantedByAccountId})`;
+          changed = true;
+        }
+      } else if (input.cityId) {
+        const [scope] = await tx<
+          { id: string; scope_reference_id: string }[]
+        >`select id,scope_reference_id::text from account_role_scopes where account_role_id=${accountRoleId!} and scope_type='CITY'`;
+        if (!scope) {
+          await tx`insert into account_role_scopes(account_role_id,scope_type,scope_reference_id,created_by_account_id)values(${accountRoleId!},'CITY',${input.cityId},${input.grantedByAccountId})`;
+          changed = true;
+        } else if (scope.scope_reference_id !== input.cityId) {
+          throw new AppError(
+            409,
+            "CITY_SCOPE_CONFLICT",
+            "Account already has a different City scope",
+          );
+        }
+      }
+      if (!changed) return { changed: false, sessionsRevoked: false };
       await this.revokeDashboardSessions(tx, input.accountId);
       return { changed: true, sessionsRevoked: true };
     });

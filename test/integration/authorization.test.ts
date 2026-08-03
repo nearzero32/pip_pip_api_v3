@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Ed25519AccessTokenService } from "../../src/modules/auth/tokens/access-token";
 import { encodeBase64Url } from "../../src/modules/auth/shared/encoding";
 import {
+  createActiveCity,
   createDriverAccount,
   createIntegrationHarness,
   createStaffAccount,
@@ -16,11 +17,20 @@ import {
 describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
   let harness: IntegrationHarness & { trackedQueries?: string[] };
   const password = "fixed staff password";
+  let cityId = "";
+  let cityAdminId = "";
 
   beforeAll(async () => {
     harness = await createIntegrationHarness({
       trackClient: true,
       databasePrefix: "pip_pip_v3_authz",
+    });
+    cityId = await createActiveCity(harness.client, "Authz City");
+    cityAdminId = await createStaffAccount(harness.auth, harness.client, {
+      email: "city-admin-owner@example.com",
+      password,
+      roles: ["ADMIN"],
+      cityId,
     });
   }, 30000);
 
@@ -38,6 +48,16 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
       requestId: `req-${tag}`.slice(0, 128),
     });
   };
+
+  const createSupport = (email: string) =>
+    createStaffAccount(harness.auth, harness.client, {
+      email,
+      password,
+      roles: ["SUPPORT"],
+      cityId,
+      managedByAccountId: cityAdminId,
+    });
+
   test("1-2 SUPER_ADMIN geography mutation succeeds and HTTP path does not query roles tables", async () => {
     const email = "super-admin-http@example.com";
     await createStaffAccount(harness.auth, harness.client, {
@@ -47,6 +67,8 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
     });
     const session = await loginDashboard(email);
     expect(tokenClaims(session.access_token).roles).toEqual(["SUPER_ADMIN"]);
+    expect(tokenClaims(session.access_token).scopeType).toBe("GLOBAL");
+    expect(tokenClaims(session.access_token).cityId).toBeNull();
 
     harness.trackedQueries!.length = 0;
     const response = await harness.app.handle(
@@ -73,12 +95,10 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
 
   test("3 non-SUPER_ADMIN Dashboard token receives 403", async () => {
     const email = "support-http@example.com";
-    await createStaffAccount(harness.auth, harness.client, {
-      email,
-      password,
-      roles: ["SUPPORT"],
-    });
+    await createSupport(email);
     const session = await loginDashboard(email);
+    expect(tokenClaims(session.access_token).scopeType).toBe("CITY");
+    expect(tokenClaims(session.access_token).cityId).toBe(cityId);
     const response = await harness.app.handle(
       jsonRequest(`/api/v1/dashboard/governorates/${seededGovernorateId}`, {
         method: "PATCH",
@@ -166,11 +186,7 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
     ).rejects.toThrow();
 
     const email = "forge-http@example.com";
-    const account = await createStaffAccount(harness.auth, harness.client, {
-      email,
-      password,
-      roles: ["SUPPORT"],
-    });
+    const account = await createSupport(email);
     const session = await loginDashboard(email);
     const [header, , signature] = session.access_token.split(".") as [
       string,
@@ -179,6 +195,8 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
     ];
     const claims = tokenClaims(session.access_token);
     claims.roles = ["SUPER_ADMIN"];
+    claims.scopeType = "GLOBAL";
+    claims.cityId = null;
     const forged = `${header}.${encodeBase64Url(JSON.stringify(claims))}.${signature}`;
     const forgedResponse = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/cities", {
@@ -200,11 +218,7 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
 
   test("8 roles supplied through body, query, or ordinary headers have no effect", async () => {
     const email = "header-roles@example.com";
-    await createStaffAccount(harness.auth, harness.client, {
-      email,
-      password,
-      roles: ["SUPPORT"],
-    });
+    await createSupport(email);
     const session = await loginDashboard(email);
     const response = await harness.app.handle(
       jsonRequest(
@@ -224,7 +238,6 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
         },
       ),
     );
-    // unknown body properties rejected by schema → 422; either way not authorized as SUPER_ADMIN
     expect([403, 422]).toContain(response.status);
     if (response.status === 403) {
       expect(
@@ -275,16 +288,17 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
     ).rejects.toMatchObject({ publicCode: "INVALID_REFRESH_TOKEN" });
   });
 
-  test("12-13 assigning a new role revokes old sessions; new login receives updated signed roles", async () => {
+  test("12-13 assigning SUPER_ADMIN revokes old sessions; new login receives GLOBAL scope", async () => {
     const email = "assign-role@example.com";
-    const accountId = await createStaffAccount(harness.auth, harness.client, {
-      email,
-      password,
-      roles: ["SUPPORT"],
-    });
+    const accountId = await createSupport(email);
     const before = await loginDashboard(email);
     expect(tokenClaims(before.access_token).roles).toEqual(["SUPPORT"]);
 
+    await harness.auth.roles.revokeRole({
+      accountId,
+      roleCode: "SUPPORT",
+      revokedByAccountId: accountId,
+    });
     const assigned = await harness.auth.roles.assignRole({
       accountId,
       roleCode: "SUPER_ADMIN",
@@ -306,10 +320,9 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
     ).rejects.toMatchObject({ publicCode: "INVALID_REFRESH_TOKEN" });
 
     const after = await loginDashboard(email);
-    expect(tokenClaims(after.access_token).roles).toEqual([
-      "SUPER_ADMIN",
-      "SUPPORT",
-    ]);
+    expect(tokenClaims(after.access_token).roles).toEqual(["SUPER_ADMIN"]);
+    expect(tokenClaims(after.access_token).scopeType).toBe("GLOBAL");
+    expect(tokenClaims(after.access_token).cityId).toBeNull();
     const identity = await harness.auth.sessions.authenticate(
       after.access_token,
       {
@@ -319,7 +332,8 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
       },
       "after-assign",
     );
-    expect(identity.roles).toEqual(["SUPER_ADMIN", "SUPPORT"]);
+    expect(identity.roles).toEqual(["SUPER_ADMIN"]);
+    expect(identity.scopeType).toBe("GLOBAL");
   });
 
   test("14 Customer and Driver tokens and identities contain no Dashboard role claims", async () => {
@@ -371,16 +385,13 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
 
   test("idempotent role assign/revoke does not revoke sessions", async () => {
     const email = "idempotent-roles@example.com";
-    const accountId = await createStaffAccount(harness.auth, harness.client, {
-      email,
-      password,
-      roles: ["SUPPORT"],
-    });
+    const accountId = await createSupport(email);
     const session = await loginDashboard(email);
     const again = await harness.auth.roles.assignRole({
       accountId,
       roleCode: "SUPPORT",
       grantedByAccountId: accountId,
+      cityId,
     });
     expect(again).toEqual({ changed: false, sessionsRevoked: false });
     const [row] = await harness.client<
@@ -401,12 +412,13 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
     expect(noop).toEqual({ changed: false, sessionsRevoked: false });
   });
 
-  test("valid Dashboard refresh reloads current roles without bypassing revocation", async () => {
+  test("valid Dashboard refresh reloads current City scope from the database", async () => {
     const email = "refresh-roles-http@example.com";
     await createStaffAccount(harness.auth, harness.client, {
       email,
       password,
-      roles: ["ADMIN", "SUPPORT"],
+      roles: ["ADMIN"],
+      cityId,
     });
     const session = await loginDashboard(email);
     const refreshed = await harness.auth.sessions.refresh(
@@ -419,9 +431,8 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
       "refresh-ok",
       "refresh-ok",
     );
-    expect(tokenClaims(refreshed.access_token).roles).toEqual([
-      "ADMIN",
-      "SUPPORT",
-    ]);
+    expect(tokenClaims(refreshed.access_token).roles).toEqual(["ADMIN"]);
+    expect(tokenClaims(refreshed.access_token).scopeType).toBe("CITY");
+    expect(tokenClaims(refreshed.access_token).cityId).toBe(cityId);
   });
 });

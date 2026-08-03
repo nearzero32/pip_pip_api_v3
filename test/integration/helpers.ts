@@ -174,11 +174,17 @@ export async function createIntegrationHarness(options?: {
 export async function createStaffAccount(
   auth: AuthModule,
   client: SQL,
-  input: { email: string; password: string; roles: string[] },
+  input: {
+    email: string;
+    password: string;
+    roles: string[];
+    cityId?: string;
+    managedByAccountId?: string;
+  },
 ) {
   const [account] = await client<{ id: string }[]>`insert into accounts default values returning id`;
   await client`insert into account_emails(account_id,email_original,email_normalized,verified_at,is_primary)values(${account!.id},${input.email},${input.email.toLowerCase()},now(),true)`;
-  await client`insert into staff_profiles(account_id,status)values(${account!.id},'ACTIVE')`;
+  await client`insert into staff_profiles(account_id,status,managed_by_account_id)values(${account!.id},'ACTIVE',${input.managedByAccountId ?? null})`;
   const hash = await new Argon2PasswordHasher({
     memoryCost: 19456,
     timeCost: 2,
@@ -189,10 +195,23 @@ export async function createStaffAccount(
     await auth.roles.assignRole({
       accountId: account!.id,
       roleCode,
-      grantedByAccountId: account!.id,
+      grantedByAccountId: input.managedByAccountId ?? account!.id,
+      ...(input.cityId ? { cityId: input.cityId } : {}),
     });
   }
   return account!.id;
+}
+
+/** Create an ACTIVE city under the seeded Baghdad governorate for staff tests. */
+export async function createActiveCity(
+  client: SQL,
+  nameEn = `City ${crypto.randomUUID().slice(0, 8)}`,
+) {
+  const [city] = await client<
+    { id: string }[]
+  >`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,status,display_order)
+    values(${seededGovernorateId},${nameEn},${nameEn},33.3,44.4,'ACTIVE',1) returning id`;
+  return city!.id;
 }
 
 export async function createDriverAccount(

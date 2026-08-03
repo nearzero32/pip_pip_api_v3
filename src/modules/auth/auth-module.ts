@@ -10,6 +10,7 @@ import { SessionService } from "./sessions/session-service";
 import { HmacSecretVerifier } from "./shared/secret-verifier";
 import { Argon2PasswordHasher } from "./staff/password";
 import { DashboardRoleService } from "./staff/dashboard-roles";
+import { StaffOrganizationService } from "./staff/staff-organization.service";
 import { Ed25519AccessTokenService } from "./tokens/access-token";
 
 export interface AuthModule {
@@ -18,6 +19,8 @@ export interface AuthModule {
   dashboard: DashboardAuthService;
   sessions: SessionService;
   roles: DashboardRoleService;
+  staff: StaffOrganizationService;
+  client: SQL;
 }
 
 export function createAuthModule(
@@ -51,9 +54,12 @@ export function createAuthModule(
     audit,
   );
   const roles = new DashboardRoleService(client);
+  const staff = new StaffOrganizationService(client, password);
   return {
+    client,
     sessions,
     roles,
+    staff,
     customer: new CustomerAuthService(
       client,
       limiter,

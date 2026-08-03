@@ -1,0 +1,30 @@
+/** Grantable City-operational permission codes prepared for M3-B Zones. */
+export const GRANTABLE_PERMISSION_CODES = [
+  "zones.read",
+  "zones.create",
+  "zones.update",
+  "zones.archive",
+] as const;
+
+export type GrantablePermissionCode =
+  (typeof GRANTABLE_PERMISSION_CODES)[number];
+
+const grantableSet = new Set<string>(GRANTABLE_PERMISSION_CODES);
+
+export const isGrantablePermissionCode = (
+  value: string,
+): value is GrantablePermissionCode => grantableSet.has(value);
+
+export const EMPLOYEE_ROLE_CODES = [
+  "OPERATIONS",
+  "ACCOUNTANT",
+  "SUPPORT",
+] as const;
+
+export type EmployeeRoleCode = (typeof EMPLOYEE_ROLE_CODES)[number];
+
+const employeeRoleSet = new Set<string>(EMPLOYEE_ROLE_CODES);
+
+export const isEmployeeRoleCode = (
+  value: string,
+): value is EmployeeRoleCode => employeeRoleSet.has(value);

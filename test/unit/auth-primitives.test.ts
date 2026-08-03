@@ -51,14 +51,21 @@ describe("M2 security primitives", () => {
   test("embeds Dashboard role claims and rejects forged or cross-audience role use", async () => {
     const service = new Ed25519AccessTokenService({issuer:"issuer",keyId:"kid",privateKeyBase64:privateKey,publicKeyBase64:publicKey,lifetimeSeconds:600});
     const accountId = crypto.randomUUID(), sessionId = crypto.randomUUID();
-    const dashboard = await service.sign({accountId,sessionId,applicationType:"DASHBOARD",roles:["SUPER_ADMIN","SUPPORT"]},1000);
-    expect((await service.verify(dashboard.token,"DASHBOARD",1001)).roles).toEqual(["SUPER_ADMIN","SUPPORT"]);
+    const dashboard = await service.sign({accountId,sessionId,applicationType:"DASHBOARD",roles:["SUPER_ADMIN"],scopeType:"GLOBAL",cityId:null},1000);
+    expect((await service.verify(dashboard.token,"DASHBOARD",1001)).roles).toEqual(["SUPER_ADMIN"]);
+    expect((await service.verify(dashboard.token,"DASHBOARD",1001)).scopeType).toBe("GLOBAL");
+    expect((await service.verify(dashboard.token,"DASHBOARD",1001)).cityId).toBeNull();
     await expect(service.verify(dashboard.token,"CUSTOMER_APP",1001)).rejects.toThrow();
-    const forgedPayload = Buffer.from(JSON.stringify({iss:"issuer",aud:"dashboard",sub:accountId,sid:sessionId,app:"DASHBOARD",roles:["SUPER_ADMIN"],iat:1000,exp:1600,jti:crypto.randomUUID()})).toString("base64url");
+    const forgedPayload = Buffer.from(JSON.stringify({iss:"issuer",aud:"dashboard",sub:accountId,sid:sessionId,app:"DASHBOARD",roles:["SUPER_ADMIN"],scopeType:"GLOBAL",cityId:null,iat:1000,exp:1600,jti:crypto.randomUUID()})).toString("base64url");
     const [header] = dashboard.token.split(".");
     await expect(service.verify(`${header}.${forgedPayload}.AAAA`, "DASHBOARD", 1001)).rejects.toThrow();
     const customer = await service.sign({accountId,sessionId,applicationType:"CUSTOMER_APP",roles:[]},1000);
     expect((await service.verify(customer.token,"CUSTOMER_APP",1001)).roles).toEqual([]);
+    const cityId = crypto.randomUUID();
+    const admin = await service.sign({accountId,sessionId,applicationType:"DASHBOARD",roles:["ADMIN"],scopeType:"CITY",cityId},1000);
+    expect((await service.verify(admin.token,"DASHBOARD",1001)).cityId).toBe(cityId);
+    await expect(service.sign({accountId,sessionId,applicationType:"DASHBOARD",roles:["SUPER_ADMIN"],scopeType:"CITY",cityId},1000)).rejects.toThrow();
+    await expect(service.sign({accountId,sessionId,applicationType:"DASHBOARD",roles:["ADMIN"],scopeType:"GLOBAL",cityId:null},1000)).rejects.toThrow();
   });
   test("rate limiter is deterministic and honors TTL", async () => {
     let now=0; const limiter=new InMemoryRateLimiter(()=>now); const policy={limit:2,windowSeconds:10};
