@@ -1,12 +1,12 @@
-import { migrate } from "drizzle-orm/bun-sql/migrator";
-import { loadConfig } from "../config/env";
+import { loadDatabaseConfig } from "../config/env";
 import { createDatabaseClient } from "./client";
+import { applyMigrations } from "./migration-runner";
 
-const config = loadConfig();
+const config = loadDatabaseConfig();
 const database = createDatabaseClient(config);
 
 try {
-  await migrate(database.db, { migrationsFolder: "./drizzle" });
+  await applyMigrations(database.client);
   console.log(JSON.stringify({ level: "info", event: "database_migrations_applied" }));
 } finally {
   await database.close();

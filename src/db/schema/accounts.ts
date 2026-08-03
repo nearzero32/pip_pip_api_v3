@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, foreignKey, index, integer, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 import { instant } from "./columns";
 import { accountStatus, customerProfileStatus, mfaCredentialStatus, mfaMethod } from "./enums";
@@ -66,14 +66,14 @@ export const passwordCredentials = pgTable("password_credentials", {
   passwordChangedAt: instant("password_changed_at").notNull().defaultNow(),
   createdAt: instant("created_at").notNull().defaultNow(),
   updatedAt: instant("updated_at").notNull().defaultNow(),
-});
+}, (table) => [uniqueIndex("password_credentials_id_account_uidx").on(table.id, table.accountId)]);
 
 export const passwordResetTokens = pgTable(
   "password_reset_tokens",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     accountId: uuid("account_id").notNull().references(() => accounts.id),
-    passwordCredentialId: uuid("password_credential_id").notNull().references(() => passwordCredentials.id),
+    passwordCredentialId: uuid("password_credential_id").notNull(),
     tokenVerifier: text("token_verifier").notNull().unique(),
     verifierKeyVersion: text("verifier_key_version"),
     expiresAt: instant("expires_at").notNull(),
@@ -83,6 +83,11 @@ export const passwordResetTokens = pgTable(
     requestSecurityMetadata: jsonb("request_security_metadata").$type<Record<string, unknown>>(),
   },
   (table) => [
+    foreignKey({
+      name: "password_reset_tokens_credential_account_fk",
+      columns: [table.passwordCredentialId, table.accountId],
+      foreignColumns: [passwordCredentials.id, passwordCredentials.accountId],
+    }),
     index("password_reset_account_requested_idx").on(table.accountId, table.requestedAt),
     index("password_reset_credential_requested_idx").on(table.passwordCredentialId, table.requestedAt),
     index("password_reset_expires_idx").on(table.expiresAt),

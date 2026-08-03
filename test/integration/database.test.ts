@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
-import { drizzle } from "drizzle-orm/bun-sql";
-import { migrate } from "drizzle-orm/bun-sql/migrator";
 import { createApp } from "../../src/app";
+import { applyMigrations } from "../../src/db/migration-runner";
 import { silentLogger } from "../../src/observability/logger";
 
 const adminUrl = process.env.TEST_ADMIN_DATABASE_URL;
@@ -29,6 +28,13 @@ async function expectDatabaseRejection(operation: PromiseLike<unknown>): Promise
   expect(rejected).toBeTrue();
 }
 
+async function applySqlFile(client: SQL, path: string): Promise<void> {
+  const sql = await Bun.file(path).text();
+  for (const statement of sql.split("--> statement-breakpoint").map(value => value.trim()).filter(Boolean)) {
+    await client.unsafe(statement);
+  }
+}
+
 describe("PostgreSQL identity foundation", () => {
   const databaseName = `pip_pip_v3_test_${crypto.randomUUID().replaceAll("-", "")}`;
   let admin: SQL;
@@ -40,7 +46,7 @@ describe("PostgreSQL identity foundation", () => {
     const url = new URL(validatedAdminUrl);
     url.pathname = `/${databaseName}`;
     client = new SQL(url.toString(), { max: 5 });
-    await migrate(drizzle({ client }), { migrationsFolder: "./drizzle" });
+    await applyMigrations(client);
   }, 30_000);
 
   afterAll(async () => {
@@ -148,4 +154,24 @@ describe("PostgreSQL identity foundation", () => {
     expect((await client<{ request_id: string }[]>`select request_correlation_id as request_id from audit_logs where request_correlation_id = ${requestId}`)[0]?.request_id).toBe(requestId);
     await expectDatabaseRejection(client`insert into audit_logs (event_type, outcome, request_correlation_id) values ('TEST_EVENT', 'SUCCESS', 'unsafe request id')`);
   });
+
+  test("upgrades an M1 database and converts legacy Dashboard authentication rows", async () => {
+    const upgradeName = `pip_pip_v3_test_${crypto.randomUUID().replaceAll("-", "")}`;
+    await admin.unsafe(`CREATE DATABASE "${upgradeName}"`);
+    const upgradeUrl = new URL(validatedAdminUrl); upgradeUrl.pathname = `/${upgradeName}`;
+    const upgrade = new SQL(upgradeUrl.toString(), { max: 2 });
+    try {
+      for (const migration of ["0000_free_glorian", "0001_eager_revanche", "0002_late_micromax", "0003_uneven_king_cobra"]) await applySqlFile(upgrade, `./drizzle/${migration}.sql`);
+      const [account] = await upgrade<{id:string}[]>`insert into accounts default values returning id`;
+      await upgrade`insert into sessions(account_id,application_type,authentication_method,device_name,absolute_expires_at) values(${account!.id},'DASHBOARD','PASSWORD_TOTP','legacy dashboard',now()+interval '1 day')`;
+      await applySqlFile(upgrade, "./drizzle/0004_supreme_cardiac.sql");
+      await applySqlFile(upgrade, "./drizzle/0005_m2_auth_foundation.sql");
+      const [row] = await upgrade<{authentication_method:string}[]>`select authentication_method::text authentication_method from sessions`;
+      expect(row!.authentication_method).toBe("PASSWORD");
+      await expectDatabaseRejection(upgrade`insert into sessions(account_id,application_type,authentication_method,device_name,absolute_expires_at) values(${account!.id},'DASHBOARD','PASSWORD_TOTP','invalid',now()+interval '1 day')`);
+    } finally {
+      await upgrade.close();
+      await admin.unsafe(`DROP DATABASE IF EXISTS "${upgradeName}" WITH (FORCE)`);
+    }
+  }, 30_000);
 });

@@ -4,10 +4,13 @@ import { AppError } from "./errors/app-error";
 import { healthRoutes, type HealthDependencies } from "./health/routes";
 import type { Logger } from "./observability/logger";
 import { resolveRequestId } from "./shared/request-id";
+import type { AuthService } from "./modules/auth/auth-service";
+import { authRoutes } from "./modules/auth/routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
   production: boolean;
+  authService?: AuthService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -16,8 +19,8 @@ export function createApp(dependencies: AppDependencies) {
       path: "/openapi",
       specPath: "/openapi/json",
       documentation: {
-        info: { title: "pip_pip_api_v3", version: "0.1.0", description: "M1 Project Foundation and Identity Database Foundation" },
-        tags: [{ name: "Health", description: "Runtime health probes" }],
+        info: { title: "pip_pip_api_v3", version: "0.2.0", description: "Identity, authentication, and session security API" },
+        tags: [{ name: "Health", description: "Runtime health probes" }, { name: "Authentication", description: "Customer, driver, and Dashboard authentication" }],
       },
     }))
     .derive(({ request, set }) => {
@@ -44,11 +47,15 @@ export function createApp(dependencies: AppDependencies) {
       if (code === "NOT_FOUND") {
         return status(404, { error: { code: "NOT_FOUND", message: "Resource not found" }, request_id: requestId });
       }
+      if (code === "VALIDATION") {
+        return status(422, { error: { code: "VALIDATION_FAILED", message: "The request is invalid" }, request_id: requestId });
+      }
       dependencies.logger.error({ event: "unexpected_error", path, request_id: requestId, error_name: error instanceof Error ? error.name : "UnknownError" });
       return status(500, {
         error: { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred" },
         request_id: requestId,
       });
     })
-    .use(healthRoutes(dependencies));
+    .use(healthRoutes(dependencies))
+    .use(dependencies.authService ? authRoutes(dependencies.authService) : new Elysia());
 }

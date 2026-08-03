@@ -29,6 +29,20 @@
       "when": 1785660714767,
       "tag": "0003_uneven_king_cobra",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785719484510,
+      "tag": "0004_supreme_cardiac",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785721766813,
+      "tag": "0005_m2_auth_foundation",
+      "breakpoints": true
     }
   ]
 }

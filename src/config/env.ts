@@ -1,15 +1,30 @@
 export type NodeEnvironment = "development" | "test" | "production";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
-export interface AppConfig {
+export interface DatabaseConfig {
   nodeEnv: NodeEnvironment;
-  host: string;
-  port: number;
-  logLevel: LogLevel;
   databaseUrl: string;
   databasePoolSize: number;
   databaseConnectionTimeoutMs: number;
+}
+
+export interface AppConfig extends DatabaseConfig {
+  host: string;
+  port: number;
+  logLevel: LogLevel;
   gracefulShutdownTimeoutMs: number;
+  redisUrl: string;
+  otpDeliveryAdapter: "development" | "test";
+  secretVerifierKey: string;
+  secretVerifierKeyVersion: string;
+  jwtIssuer: string;
+  jwtKeyId: string;
+  jwtPrivateKeyBase64: string;
+  jwtPublicKeyBase64: string;
+  accessTokenLifetimeSeconds: number;
+  argon2MemoryCost: number;
+  argon2TimeCost: number;
+  argon2Parallelism: number;
 }
 
 export class ConfigurationError extends Error {
@@ -61,6 +76,18 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!logLevels.has(rawLogLevel as LogLevel)) {
     throw new ConfigurationError("LOG_LEVEL must be debug, info, warn, or error");
   }
+  const redisUrl = required(env, "REDIS_URL");
+  let parsedRedis: URL;
+  try { parsedRedis = new URL(redisUrl); } catch { throw new ConfigurationError("REDIS_URL must be a valid Redis URL"); }
+  if (!new Set(["redis:", "rediss:"]).has(parsedRedis.protocol) || !parsedRedis.hostname) throw new ConfigurationError("REDIS_URL must use redis:// or rediss:// and include a host");
+  const otpDeliveryAdapter = required(env, "OTP_DELIVERY_ADAPTER");
+  if (otpDeliveryAdapter !== "development" && otpDeliveryAdapter !== "test") throw new ConfigurationError("OTP_DELIVERY_ADAPTER must be development or test");
+  if (rawNodeEnv === "production") throw new ConfigurationError("No production-safe OTP delivery adapter is configured");
+  const secretVerifierKey = required(env, "SECRET_VERIFIER_KEY");
+  if (secretVerifierKey.length < 32) throw new ConfigurationError("SECRET_VERIFIER_KEY must be at least 32 characters");
+  const jwtPrivateKeyBase64 = required(env, "JWT_PRIVATE_KEY_BASE64");
+  const jwtPublicKeyBase64 = required(env, "JWT_PUBLIC_KEY_BASE64");
+  try { Uint8Array.fromBase64(jwtPrivateKeyBase64); Uint8Array.fromBase64(jwtPublicKeyBase64); } catch { throw new ConfigurationError("JWT keys must be valid base64 DER values"); }
 
   return {
     nodeEnv: rawNodeEnv as NodeEnvironment,
@@ -71,5 +98,28 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     databasePoolSize: integer(env, "DATABASE_POOL_SIZE", 1, 100),
     databaseConnectionTimeoutMs: integer(env, "DATABASE_CONNECTION_TIMEOUT_MS", 100, 120_000),
     gracefulShutdownTimeoutMs: integer(env, "GRACEFUL_SHUTDOWN_TIMEOUT_MS", 100, 120_000),
+    redisUrl,
+    otpDeliveryAdapter,
+    secretVerifierKey,
+    secretVerifierKeyVersion: required(env, "SECRET_VERIFIER_KEY_VERSION"),
+    jwtIssuer: required(env, "JWT_ISSUER"),
+    jwtKeyId: required(env, "JWT_KEY_ID"),
+    jwtPrivateKeyBase64,
+    jwtPublicKeyBase64,
+    accessTokenLifetimeSeconds: integer(env, "ACCESS_TOKEN_LIFETIME_SECONDS", 60, 600),
+    argon2MemoryCost: integer(env, "ARGON2_MEMORY_COST", 19_456, 1_048_576),
+    argon2TimeCost: integer(env, "ARGON2_TIME_COST", 2, 10),
+    argon2Parallelism: integer(env, "ARGON2_PARALLELISM", 1, 16),
+  };
+}
+
+export function loadDatabaseConfig(env: Record<string, string | undefined> = process.env): DatabaseConfig {
+  const rawNodeEnv = required(env, "NODE_ENV");
+  if (!nodeEnvironments.has(rawNodeEnv as NodeEnvironment)) throw new ConfigurationError("NODE_ENV must be development, test, or production");
+  return {
+    nodeEnv: rawNodeEnv as NodeEnvironment,
+    databaseUrl: databaseUrl(env),
+    databasePoolSize: integer(env, "DATABASE_POOL_SIZE", 1, 100),
+    databaseConnectionTimeoutMs: integer(env, "DATABASE_CONNECTION_TIMEOUT_MS", 100, 120_000),
   };
 }

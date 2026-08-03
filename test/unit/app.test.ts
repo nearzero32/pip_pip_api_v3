@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
 import { silentLogger } from "../../src/observability/logger";
+import type { AuthService } from "../../src/modules/auth/auth-service";
+import { AppError } from "../../src/errors/app-error";
 
 function appWith(readinessCheck: () => Promise<void> = async () => undefined) {
   return createApp({ logger: silentLogger, production: false, readinessCheck });
@@ -27,6 +29,13 @@ describe("API foundation", () => {
       .handle(new Request("http://localhost/health/ready"));
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ status: "not_ready", checks: { database: "down" } });
+  });
+
+  test("readiness reports Redis failure without misreporting PostgreSQL", async () => {
+    const app=createApp({logger:silentLogger,production:false,readinessCheck:async()=>undefined,redisReadinessCheck:async()=>{throw new Error("redis credential detail");}});
+    const response=await app.handle(new Request("http://localhost/health/ready"));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({status:"not_ready",checks:{database:"up",redis:"down"}});
   });
 
   test("accepts a valid incoming request ID", async () => {
@@ -62,5 +71,49 @@ describe("API foundation", () => {
     const document = await response.json() as { info: { title: string }; paths: Record<string, unknown> };
     expect(document.info.title).toBe("pip_pip_api_v3");
     expect(document.paths["/health/live"]).toBeDefined();
+  });
+
+  test("registers every application route under /api/v1 with no unprefixed aliases", async () => {
+    const fake = new Proxy({}, { get: () => async () => ({}) }) as AuthService;
+    const app = createApp({ logger: silentLogger, production: false, readinessCheck: async () => undefined, authService: fake });
+    const document = await (await app.handle(new Request("http://localhost/openapi/json"))).json() as { paths: Record<string,Record<string,{requestBody?:unknown;responses?:unknown}>> };
+    const applicationPaths=Object.keys(document.paths).filter(path=>path.includes("auth"));
+    expect(applicationPaths.length).toBe(8);
+    expect(applicationPaths.every(path=>path.startsWith("/api/v1/auth/"))).toBeTrue();
+    expect(applicationPaths.some(path=>path.startsWith("/v1/")||path.startsWith("/auth/"))).toBeFalse();
+    for (const path of applicationPaths) {
+      const operation = Object.values(document.paths[path]!).find(value=>value && typeof value==="object" && "responses" in value);
+      expect(operation?.responses).toBeDefined();
+    }
+    expect(document.paths["/api/v1/auth/phone/otp/request"]?.post?.requestBody).toBeDefined();
+  });
+
+  test("returns a stable safe validation error", async () => {
+    const fake = new Proxy({}, { get: () => async () => ({}) }) as AuthService;
+    const app = createApp({ logger: silentLogger, production: true, readinessCheck: async () => undefined, authService: fake });
+    const response = await app.handle(new Request("http://localhost/api/v1/auth/staff/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "not-an-email" }) }));
+    expect(response.status).toBe(422);
+    const body = await response.json() as {error:{code:string;message:string};request_id:string};
+    expect(body.error).toEqual({code:"VALIDATION_FAILED",message:"The request is invalid"});
+    expect(body.request_id).toBe(response.headers.get("x-request-id")!);
+    expect(JSON.stringify(body)).not.toContain("password");
+  });
+
+  test("OTP request is generic 202 and staff failures are enumeration-safe", async () => {
+    const challengeId=crypto.randomUUID();
+    const fake = new Proxy({
+      requestOtp: async()=>challengeId,
+      staffLogin: async()=>{throw new AppError(401,"AUTHENTICATION_FAILED","Authentication failed");},
+    }, { get: (target, property) => Reflect.get(target, property) ?? (async()=>({})) }) as unknown as AuthService;
+    const app=createApp({logger:silentLogger,production:true,readinessCheck:async()=>undefined,authService:fake});
+    const otp=await app.handle(new Request("http://localhost/api/v1/auth/phone/otp/request",{method:"POST",headers:{"content-type":"application/json","x-request-id":"otp-public-request"},body:JSON.stringify({phone:"+9647700000000",application_type:"CUSTOMER_APP"})}));
+    expect(otp.status).toBe(202);
+    const otpBody=await otp.json() as Record<string,unknown>;
+    expect(otpBody).toEqual({accepted:true,challenge_id:challengeId,request_id:"otp-public-request"});
+    expect("otp" in otpBody).toBeFalse();
+    expect(JSON.stringify(otpBody)).not.toMatch(/password|refresh_token|access_token/i);
+    const staff=await app.handle(new Request("http://localhost/api/v1/auth/staff/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email:"unknown@example.com",password:"a sufficiently long password",device_name:"browser"})}));
+    expect(staff.status).toBe(401);
+    expect((await staff.json() as {error:{code:string}}).error.code).toBe("AUTHENTICATION_FAILED");
   });
 });

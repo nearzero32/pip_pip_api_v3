@@ -1,4 +1,5 @@
 import type { LogLevel } from "../config/env";
+import { redact } from "../shared/redaction/redact";
 
 export interface LogRecord {
   event: string;
@@ -17,7 +18,7 @@ const priorities: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, er
 export function createLogger(minimumLevel: LogLevel, write: (line: string) => void = console.log): Logger {
   const emit = (level: LogLevel, record: LogRecord): void => {
     if (priorities[level] < priorities[minimumLevel]) return;
-    write(JSON.stringify({ timestamp: new Date().toISOString(), level, ...record }));
+    write(JSON.stringify(redact({ timestamp: new Date().toISOString(), level, ...record })));
   };
   return {
     debug: (record) => emit("debug", record),

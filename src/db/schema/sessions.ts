@@ -32,7 +32,7 @@ export const sessions = pgTable(
     index("sessions_account_device_idx").on(table.accountId, table.deviceId),
     check("sessions_expiry_after_creation_chk", sql`${table.absoluteExpiresAt} > ${table.createdAt}`),
     check("sessions_max_lifetime_chk", sql`${table.absoluteExpiresAt} <= ${table.createdAt} + interval '30 days'`),
-    check("sessions_auth_method_chk", sql`(${table.applicationType} = 'DASHBOARD' and ${table.authenticationMethod} = 'PASSWORD_TOTP') or (${table.applicationType} in ('CUSTOMER_APP', 'DRIVER_APP') and ${table.authenticationMethod} = 'PHONE_OTP')`),
+    check("sessions_auth_method_chk", sql`(${table.applicationType} = 'DASHBOARD' and ${table.authenticationMethod} = 'PASSWORD') or (${table.applicationType} in ('CUSTOMER_APP', 'DRIVER_APP') and ${table.authenticationMethod} = 'PHONE_OTP')`),
     check("sessions_revocation_reason_chk", sql`${table.revokedAt} is null or ${table.revocationReason} is not null`),
   ],
 );
@@ -44,6 +44,7 @@ export const sessionRefreshTokens = pgTable(
     sessionId: uuid("session_id").notNull().references(() => sessions.id),
     generation: integer("generation").notNull(),
     tokenVerifier: text("token_verifier").notNull().unique(),
+    verifierKeyVersion: text("verifier_key_version").notNull().default("v1"),
     issuedAt: instant("issued_at").notNull().defaultNow(),
     rotatedAt: instant("rotated_at"),
     revokedAt: instant("revoked_at"),

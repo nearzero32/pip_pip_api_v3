@@ -1,11 +1,11 @@
 import { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
-import type { AppConfig } from "../config/env";
+import type { DatabaseConfig } from "../config/env";
 import * as schema from "./schema";
 
 export type DatabaseClient = ReturnType<typeof createDatabaseClient>;
 
-export function createDatabaseClient(config: AppConfig) {
+export function createDatabaseClient(config: DatabaseConfig) {
   const client = new SQL(config.databaseUrl, {
     max: config.databasePoolSize,
     connectionTimeout: config.databaseConnectionTimeoutMs / 1_000,
