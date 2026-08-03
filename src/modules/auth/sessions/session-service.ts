@@ -103,9 +103,14 @@ export class SessionService {
     };
   }
 
+  /**
+   * Per-request eligibility without consulting account_roles/roles.
+   * Dashboard authorization uses signed token role claims; role revocation
+   * invalidates sessions through DashboardRoleService instead.
+   */
   private async stateAllowed(client: SQL, row: SessionRow): Promise<boolean> {
     const found =
-      await client`select 1 where (${row.application_type}::application_type='CUSTOMER_APP' and exists(select 1 from customer_profiles where account_id=${row.account_id} and status='ACTIVE')) or (${row.application_type}::application_type='DRIVER_APP' and exists(select 1 from driver_profiles where account_id=${row.account_id} and approval_status='APPROVED' and operational_status='ACTIVE')) or (${row.application_type}::application_type='DASHBOARD' and exists(select 1 from staff_profiles where account_id=${row.account_id} and status='ACTIVE') and exists(select 1 from account_roles ar join roles r on r.id=ar.role_id where ar.account_id=${row.account_id} and ar.revoked_at is null and r.status='ACTIVE' and ar.valid_from<=now() and(ar.valid_until is null or ar.valid_until>now())))`;
+      await client`select 1 where (${row.application_type}::application_type='CUSTOMER_APP' and exists(select 1 from customer_profiles where account_id=${row.account_id} and status='ACTIVE')) or (${row.application_type}::application_type='DRIVER_APP' and exists(select 1 from driver_profiles where account_id=${row.account_id} and approval_status='APPROVED' and operational_status='ACTIVE')) or (${row.application_type}::application_type='DASHBOARD' and exists(select 1 from staff_profiles where account_id=${row.account_id} and status='ACTIVE'))`;
     return found.length > 0;
   }
 
@@ -335,12 +340,6 @@ export class SessionService {
       accountId: identity.accountId,
       applicationType: context.applicationType,
     });
-  }
-
-  /** Revoke active Dashboard sessions after role assignment changes so stale role claims cannot be used. */
-  async revokeDashboardSessionsForRoleChange(accountId: string): Promise<void> {
-    await this
-      .client`update sessions set revoked_at=now(),revocation_reason='ROLE_ASSIGNMENT_CHANGED',updated_at=now() where account_id=${accountId} and application_type='DASHBOARD' and revoked_at is null`;
   }
 
   requireSuperAdmin(identity: AuthIdentity): void {

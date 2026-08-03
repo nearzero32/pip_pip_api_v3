@@ -1,0 +1,235 @@
+import { SQL } from "bun";
+import type { AppConfig } from "../../src/config/env";
+import { createApp } from "../../src/app";
+import { applyMigrations } from "../../src/db/migration-runner";
+import { seedGovernorates } from "../../src/db/seed";
+import {
+  createAuthModule,
+  type AuthModule,
+} from "../../src/modules/auth/auth-module";
+import { TestOtpDelivery } from "../../src/modules/auth/phone/delivery";
+import { InMemoryRateLimiter } from "../../src/modules/auth/rate-limit/rate-limiter";
+import { Argon2PasswordHasher } from "../../src/modules/auth/staff/password";
+import { GeographyService } from "../../src/modules/geography/service";
+import { silentLogger } from "../../src/observability/logger";
+import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
+
+export const integrationConfig: AppConfig = {
+  nodeEnv: "test",
+  host: "127.0.0.1",
+  port: 3000,
+  logLevel: "error",
+  databaseUrl: process.env.TEST_ADMIN_DATABASE_URL!,
+  databasePoolSize: 5,
+  databaseConnectionTimeoutMs: 5000,
+  gracefulShutdownTimeoutMs: 5000,
+  redisUrl: process.env.TEST_REDIS_URL ?? "redis://localhost:6380",
+  otpDeliveryAdapter: "test",
+  secretVerifierKey: "integration-verifier-key-at-least-32-characters",
+  secretVerifierKeyVersion: "v1",
+  jwtIssuer: "integration",
+  jwtKeyId: "integration-v1",
+  jwtPrivateKeyBase64:
+    "MC4CAQAwBQYDK2VwBCIEIOhYjslG5wawzghWHcQbYCMjFp8kzMYLVFZoKEOBzTA4",
+  jwtPublicKeyBase64:
+    "MCowBQYDK2VwAyEA+ly2CeP4N1AQ5vNUEt226L6GtOMU/uLE2rjFfo4OBCE=",
+  accessTokenLifetimeSeconds: 600,
+  argon2MemoryCost: 19456,
+  argon2TimeCost: 2,
+  argon2Parallelism: 1,
+};
+
+export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";
+
+export const requireSafeAdminUrl = () => {
+  const adminUrl = process.env.TEST_ADMIN_DATABASE_URL;
+  if (!adminUrl) throw new Error("TEST_ADMIN_DATABASE_URL is required");
+  const parsed = new URL(adminUrl);
+  if (
+    !["localhost", "127.0.0.1"].includes(parsed.hostname) ||
+    /prod/i.test(parsed.pathname)
+  )
+    throw new Error("Unsafe integration database");
+  return adminUrl;
+};
+
+/** Normalize SQL text and detect table references to roles / account_roles. */
+export const referencesRoleTables = (sql: string): boolean => {
+  const normalized = sql
+    .toLowerCase()
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /(?:^|[\s,(])(?:only\s+)?(?:public\.)?(?:account_roles|roles)(?:\s|\)|,|$)/.test(
+    normalized,
+  );
+};
+
+export const trackSql = (client: SQL) => {
+  const queries: string[] = [];
+  const wrap = (target: SQL): SQL =>
+    new Proxy(target, {
+      apply(t, thisArg, args) {
+        const strings = args[0] as TemplateStringsArray;
+        queries.push(strings.join(""));
+        return Reflect.apply(t as (...a: unknown[]) => unknown, thisArg, args);
+      },
+      get(t, prop, receiver) {
+        if (prop === "begin") {
+          return async (fn: (tx: SQL) => Promise<unknown>) =>
+            (t as SQL & { begin: Function }).begin((tx: SQL) => fn(wrap(tx)));
+        }
+        if (prop === "unsafe") {
+          return (sql: string, values?: unknown[]) => {
+            queries.push(sql);
+            return (t as SQL & { unsafe: (query: string, params?: unknown[]) => unknown }).unsafe(
+              sql,
+              values,
+            );
+          };
+        }
+        const value = Reflect.get(t, prop, receiver);
+        if (typeof value === "function") return value.bind(t);
+        return value;
+      },
+    }) as SQL;
+  return { client: wrap(client), queries };
+};
+
+export const tokenClaims = (token: string) =>
+  JSON.parse(
+    new TextDecoder().decode(decodeBase64Url(token.split(".")[1]!)),
+  ) as Record<string, unknown>;
+
+export type IntegrationHarness = {
+  admin: SQL;
+  client: SQL;
+  delivery: TestOtpDelivery;
+  auth: AuthModule;
+  geography: GeographyService;
+  app: ReturnType<typeof createApp>;
+  clock: { value: number; advance: () => void };
+  close: () => Promise<void>;
+};
+
+export async function createIntegrationHarness(options?: {
+  trackClient?: boolean;
+  seed?: boolean;
+  databasePrefix?: string;
+}): Promise<
+  IntegrationHarness & { trackedQueries?: string[]; trackedClient?: SQL }
+> {
+  const adminUrl = requireSafeAdminUrl();
+  const dbName = `${options?.databasePrefix ?? "pip_pip_v3_test"}_${crypto.randomUUID().replaceAll("-", "")}`;
+  const admin = new SQL(adminUrl, { max: 1 });
+  await admin.unsafe(`create database "${dbName}"`);
+  const url = new URL(adminUrl);
+  url.pathname = `/${dbName}`;
+  const raw = new SQL(url.toString(), { max: 12 });
+  const tracked = options?.trackClient ? trackSql(raw) : undefined;
+  const client = tracked?.client ?? raw;
+  await applyMigrations(raw);
+  if (options?.seed !== false) await seedGovernorates(raw);
+  const clock = { value: Date.now(), advance: () => { clock.value += 3_600_001; } };
+  const delivery = new TestOtpDelivery();
+  const auth = createAuthModule(
+    client,
+    new InMemoryRateLimiter(() => clock.value),
+    delivery,
+    { ...integrationConfig, databaseUrl: url.toString() },
+  );
+  const geography = new GeographyService(client, auth.sessions);
+  const app = createApp({
+    logger: silentLogger,
+    production: false,
+    readinessCheck: async () => undefined,
+    authModule: auth,
+    geographyService: geography,
+  });
+  const result: IntegrationHarness & {
+    trackedQueries?: string[];
+    trackedClient?: SQL;
+  } = {
+    admin,
+    client,
+    delivery,
+    auth,
+    geography,
+    app,
+    clock,
+    close: async () => {
+      await raw.close();
+      await admin.unsafe(`drop database if exists "${dbName}" with(force)`);
+      await admin.close();
+    },
+  };
+  if (tracked) {
+    result.trackedQueries = tracked.queries;
+    result.trackedClient = tracked.client;
+  }
+  return result;
+}
+
+export async function createStaffAccount(
+  auth: AuthModule,
+  client: SQL,
+  input: { email: string; password: string; roles: string[] },
+) {
+  const [account] = await client<{ id: string }[]>`insert into accounts default values returning id`;
+  await client`insert into account_emails(account_id,email_original,email_normalized,verified_at,is_primary)values(${account!.id},${input.email},${input.email.toLowerCase()},now(),true)`;
+  await client`insert into staff_profiles(account_id,status)values(${account!.id},'ACTIVE')`;
+  const hash = await new Argon2PasswordHasher({
+    memoryCost: 19456,
+    timeCost: 2,
+    parallelism: 1,
+  }).hash(input.password);
+  await client`insert into password_credentials(account_id,argon2id_hash)values(${account!.id},${hash})`;
+  for (const roleCode of input.roles) {
+    await auth.roles.assignRole({
+      accountId: account!.id,
+      roleCode,
+      grantedByAccountId: account!.id,
+    });
+  }
+  return account!.id;
+}
+
+export async function createDriverAccount(
+  client: SQL,
+  phone: string,
+  code: string,
+  status: "ACTIVE" | "SUSPENDED" = "ACTIVE",
+) {
+  const [account] = await client<{ id: string }[]>`insert into accounts default values returning id`;
+  await client`insert into account_phones(account_id,phone_e164,verified_at,is_primary)values(${account!.id},${phone},now(),true)`;
+  const [reviewer] = await client<{ id: string }[]>`insert into accounts default values returning id`;
+  const [application] = await client<{ id: string }[]>`insert into driver_applications(account_id,status,decided_at,decided_by_account_id)values(${account!.id},'APPROVED',now(),${reviewer!.id})returning id`;
+  const hasher = new Argon2PasswordHasher({
+    memoryCost: 19456,
+    timeCost: 2,
+    parallelism: 1,
+  });
+  await client`insert into driver_profiles(account_id,approved_application_id,operational_status,driver_photo_object_key,access_code_hash)values(${account!.id},${application!.id},${status},'photo',${await hasher.hash(code)})`;
+  return account!.id;
+}
+
+export const jsonRequest = (
+  path: string,
+  init: {
+    method?: string;
+    token?: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+  } = {},
+) => {
+  const headers: Record<string, string> = { ...init.headers };
+  if (init.body !== undefined) headers["content-type"] = "application/json";
+  if (init.token) headers.authorization = `Bearer ${init.token}`;
+  const requestInit: RequestInit = {
+    method: init.method ?? (init.body !== undefined ? "POST" : "GET"),
+    headers,
+  };
+  if (init.body !== undefined) requestInit.body = JSON.stringify(init.body);
+  return new Request(`http://localhost${path}`, requestInit);
+};

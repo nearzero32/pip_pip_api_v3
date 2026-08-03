@@ -10,7 +10,7 @@ function appWith(readinessCheck: () => Promise<void> = async () => undefined) {
 }
 const fakeModule = (overrides: Partial<AuthModule> = {}): AuthModule => {
   const empty = new Proxy({}, { get: () => async () => ({}) });
-  return { customer: empty, driver: empty, dashboard: empty, sessions: empty, ...overrides } as AuthModule;
+  return { customer: empty, driver: empty, dashboard: empty, sessions: empty, roles: empty, ...overrides } as AuthModule;
 };
 
 describe("API foundation", () => {
@@ -84,6 +84,136 @@ describe("API foundation", () => {
     for(const path of ["/api/v1/dashboard/governorates","/api/v1/dashboard/governorates/{governorateId}","/api/v1/dashboard/cities","/api/v1/dashboard/cities/{cityId}","/api/v1/dashboard/cities/{cityId}/activate","/api/v1/dashboard/cities/{cityId}/suspend","/api/v1/dashboard/cities/{cityId}/archive","/api/v1/mobile/customer/cities","/api/v1/mobile/driver/cities"]) expect(document.paths[path]).toBeDefined();
     const geographyText=JSON.stringify(Object.fromEntries(Object.entries(document.paths).filter(([path])=>path.includes("governorates")||path.includes("cities")).map(([path,operations])=>[path,Object.fromEntries(Object.entries(operations as Record<string,unknown>).map(([method,operation])=>[method,{requestBody:(operation as {requestBody?:unknown}).requestBody,parameters:(operation as {parameters?:unknown}).parameters}]))])));
     for(const field of ["code","slug","isVisible","isDisplay","boundary","polygon","geometry","zoneId"]) expect(geographyText.includes(`\"${field}\"`)).toBeFalse();
+  });
+
+  test("M3-A OpenAPI contracts are typed without Any and document endpoint-specific errors", async () => {
+    const app = createApp({
+      logger: silentLogger,
+      production: false,
+      readinessCheck: async () => undefined,
+      authModule: fakeModule(),
+      geographyService: {} as GeographyService,
+    });
+    const document = (await (
+      await app.handle(new Request("http://localhost/openapi/json"))
+    ).json()) as {
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            requestBody?: { content?: Record<string, { schema?: unknown }> };
+            responses?: Record<string, { content?: Record<string, { schema?: unknown }> }>;
+          }
+        >
+      >;
+    };
+
+    const assertNoAny = (value: unknown, path: string) => {
+      if (!value || typeof value !== "object") return;
+      const record = value as Record<string, unknown>;
+      if (record.type === "Any" || record.type === "any") {
+        throw new Error(`Unexpected Any schema at ${path}`);
+      }
+      for (const [key, child] of Object.entries(record)) {
+        assertNoAny(child, `${path}.${key}`);
+      }
+    };
+
+    const geographyPaths = Object.entries(document.paths).filter(
+      ([path]) => path.includes("governorates") || path.includes("cities"),
+    );
+    for (const [path, methods] of geographyPaths) {
+      for (const [method, operation] of Object.entries(methods)) {
+        assertNoAny(operation, `${path}.${method}`);
+      }
+    }
+
+    const cityPost =
+      document.paths["/api/v1/dashboard/cities"]!.post!.responses!["200"]!
+        .content!["application/json"]!.schema as Record<string, unknown>;
+    const cityProps = (cityPost.properties ?? cityPost) as Record<
+      string,
+      { type?: string; properties?: Record<string, { type?: string }> }
+    >;
+    const resolved =
+      "properties" in cityPost
+        ? (cityPost.properties as Record<string, { type?: string }>)
+        : cityProps;
+    expect(resolved.latitude?.type === "number" || JSON.stringify(cityPost).includes('"latitude"')).toBeTrue();
+    expect(JSON.stringify(cityPost)).toContain("latitude");
+    expect(JSON.stringify(cityPost)).toContain("longitude");
+    expect(JSON.stringify(cityPost)).toMatch(/"type"\s*:\s*"number"/);
+
+    const mobile =
+      document.paths["/api/v1/mobile/customer/cities"]!.get!.responses!["200"]!;
+    const mobileText = JSON.stringify(mobile);
+    expect(mobileText).not.toContain("archivedAt");
+    expect(mobileText).not.toContain('"status"');
+
+    // Elysia currently emits empty requestBody.content; required:true still marks the body mandatory.
+    // Empty PATCH rejection is proven by the runtime validation test below.
+    const cityPatchBody = document.paths["/api/v1/dashboard/cities/{cityId}"]!
+      .patch!.requestBody as { required?: boolean; content?: unknown };
+    expect(cityPatchBody.required).toBeTrue();
+
+    const responseKeys = (path: string, method: string) =>
+      Object.keys(document.paths[path]![method]!.responses ?? {}).sort();
+
+    expect(responseKeys("/api/v1/dashboard/governorates", "get")).not.toContain("403");
+    expect(responseKeys("/api/v1/dashboard/governorates", "get")).not.toContain("404");
+    expect(responseKeys("/api/v1/dashboard/governorates", "get")).not.toContain("409");
+    expect(responseKeys("/api/v1/dashboard/governorates/{governorateId}", "patch")).toContain("403");
+    expect(responseKeys("/api/v1/dashboard/governorates/{governorateId}", "patch")).toContain("404");
+    expect(responseKeys("/api/v1/dashboard/cities", "get")).not.toContain("409");
+    expect(responseKeys("/api/v1/dashboard/cities/{cityId}", "get")).toContain("404");
+    expect(responseKeys("/api/v1/dashboard/cities", "post")).toContain("403");
+    expect(responseKeys("/api/v1/dashboard/cities", "post")).not.toContain("404");
+    expect(responseKeys("/api/v1/dashboard/cities/{cityId}/activate", "post")).toEqual(
+      expect.arrayContaining(["403", "404", "409"]),
+    );
+    expect(responseKeys("/api/v1/mobile/customer/cities", "get")).not.toContain("403");
+    expect(responseKeys("/api/v1/mobile/driver/cities", "get")).not.toContain("409");
+  });
+
+  test("empty City PATCH is invalid at runtime", async () => {
+    const app = createApp({
+      logger: silentLogger,
+      production: false,
+      readinessCheck: async () => undefined,
+      authModule: fakeModule({
+        sessions: {
+          authenticate: async () => ({
+            accountId: crypto.randomUUID(),
+            sessionId: crypto.randomUUID(),
+            applicationType: "DASHBOARD",
+            roles: ["SUPER_ADMIN"],
+          }),
+          requireSuperAdmin: () => undefined,
+        } as never,
+      }),
+      geographyService: {
+        cities: {
+          update: async () => {
+            throw new Error("should not be called");
+          },
+        },
+      } as unknown as GeographyService,
+    });
+    const response = await app.handle(
+      new Request(
+        "http://localhost/api/v1/dashboard/cities/11111111-1111-4111-8111-111111111111",
+        {
+          method: "PATCH",
+          headers: {
+            authorization: "Bearer test",
+            "content-type": "application/json",
+          },
+          body: "{}",
+        },
+      ),
+    );
+    expect(response.status).toBe(422);
   });
 
   test("registers every application route under /api/v1 with no unprefixed aliases", async () => {
