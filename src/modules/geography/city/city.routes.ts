@@ -1,11 +1,11 @@
 import { Elysia, t } from "elysia";
 import type { AuthModule } from "../../auth/auth-module";
+import { dashboardContext } from "../../auth/core/context";
 import {
-  customerContext,
-  dashboardContext,
-  driverContext,
-} from "../../auth/core/context";
-import { errorResponse, parseAuthenticationBody, standardErrors } from "../../auth/http/shared";
+  errorResponse,
+  parseAuthenticationBody,
+  standardErrors,
+} from "../../auth/http/shared";
 import {
   assertAllowedBodyKeys,
   authIdentity,
@@ -67,7 +67,11 @@ const cityTransitionErrors = {
   404: errorResponse,
   409: errorResponse,
 };
-const mobileListErrors = { ...standardErrors };
+const publicMobileListErrors = {
+  422: errorResponse,
+  500: errorResponse,
+  503: errorResponse,
+};
 const cityIdParam = t.Object(
   { cityId: t.String({ format: "uuid" }) },
   { additionalProperties: false },
@@ -251,10 +255,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
     )
     .get(
       "/api/v1/mobile/customer/cities",
-      async ({ request, set, query }) => {
-        await authIdentity(auth, request, customerContext, requestIdOf(set));
-        return service.list({ ...query, mobile: true });
-      },
+      async ({ query }) => service.list({ ...query, mobile: true }),
       {
         query: t.Object(
           {
@@ -264,19 +265,15 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
           },
           { additionalProperties: false },
         ),
-        response: { 200: mobileCityResponse, ...mobileListErrors },
+        response: { 200: mobileCityResponse, ...publicMobileListErrors },
         detail: {
           tags: ["Mobile — Customer Cities"],
-          security: [{ bearerAuth: [] }],
         },
       },
     )
     .get(
       "/api/v1/mobile/driver/cities",
-      async ({ request, set, query }) => {
-        await authIdentity(auth, request, driverContext, requestIdOf(set));
-        return service.list({ ...query, mobile: true });
-      },
+      async ({ query }) => service.list({ ...query, mobile: true }),
       {
         query: t.Object(
           {
@@ -286,10 +283,9 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
           },
           { additionalProperties: false },
         ),
-        response: { 200: mobileCityResponse, ...mobileListErrors },
+        response: { 200: mobileCityResponse, ...publicMobileListErrors },
         detail: {
           tags: ["Mobile — Driver Cities"],
-          security: [{ bearerAuth: [] }],
         },
       },
     );

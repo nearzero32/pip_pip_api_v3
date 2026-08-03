@@ -104,6 +104,7 @@ describe("API foundation", () => {
           {
             requestBody?: { content?: Record<string, { schema?: unknown }> };
             responses?: Record<string, { content?: Record<string, { schema?: unknown }> }>;
+            security?: unknown;
           }
         >
       >;
@@ -173,7 +174,11 @@ describe("API foundation", () => {
       expect.arrayContaining(["403", "404", "409"]),
     );
     expect(responseKeys("/api/v1/mobile/customer/cities", "get")).not.toContain("403");
+    expect(responseKeys("/api/v1/mobile/customer/cities", "get")).not.toContain("401");
     expect(responseKeys("/api/v1/mobile/driver/cities", "get")).not.toContain("409");
+    expect(responseKeys("/api/v1/mobile/driver/cities", "get")).not.toContain("401");
+    expect(document.paths["/api/v1/mobile/customer/cities"]!.get!.security).toBeUndefined();
+    expect(document.paths["/api/v1/mobile/driver/cities"]!.get!.security).toBeUndefined();
   });
 
   test("empty City PATCH is invalid at runtime", async () => {

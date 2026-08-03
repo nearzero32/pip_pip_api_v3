@@ -9,7 +9,6 @@ import {
   createStaffAccount,
   jsonRequest,
   seededGovernorateId,
-  tokenClaims,
   type IntegrationHarness,
 } from "./helpers";
 
@@ -663,11 +662,7 @@ describe("M3-A Geography HTTP routes", () => {
         "/api/v1/mobile/customer/cities",
         "/api/v1/mobile/driver/cities",
       ]) {
-        const response = await harness.app.handle(
-          jsonRequest(path, {
-            token: path.includes("customer") ? customerToken : driverToken,
-          }),
-        );
+        const response = await harness.app.handle(jsonRequest(path));
         expect(response.status).toBe(200);
         const body = (await response.json()) as {
           data: Record<string, unknown>[];
@@ -684,6 +679,7 @@ describe("M3-A Geography HTTP routes", () => {
           expect(row).not.toHaveProperty("archivedAt");
           expect(row).not.toHaveProperty("governorate_id");
           expect(row).not.toHaveProperty("name_ar");
+          expect(row).toHaveProperty("governorate");
         }
       }
 
@@ -695,9 +691,7 @@ describe("M3-A Geography HTTP routes", () => {
         }),
       );
       const hidden = await harness.app.handle(
-        jsonRequest("/api/v1/mobile/customer/cities", {
-          token: customerToken,
-        }),
+        jsonRequest("/api/v1/mobile/customer/cities"),
       );
       const hiddenIds = (
         (await hidden.json()) as { data: { id: string }[] }
@@ -706,7 +700,7 @@ describe("M3-A Geography HTTP routes", () => {
       expect(hiddenIds).not.toContain(inactiveGovCity);
     });
 
-    test("audience isolation and query cannot override visibility", async () => {
+    test("mobile city lists are public and query cannot override visibility", async () => {
       await harness.app.handle(
         jsonRequest(`/api/v1/dashboard/governorates/${seededGovernorateId}`, {
           method: "PATCH",
@@ -715,36 +709,16 @@ describe("M3-A Geography HTTP routes", () => {
         }),
       );
       expect(
-        (
-          await harness.app.handle(
-            jsonRequest("/api/v1/mobile/customer/cities", {
-              token: driverToken,
-            }),
-          )
-        ).status,
-      ).toBe(401);
+        (await harness.app.handle(jsonRequest("/api/v1/mobile/customer/cities")))
+          .status,
+      ).toBe(200);
       expect(
-        (
-          await harness.app.handle(
-            jsonRequest("/api/v1/mobile/driver/cities", {
-              token: customerToken,
-            }),
-          )
-        ).status,
-      ).toBe(401);
-      expect(
-        (
-          await harness.app.handle(
-            jsonRequest("/api/v1/mobile/customer/cities", {
-              token: superToken,
-            }),
-          )
-        ).status,
-      ).toBe(401);
+        (await harness.app.handle(jsonRequest("/api/v1/mobile/driver/cities")))
+          .status,
+      ).toBe(200);
       const override = await harness.app.handle(
         jsonRequest(
           "/api/v1/mobile/customer/cities?status=DRAFT&mobile=false",
-          { token: customerToken },
         ),
       );
       expect(override.status).toBe(200);
@@ -753,8 +727,6 @@ describe("M3-A Geography HTTP routes", () => {
       ).data.map((row) => row.id);
       expect(overrideIds).not.toContain(draftId);
       expect(overrideIds).toContain(activeVisible);
-      expect(tokenClaims(customerToken).roles).toEqual([]);
-      expect(tokenClaims(driverToken).roles).toEqual([]);
     });
   });
 });
