@@ -5,6 +5,7 @@ import type {
   SessionService,
 } from "../../auth/sessions/session-service";
 import { dateValue, pageOf } from "../shared";
+import { revokeDashboardSessionsForCities } from "../operational-sessions";
 
 export const governorateDto = (row: Record<string, unknown>): any => ({
   id: row.id,
@@ -80,10 +81,38 @@ export class GovernorateService {
       (!Number.isInteger(input.displayOrder) || input.displayOrder < 0)
     )
       throw new AppError(422, "VALIDATION_FAILED", "Invalid display order");
-    const [row] = await this
-      .client`update governorates set status=coalesce(${input.status ?? null}::governorate_status,status),display_order=coalesce(${input.displayOrder ?? null},display_order),updated_at=now() where id=${id} returning id,name_ar,name_en,status,display_order,created_at,updated_at`;
-    if (!row)
-      throw new AppError(404, "GOVERNORATE_NOT_FOUND", "Governorate not found");
-    return governorateDto(row as Record<string, unknown>);
+
+    return this.client.begin(async (tx) => {
+      const [current] = await tx<
+        { status: string }[]
+      >`select status::text as status from governorates where id=${id} for update`;
+      if (!current)
+        throw new AppError(404, "GOVERNORATE_NOT_FOUND", "Governorate not found");
+
+      const [row] = await tx`
+        update governorates set
+          status=coalesce(${input.status ?? null}::governorate_status,status),
+          display_order=coalesce(${input.displayOrder ?? null},display_order),
+          updated_at=now()
+        where id=${id}
+        returning id,name_ar,name_en,status,display_order,created_at,updated_at`;
+      if (!row)
+        throw new AppError(404, "GOVERNORATE_NOT_FOUND", "Governorate not found");
+
+      const becameUnavailable =
+        current.status === "ACTIVE" && input.status === "INACTIVE";
+      if (becameUnavailable) {
+        const cities = await tx<{ id: string }[]>`
+          select id::text as id from cities where governorate_id = ${id}`;
+        await revokeDashboardSessionsForCities(
+          this.sessions,
+          tx,
+          cities.map((city) => city.id),
+          "GOVERNORATE_UNAVAILABLE",
+        );
+      }
+
+      return governorateDto(row as Record<string, unknown>);
+    });
   }
 }

@@ -220,6 +220,16 @@ describe("M3-A Geography HTTP routes", () => {
           body: { status: "ACTIVE" },
         }),
       );
+      // Governorate unavailability revokes City-scoped Dashboard sessions; re-issue.
+      supportToken = (
+        await harness.auth.dashboard.login({
+          email: "geo-support@example.com",
+          password,
+          deviceName: "p2",
+          ip: "p2",
+          requestId: "p2",
+        })
+      ).access_token;
     });
   });
 
@@ -677,6 +687,15 @@ describe("M3-A Geography HTTP routes", () => {
           body: { status: "ACTIVE" },
         }),
       );
+      supportToken = (
+        await harness.auth.dashboard.login({
+          email: "geo-support@example.com",
+          password,
+          deviceName: "p3",
+          ip: "p3",
+          requestId: "p3",
+        })
+      ).access_token;
     });
 
     test("GET /api/v1/public/cities succeeds without a token and needs no Customer/Driver/Dashboard token", async () => {
@@ -789,6 +808,15 @@ describe("M3-A Geography HTTP routes", () => {
           body: { status: "ACTIVE" },
         }),
       );
+      supportToken = (
+        await harness.auth.dashboard.login({
+          email: "geo-support@example.com",
+          password,
+          deviceName: "p4",
+          ip: "p4",
+          requestId: "p4",
+        })
+      ).access_token;
       const override = await harness.app.handle(
         jsonRequest(
           "/api/v1/public/cities?status=DRAFT&status=ARCHIVED&mobile=false&governorateId=00000000-0000-4000-8000-000000000099",

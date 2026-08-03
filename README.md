@@ -17,11 +17,11 @@ bun run db:migrate
 bun run dev
 ```
 
-Compose builds and runs `pip_pip_v3/postgis:17-3.5` from `docker/postgres-postgis` (PostgreSQL 17.6 Alpine + PostGIS 3.5.x). Upstream equivalent image is `postgis/postgis:17-3.5` (same majors). It publishes PostgreSQL on host port `5433` and Redis on `6380` to avoid conventional local ports; containers use `postgres:5432` and `redis:6379` internally. The one-shot `migrate` service runs after PostgreSQL is healthy. The API starts only after PostgreSQL and Redis are healthy and migrations succeed.
+Compose builds and runs `pip_pip_v3/postgis:17-3.5` from `docker/postgres-postgis` (`postgres:17.6-alpine` + Alpine package `postgis=3.5.3-r0`). Upstream equivalent image is `postgis/postgis:17-3.5` (PostgreSQL 17 + PostGIS 3.5 majors). It publishes PostgreSQL on host port `5433` and Redis on `6380` to avoid conventional local ports; containers use `postgres:5432` and `redis:6379` internally. The one-shot `migrate` service runs after PostgreSQL is healthy. The API starts only after PostgreSQL and Redis are healthy and migrations succeed.
 
 ### Production database (PostGIS)
 
-Production must run PostgreSQL 17 with PostGIS 3.5 available (same majors as Compose and integration tests). Recommended image: `postgis/postgis:17-3.5`, or an equivalent image that provides those majors. Migration `0010_lucky_korvac` executes `CREATE EXTENSION IF NOT EXISTS postgis;` and creates `zones.boundary` as `geometry(Polygon,4326)` with a GIST index. Enable PostGIS packages before applying that migration; plain PostgreSQL without PostGIS is not supported.
+Production must run PostgreSQL 17 with PostGIS 3.5 available (same majors as Compose and integration tests). Recommended image: `postgis/postgis:17-3.5`, or an equivalent image that provides those majors. Local Compose pins the Alpine package revision `postgis=3.5.3-r0` for reproducible builds. Migration `0010_lucky_korvac` executes `CREATE EXTENSION IF NOT EXISTS postgis;` and creates `zones.boundary` as `geometry(Polygon,4326)` with a GIST index. Enable PostGIS packages before applying that migration; plain PostgreSQL without PostGIS is not supported.
 
 The local API is available at:
 

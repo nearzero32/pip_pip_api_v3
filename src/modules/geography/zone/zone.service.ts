@@ -158,12 +158,25 @@ const isUniqueNameViolation = (error: unknown): boolean => {
 export class ZoneService {
   constructor(private client: SQL) {}
 
-  async create(identity: AuthIdentity, body: unknown) {
+  /**
+   * Trusted City authorization + live permission + current City/Governorate operability.
+   * City comes only from the authenticated identity (via requireCityPermission).
+   */
+  private async authorizeOperationalCity(
+    identity: AuthIdentity,
+    permission: "zones.read" | "zones.create" | "zones.update" | "zones.archive",
+  ): Promise<string> {
     const cityId = await requireCityPermission(
       this.client,
       identity,
-      "zones.create",
+      permission,
     );
+    await assertActiveCity(this.client, cityId);
+    return cityId;
+  }
+
+  async create(identity: AuthIdentity, body: unknown) {
+    const cityId = await this.authorizeOperationalCity(identity, "zones.create");
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
     }
@@ -176,7 +189,6 @@ export class ZoneService {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
     }
     const polygon = parseGeoJsonPolygon(input.boundary);
-    await assertActiveCity(this.client, cityId);
 
     return this.client.begin(async (tx) => {
       await lockCity(tx, cityId);
@@ -210,11 +222,7 @@ export class ZoneService {
     identity: AuthIdentity,
     input: { status?: string; search?: string; page?: number; limit?: number },
   ) {
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      "zones.read",
-    );
+    const cityId = await this.authorizeOperationalCity(identity, "zones.read");
     const { page, limit } = pageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const search = input.search?.trim() || null;
@@ -254,22 +262,14 @@ export class ZoneService {
   }
 
   async get(identity: AuthIdentity, zoneId: string) {
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      "zones.read",
-    );
+    const cityId = await this.authorizeOperationalCity(identity, "zones.read");
     const row = await fetchZone(this.client, zoneId, cityId);
     if (!row) throw new AppError(404, "ZONE_NOT_FOUND", "Zone not found");
     return zoneDto(row);
   }
 
   async update(identity: AuthIdentity, zoneId: string, body: unknown) {
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      "zones.update",
-    );
+    const cityId = await this.authorizeOperationalCity(identity, "zones.update");
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
     }
@@ -342,8 +342,7 @@ export class ZoneService {
   }
 
   async archive(identity: AuthIdentity, zoneId: string) {
-    const cityId = await requireCityPermission(
-      this.client,
+    const cityId = await this.authorizeOperationalCity(
       identity,
       "zones.archive",
     );

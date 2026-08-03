@@ -6,9 +6,11 @@
 # Official postgres Alpine images install under /usr/local, while Alpine's
 # `postgis` package targets distro PostgreSQL paths. After installing the
 # package we link the PostGIS 3.5 artifacts into the image's pg paths.
+#
+# Pin: postgres:17.6-alpine base + Alpine package postgis=3.5.3-r0 (exact revision).
 FROM postgres:17.6-alpine
 
-RUN apk add --no-cache 'postgis=~3.5' \
+RUN apk add --no-cache 'postgis=3.5.3-r0' \
   && ln -sf /usr/lib/postgresql17/postgis*.so /usr/local/lib/postgresql/ \
   && ln -sf /usr/lib/postgresql17/address_standardizer*.so /usr/local/lib/postgresql/ \
   && ln -sf /usr/share/postgresql17/extension/postgis* /usr/local/share/postgresql/extension/ \

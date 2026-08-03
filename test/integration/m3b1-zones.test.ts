@@ -9,12 +9,7 @@ import {
 
 const password = "fixed staff password";
 
-const square = (
-  west: number,
-  south: number,
-  east: number,
-  north: number,
-) => ({
+const square = (west: number, south: number, east: number, north: number) => ({
   type: "Polygon" as const,
   coordinates: [
     [
@@ -28,7 +23,8 @@ const square = (
 });
 
 const errorOf = async (response: Response) =>
-  ((await response.json()) as { error: { code: string; message: string } }).error;
+  ((await response.json()) as { error: { code: string; message: string } })
+    .error;
 
 describe("M3-B1 Zones and PostGIS", () => {
   let harness: IntegrationHarness;
@@ -146,7 +142,10 @@ describe("M3-B1 Zones and PostGIS", () => {
         jsonRequest("/api/v1/dashboard/zones", {
           method: "POST",
           token: adminAToken,
-          body: { name: "Admin Zone", boundary: square(44.1, 33.1, 44.2, 33.2) },
+          body: {
+            name: "Admin Zone",
+            boundary: square(44.1, 33.1, 44.2, 33.2),
+          },
         }),
       );
       expect(created.status).toBe(200);
@@ -164,7 +163,9 @@ describe("M3-B1 Zones and PostGIS", () => {
       expect(listed.status).toBe(200);
 
       const got = await harness.app.handle(
-        jsonRequest(`/api/v1/dashboard/zones/${zone.id}`, { token: adminAToken }),
+        jsonRequest(`/api/v1/dashboard/zones/${zone.id}`, {
+          token: adminAToken,
+        }),
       );
       expect(got.status).toBe(200);
 
@@ -176,7 +177,9 @@ describe("M3-B1 Zones and PostGIS", () => {
         }),
       );
       expect(patched.status).toBe(200);
-      expect(((await patched.json()) as { status: string }).status).toBe("INACTIVE");
+      expect(((await patched.json()) as { status: string }).status).toBe(
+        "INACTIVE",
+      );
 
       const archived = await harness.app.handle(
         jsonRequest(`/api/v1/dashboard/zones/${zone.id}`, {
@@ -185,7 +188,9 @@ describe("M3-B1 Zones and PostGIS", () => {
         }),
       );
       expect(archived.status).toBe(200);
-      expect(((await archived.json()) as { status: string }).status).toBe("ARCHIVED");
+      expect(((await archived.json()) as { status: string }).status).toBe(
+        "ARCHIVED",
+      );
     });
 
     test("employee permissions are live and SUPER_ADMIN is blocked", async () => {
@@ -317,7 +322,9 @@ describe("M3-B1 Zones and PostGIS", () => {
         }),
       );
       expect(response.status).toBe(200);
-      expect(((await response.json()) as { cityId: string }).cityId).toBe(cityA);
+      expect(((await response.json()) as { cityId: string }).cityId).toBe(
+        cityA,
+      );
     });
   });
 
@@ -397,7 +404,10 @@ describe("M3-B1 Zones and PostGIS", () => {
         jsonRequest("/api/v1/dashboard/zones", {
           method: "POST",
           token: adminAToken,
-          body: { name: "Valid Poly", boundary: square(50.0, 30.0, 50.2, 30.2) },
+          body: {
+            name: "Valid Poly",
+            boundary: square(50.0, 30.0, 50.2, 30.2),
+          },
         }),
       );
       expect(ok.status).toBe(200);
@@ -488,7 +498,10 @@ describe("M3-B1 Zones and PostGIS", () => {
         jsonRequest("/api/v1/dashboard/zones", {
           method: "POST",
           token: adminAToken,
-          body: { name: "Overlap Base", boundary: square(52.0, 32.0, 52.2, 32.2) },
+          body: {
+            name: "Overlap Base",
+            boundary: square(52.0, 32.0, 52.2, 32.2),
+          },
         }),
       );
       expect(base.status).toBe(200);
@@ -802,9 +815,12 @@ describe("M3-B1 Zones and PostGIS", () => {
 
     test("resolver uses ST_Covers with deterministic shared-border tie-break", async () => {
       const inside = await harness.app.handle(
-        jsonRequest("/api/v1/public/zones/resolve?longitude=55.1&latitude=35.1", {
-          headers: { "X-City-Id": cityA },
-        }),
+        jsonRequest(
+          "/api/v1/public/zones/resolve?longitude=55.1&latitude=35.1",
+          {
+            headers: { "X-City-Id": cityA },
+          },
+        ),
       );
       expect(inside.status).toBe(200);
       expect(((await inside.json()) as { id: string }).id).toBe(publicZoneId);
@@ -861,14 +877,18 @@ describe("M3-B1 Zones and PostGIS", () => {
           >
         >;
       };
-      expect(document.components?.parameters?.CityIdHeader?.name).toBe("X-City-Id");
-      expect(document.paths["/api/v1/dashboard/zones"]?.post?.security).toEqual([
-        { bearerAuth: [] },
-      ]);
+      expect(document.components?.parameters?.CityIdHeader?.name).toBe(
+        "X-City-Id",
+      );
+      expect(document.paths["/api/v1/dashboard/zones"]?.post?.security).toEqual(
+        [{ bearerAuth: [] }],
+      );
       expect(document.paths["/api/v1/dashboard/zones"]?.get?.security).toEqual([
         { bearerAuth: [] },
       ]);
-      const dashPost = JSON.stringify(document.paths["/api/v1/dashboard/zones"]!.post);
+      const dashPost = JSON.stringify(
+        document.paths["/api/v1/dashboard/zones"]!.post,
+      );
       expect(dashPost).not.toContain("X-City-Id");
       expect(dashPost).toContain("Polygon");
       expect(dashPost).toContain("bearerAuth");
@@ -882,7 +902,8 @@ describe("M3-B1 Zones and PostGIS", () => {
       ).toBe(true);
       expect(publicList.security ?? []).not.toEqual([{ bearerAuth: [] }]);
 
-      const publicResolve = document.paths["/api/v1/public/zones/resolve"]!.get!;
+      const publicResolve =
+        document.paths["/api/v1/public/zones/resolve"]!.get!;
       const resolveText = JSON.stringify(publicResolve);
       expect(
         resolveText.includes("CityIdHeader") ||
@@ -892,6 +913,354 @@ describe("M3-B1 Zones and PostGIS", () => {
       expect(resolveText).toContain("longitude");
       expect(resolveText).toContain("latitude");
       expect(resolveText).not.toContain('"Any"');
+    });
+  });
+
+  describe("M3-B1.1 authorization and spatial policy gaps", () => {
+    test("live zones.read revocation forbids list/get with the same access token", async () => {
+      const empId = await createStaffAccount(harness.auth, harness.client, {
+        email: "m3b1-read-rev@example.com",
+        password,
+        roles: ["SUPPORT"],
+        cityId: cityA,
+        managedByAccountId: adminAId,
+      });
+      for (const permission of ["zones.read", "zones.create"] as const) {
+        expect(
+          (
+            await harness.app.handle(
+              jsonRequest(`/api/v1/dashboard/employees/${empId}/permissions`, {
+                method: "POST",
+                token: adminAToken,
+                body: { permission },
+              }),
+            )
+          ).status,
+        ).toBe(200);
+      }
+      const token = (
+        await harness.auth.dashboard.login({
+          email: "m3b1-read-rev@example.com",
+          password,
+          deviceName: "rr",
+          ip: "rr",
+          requestId: "rr",
+        })
+      ).access_token;
+      const zone = await harness.app.handle(
+        jsonRequest("/api/v1/dashboard/zones", {
+          method: "POST",
+          token,
+          body: {
+            name: "Read Revoke Zone",
+            boundary: square(72.0, 42.0, 72.1, 42.1),
+          },
+        }),
+      );
+      expect(zone.status).toBe(200);
+      const zoneId = ((await zone.json()) as { id: string }).id;
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest("/api/v1/dashboard/zones", { token }),
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest(`/api/v1/dashboard/zones/${zoneId}`, { token }),
+          )
+        ).status,
+      ).toBe(200);
+
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest(
+              `/api/v1/dashboard/employees/${empId}/permissions/zones.read`,
+              { method: "DELETE", token: adminAToken },
+            ),
+          )
+        ).status,
+      ).toBe(200);
+
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest("/api/v1/dashboard/zones", { token }),
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest(`/api/v1/dashboard/zones/${zoneId}`, { token }),
+          )
+        ).status,
+      ).toBe(403);
+      // Independently granted create still works
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest("/api/v1/dashboard/zones", {
+              method: "POST",
+              token,
+              body: {
+                name: "Still Create",
+                boundary: square(72.2, 42.2, 72.3, 42.3),
+              },
+            }),
+          )
+        ).status,
+      ).toBe(200);
+    });
+
+    test("cross-City employee Zone IDs return ZONE_NOT_FOUND", async () => {
+      const empId = await createStaffAccount(harness.auth, harness.client, {
+        email: "m3b1-xcity-emp@example.com",
+        password,
+        roles: ["OPERATIONS"],
+        cityId: cityA,
+        managedByAccountId: adminAId,
+      });
+      for (const permission of [
+        "zones.read",
+        "zones.update",
+        "zones.archive",
+      ] as const) {
+        expect(
+          (
+            await harness.app.handle(
+              jsonRequest(`/api/v1/dashboard/employees/${empId}/permissions`, {
+                method: "POST",
+                token: adminAToken,
+                body: { permission },
+              }),
+            )
+          ).status,
+        ).toBe(200);
+      }
+      const token = (
+        await harness.auth.dashboard.login({
+          email: "m3b1-xcity-emp@example.com",
+          password,
+          deviceName: "xc",
+          ip: "xc",
+          requestId: "xc",
+        })
+      ).access_token;
+      const foreign = await harness.app.handle(
+        jsonRequest("/api/v1/dashboard/zones", {
+          method: "POST",
+          token: adminBToken,
+          body: {
+            name: "Foreign Zone B",
+            boundary: square(73.0, 43.0, 73.1, 43.1),
+          },
+        }),
+      );
+      expect(foreign.status).toBe(200);
+      const zoneBId = ((await foreign.json()) as { id: string }).id;
+
+      for (const init of [
+        { method: "GET" as const },
+        { method: "PATCH" as const, body: { name: "stolen" } },
+        { method: "DELETE" as const },
+      ]) {
+        const response = await harness.app.handle(
+          jsonRequest(`/api/v1/dashboard/zones/${zoneBId}`, {
+            ...init,
+            token,
+            headers: { "X-City-Id": cityB },
+          }),
+        );
+        expect(response.status).toBe(404);
+        expect((await errorOf(response)).code).toBe("ZONE_NOT_FOUND");
+      }
+    });
+
+    test("inactive non-archived Zone still blocks positive-area overlap", async () => {
+      const created = await harness.app.handle(
+        jsonRequest("/api/v1/dashboard/zones", {
+          method: "POST",
+          token: adminAToken,
+          body: {
+            name: "Inactive Overlap Base",
+            boundary: square(74.0, 44.0, 74.2, 44.2),
+          },
+        }),
+      );
+      expect(created.status).toBe(200);
+      const id = ((await created.json()) as { id: string }).id;
+      expect(
+        (
+          await harness.app.handle(
+            jsonRequest(`/api/v1/dashboard/zones/${id}`, {
+              method: "PATCH",
+              token: adminAToken,
+              body: { status: "INACTIVE" },
+            }),
+          )
+        ).status,
+      ).toBe(200);
+      const overlap = await harness.app.handle(
+        jsonRequest("/api/v1/dashboard/zones", {
+          method: "POST",
+          token: adminAToken,
+          body: {
+            name: "Inactive Overlap Challenger",
+            boundary: square(74.1, 44.1, 74.3, 44.3),
+          },
+        }),
+      );
+      expect(overlap.status).toBe(409);
+      expect((await errorOf(overlap)).code).toBe("ZONE_BOUNDARY_OVERLAP");
+    });
+
+    test("public resolver ignores inactive and archived Zones", async () => {
+      const active = await harness.app.handle(
+        jsonRequest("/api/v1/dashboard/zones", {
+          method: "POST",
+          token: adminAToken,
+          body: {
+            name: "Resolver Active",
+            boundary: square(75.0, 45.0, 75.2, 45.2),
+          },
+        }),
+      );
+      const activeId = ((await active.json()) as { id: string }).id;
+
+      const inactive = await harness.app.handle(
+        jsonRequest("/api/v1/dashboard/zones", {
+          method: "POST",
+          token: adminAToken,
+          body: {
+            name: "Resolver Inactive",
+            boundary: square(75.3, 45.3, 75.4, 45.4),
+          },
+        }),
+      );
+      const inactiveId = ((await inactive.json()) as { id: string }).id;
+      await harness.app.handle(
+        jsonRequest(`/api/v1/dashboard/zones/${inactiveId}`, {
+          method: "PATCH",
+          token: adminAToken,
+          body: { status: "INACTIVE" },
+        }),
+      );
+
+      const archived = await harness.app.handle(
+        jsonRequest("/api/v1/dashboard/zones", {
+          method: "POST",
+          token: adminAToken,
+          body: {
+            name: "Resolver Archived",
+            boundary: square(75.5, 45.5, 75.6, 45.6),
+          },
+        }),
+      );
+      const archivedId = ((await archived.json()) as { id: string }).id;
+      await harness.app.handle(
+        jsonRequest(`/api/v1/dashboard/zones/${archivedId}`, {
+          method: "DELETE",
+          token: adminAToken,
+        }),
+      );
+
+      const hit = await harness.app.handle(
+        jsonRequest("/api/v1/public/zones/resolve?longitude=75.1&latitude=45.1", {
+          headers: { "X-City-Id": cityA },
+        }),
+      );
+      expect(hit.status).toBe(200);
+      expect(((await hit.json()) as { id: string }).id).toBe(activeId);
+
+      const missInactive = await harness.app.handle(
+        jsonRequest("/api/v1/public/zones/resolve?longitude=75.35&latitude=45.35", {
+          headers: { "X-City-Id": cityA },
+        }),
+      );
+      expect(missInactive.status).toBe(404);
+      expect((await errorOf(missInactive)).code).toBe("ZONE_NOT_FOUND");
+
+      const missArchived = await harness.app.handle(
+        jsonRequest("/api/v1/public/zones/resolve?longitude=75.55&latitude=45.55", {
+          headers: { "X-City-Id": cityA },
+        }),
+      );
+      expect(missArchived.status).toBe(404);
+
+      const wrongCity = await harness.app.handle(
+        jsonRequest("/api/v1/public/zones/resolve?longitude=75.1&latitude=45.1", {
+          headers: { "X-City-Id": cityB },
+        }),
+      );
+      expect(wrongCity.status).toBe(404);
+    });
+
+    test("public X-City-Id validation preserves M3-B0 codes", async () => {
+      const missing = await harness.app.handle(
+        new Request("http://localhost/api/v1/public/zones"),
+      );
+      expect(missing.status).toBe(400);
+      expect((await errorOf(missing)).code).toBe("CITY_CONTEXT_REQUIRED");
+
+      const malformed = await harness.app.handle(
+        jsonRequest("/api/v1/public/zones", {
+          headers: { "X-City-Id": "not-a-uuid" },
+        }),
+      );
+      expect(malformed.status).toBe(400);
+      expect((await errorOf(malformed)).code).toBe("INVALID_CITY_CONTEXT");
+
+      const unknown = await harness.app.handle(
+        jsonRequest("/api/v1/public/zones", {
+          headers: { "X-City-Id": "11111111-1111-4111-8111-999999999999" },
+        }),
+      );
+      expect(unknown.status).toBe(404);
+      expect((await errorOf(unknown)).code).toBe("CITY_NOT_FOUND");
+
+      const suspendedCity = await createActiveCity(
+        harness.client,
+        "Public Suspend City",
+      );
+      await harness.client`
+        update cities set status='SUSPENDED',updated_at=now() where id=${suspendedCity}`;
+      const suspended = await harness.app.handle(
+        jsonRequest("/api/v1/public/zones", {
+          headers: { "X-City-Id": suspendedCity },
+        }),
+      );
+      expect(suspended.status).toBe(409);
+      expect((await errorOf(suspended)).code).toBe("CITY_NOT_ACTIVE");
+    });
+
+    test("wrong SRID geometry is rejected by PostGIS column type", async () => {
+      let failed = false;
+      try {
+        await harness.client.begin(async (tx) => {
+          await tx`
+            insert into zones (city_id, name, boundary, status)
+            values (
+              ${cityA},
+              ${`Wrong SRID ${crypto.randomUUID().slice(0, 8)}`},
+              ST_SetSRID(
+                ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))'),
+                3857
+              ),
+              'ACTIVE'
+            )`;
+        });
+      } catch {
+        failed = true;
+      }
+      expect(failed).toBe(true);
+      const [count] = await harness.client<{ n: string }[]>`
+        select count(*)::text as n from zones
+        where city_id=${cityA} and name like 'Wrong SRID%'`;
+      expect(Number(count?.n ?? 1)).toBe(0);
     });
   });
 });

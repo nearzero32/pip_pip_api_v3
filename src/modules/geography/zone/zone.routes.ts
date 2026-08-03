@@ -75,6 +75,16 @@ const zoneCreateErrors = {
   404: errorResponse,
   409: errorResponse,
 };
+const zoneListErrors = {
+  ...dashboardListErrors,
+  403: errorResponse,
+  409: errorResponse,
+};
+const zoneDetailErrors = {
+  ...dashboardDetailErrors,
+  403: errorResponse,
+  409: errorResponse,
+};
 const zoneMutationErrors = {
   ...dashboardMutationErrors,
   400: errorResponse,
@@ -157,7 +167,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
           },
           { additionalProperties: false },
         ),
-        response: { 200: zoneListResponse, ...dashboardListErrors, 403: errorResponse },
+        response: { 200: zoneListResponse, ...zoneListErrors },
         detail: {
           tags: ["Dashboard — Zones"],
           summary: "List Zones for the authenticated City",
@@ -176,8 +186,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
         params: zoneIdParam,
         response: {
           200: zoneDto,
-          ...dashboardDetailErrors,
-          403: errorResponse,
+          ...zoneDetailErrors,
         },
         detail: {
           tags: ["Dashboard — Zones"],
@@ -242,7 +251,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
       {
         query: t.Object({}, { additionalProperties: false }),
         headers: t.Object(
-          { "x-city-id": t.Optional(t.String({ format: "uuid" })) },
+          { "x-city-id": t.Optional(t.String({ maxLength: 128 })) },
           { additionalProperties: true },
         ),
         response: { 200: publicZoneListResponse, ...publicZoneErrors },
@@ -260,7 +269,11 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
       "/api/v1/public/zones/resolve",
       async ({ request, query }) => {
         const city = await requirePublicCityContext(auth.client, request);
-        return service.resolvePublic(city.city.id, query.longitude, query.latitude);
+        return service.resolvePublic(
+          city.city.id,
+          query.longitude,
+          query.latitude,
+        );
       },
       {
         query: t.Object(
@@ -271,7 +284,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
           { additionalProperties: false },
         ),
         headers: t.Object(
-          { "x-city-id": t.Optional(t.String({ format: "uuid" })) },
+          { "x-city-id": t.Optional(t.String({ maxLength: 128 })) },
           { additionalProperties: true },
         ),
         response: { 200: publicZoneDto, ...publicZoneErrors },

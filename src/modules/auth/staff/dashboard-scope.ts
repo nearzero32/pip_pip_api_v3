@@ -122,6 +122,13 @@ export async function loadTrustedDashboardContext(
   return { roles, scopeType: "CITY", cityId };
 }
 
+/**
+ * Authoritative City operability for City-scoped dashboard operations (e.g. Zones).
+ * Requires the trusted City row to exist with status ACTIVE and its parent
+ * Governorate status ACTIVE. Uses only a server-trusted cityId — never request input.
+ *
+ * Errors: CITY_NOT_FOUND (404), CITY_NOT_ACTIVE (409).
+ */
 export async function assertActiveCity(
   client: SQL,
   cityId: string,

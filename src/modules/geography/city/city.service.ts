@@ -5,6 +5,7 @@ import type {
   SessionService,
 } from "../../auth/sessions/session-service";
 import { clean, dateValue, numberOrNull, numberValue, pageOf } from "../shared";
+import { revokeDashboardSessionsForCities } from "../operational-sessions";
 
 /** Exact City → Governorate FK name from drizzle/0008_simple_nehzno.sql */
 export const CITY_GOVERNORATE_FK_CONSTRAINT =
@@ -251,6 +252,17 @@ export class CityService {
         );
       const [row] =
         await tx`update cities set status=${target}::city_status,archived_at=${target === "ARCHIVED" ? new Date() : null},updated_at=now() where id=${id} returning *`;
+      const becameUnavailable =
+        current.status === "ACTIVE" &&
+        (target === "SUSPENDED" || target === "ARCHIVED");
+      if (becameUnavailable) {
+        await revokeDashboardSessionsForCities(
+          this.sessions,
+          tx,
+          [id],
+          "CITY_UNAVAILABLE",
+        );
+      }
       const [full] =
         await tx`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where c.id=${String((row as Record<string, unknown>).id)}`;
       return cityDto(full as Record<string, unknown>);
