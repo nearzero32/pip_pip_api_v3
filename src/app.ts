@@ -10,6 +10,8 @@ import type { GeographyService } from "./modules/geography/service";
 import { geographyRoutes } from "./modules/geography/routes";
 import type { MediaService } from "./modules/media/media.service";
 import { mediaRoutes } from "./modules/media/media.routes";
+import type { MainCategoryService } from "./modules/catalog/main-category.service";
+import { mainCategoryRoutes } from "./modules/catalog/main-category.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -17,6 +19,7 @@ export interface AppDependencies extends HealthDependencies {
   authModule?: AuthModule;
   geographyService?: GeographyService;
   mediaService?: MediaService;
+  mainCategoryService?: MainCategoryService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -45,9 +48,19 @@ export function createApp(dependencies: AppDependencies) {
               "City-scoped media upload intents, confirmation, and deletion for ADMIN and granted employees. SUPER_ADMIN has no Media access. Direct browser-to-R2 uploads via short-lived presigned PUT URLs.",
           },
           {
+            name: "Dashboard — Main Categories",
+            description:
+              "City-scoped Main Category administration for ADMIN and granted employees. SUPER_ADMIN has no Main Category access. Images are mandatory CATEGORY_IMAGE media assets.",
+          },
+          {
             name: "Public — Geography",
             description:
               "Unauthenticated geography reads for pre-login City selection and City-scoped Zone lookup via X-City-Id",
+          },
+          {
+            name: "Public — Main Categories",
+            description:
+              "Unauthenticated Main Category catalog for the City selected by X-City-Id",
           },
         ],
         components: {
@@ -107,5 +120,10 @@ export function createApp(dependencies: AppDependencies) {
     .use(healthRoutes(dependencies))
     .use(dependencies.authModule ? authRoutes(dependencies.authModule) : new Elysia())
     .use(dependencies.authModule && dependencies.geographyService ? geographyRoutes(dependencies.authModule, dependencies.geographyService) : new Elysia())
-    .use(dependencies.authModule && dependencies.mediaService ? mediaRoutes(dependencies.authModule, dependencies.mediaService) : new Elysia());
+    .use(dependencies.authModule && dependencies.mediaService ? mediaRoutes(dependencies.authModule, dependencies.mediaService) : new Elysia())
+    .use(
+      dependencies.authModule && dependencies.mainCategoryService
+        ? mainCategoryRoutes(dependencies.authModule, dependencies.mainCategoryService)
+        : new Elysia(),
+    );
 }

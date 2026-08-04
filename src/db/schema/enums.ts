@@ -48,3 +48,8 @@ export const mediaAssetStatus = pgEnum("media_asset_status", [
   "DELETE_PENDING",
   "DELETED",
 ]);
+export const mainCategoryStatus = pgEnum("main_category_status", [
+  "ACTIVE",
+  "INACTIVE",
+  "ARCHIVED",
+]);

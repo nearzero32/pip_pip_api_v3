@@ -557,15 +557,26 @@ export class MediaService {
    */
   async claimAsset(
     tx: SQL,
-    input: { assetId: string; cityId: string; purpose: "CATEGORY_IMAGE" },
+    input: {
+      assetId: string;
+      cityId: string;
+      purpose: "CATEGORY_IMAGE";
+      visibility?: "PUBLIC" | "PRIVATE";
+    },
   ): Promise<void> {
     const [locked] = await tx<{
       status: string;
       purpose: string;
+      visibility: string;
       attached_at: Date | string | null;
       city_id: string;
     }[]>`
-      select status::text as status, purpose::text as purpose, attached_at, city_id::text as city_id
+      select
+        status::text as status,
+        purpose::text as purpose,
+        visibility::text as visibility,
+        attached_at,
+        city_id::text as city_id
       from media_assets
       where id = ${input.assetId}
       for update`;
@@ -574,7 +585,8 @@ export class MediaService {
       locked.city_id !== input.cityId ||
       locked.purpose !== input.purpose ||
       locked.status !== "READY" ||
-      locked.attached_at != null
+      locked.attached_at != null ||
+      (input.visibility !== undefined && locked.visibility !== input.visibility)
     ) {
       throw new AppError(
         409,
