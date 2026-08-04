@@ -1,9 +1,12 @@
-/** Grantable City-operational permission codes prepared for M3-B Zones. */
+/** Grantable City-operational permission codes. */
 export const GRANTABLE_PERMISSION_CODES = [
   "zones.read",
   "zones.create",
   "zones.update",
   "zones.archive",
+  "media.read",
+  "media.create",
+  "media.delete",
 ] as const;
 
 export type GrantablePermissionCode =

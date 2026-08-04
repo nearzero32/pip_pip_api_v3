@@ -11,6 +11,9 @@ import { TestOtpDelivery } from "../../src/modules/auth/phone/delivery";
 import { InMemoryRateLimiter } from "../../src/modules/auth/rate-limit/rate-limiter";
 import { Argon2PasswordHasher } from "../../src/modules/auth/staff/password";
 import { GeographyService } from "../../src/modules/geography/service";
+import { MediaCleanupWorker } from "../../src/modules/media/cleanup-worker";
+import { FakeMediaStorage } from "../../src/modules/media/fake-media-storage";
+import { MediaService } from "../../src/modules/media/media.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
 
@@ -37,6 +40,16 @@ export const integrationConfig: AppConfig = {
   argon2MemoryCost: 19456,
   argon2TimeCost: 2,
   argon2Parallelism: 1,
+  r2Endpoint: "https://example.r2.cloudflarestorage.com",
+  r2Bucket: "test-bucket",
+  r2AccessKeyId: "test-access-key-id",
+  r2SecretAccessKey: "test-secret-access-key",
+  r2PublicBaseUrl: "https://media.test.example.com",
+  r2UploadUrlTtlSeconds: 300,
+  mediaMaxImageBytes: 5_242_880,
+  mediaUnattachedTtlHours: 24,
+  mediaCleanupIntervalSeconds: 900,
+  mediaDeleteLeaseSeconds: 300,
 };
 
 export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";
@@ -108,6 +121,9 @@ export type IntegrationHarness = {
   delivery: TestOtpDelivery;
   auth: AuthModule;
   geography: GeographyService;
+  media: MediaService;
+  mediaStorage: FakeMediaStorage;
+  mediaCleanup: MediaCleanupWorker;
   app: ReturnType<typeof createApp>;
   clock: { value: number; advance: () => void };
   close: () => Promise<void>;
@@ -147,12 +163,25 @@ export async function createIntegrationHarness(options?: {
     { ...integrationConfig, databaseUrl: url.toString() },
   );
   const geography = new GeographyService(client, auth.sessions);
+  const mediaStorage = new FakeMediaStorage();
+  const mediaConfig = {
+    ...integrationConfig,
+    databaseUrl: url.toString(),
+  };
+  const media = new MediaService(client, mediaStorage, mediaConfig, silentLogger);
+  const mediaCleanup = new MediaCleanupWorker(
+    client,
+    mediaStorage,
+    mediaConfig,
+    silentLogger,
+  );
   const app = createApp({
     logger: silentLogger,
     production: false,
     readinessCheck: async () => undefined,
     authModule: auth,
     geographyService: geography,
+    mediaService: media,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -163,9 +192,13 @@ export async function createIntegrationHarness(options?: {
     delivery,
     auth,
     geography,
+    media,
+    mediaStorage,
+    mediaCleanup,
     app,
     clock,
     close: async () => {
+      await mediaCleanup.stop();
       await raw.close();
       await admin.unsafe(`drop database if exists "${dbName}" with(force)`);
       await admin.close();

@@ -56,6 +56,16 @@ services:
       ARGON2_MEMORY_COST: 65536
       ARGON2_TIME_COST: 3
       ARGON2_PARALLELISM: 1
+      R2_ENDPOINT: https://00000000000000000000000000000000.r2.cloudflarestorage.com
+      R2_BUCKET: pip-pip-media-dev
+      R2_ACCESS_KEY_ID: development-r2-access-key-id
+      R2_SECRET_ACCESS_KEY: development-r2-secret-access-key-change-me
+      R2_PUBLIC_BASE_URL: https://media-dev.example.com
+      R2_UPLOAD_URL_TTL_SECONDS: "300"
+      MEDIA_MAX_IMAGE_BYTES: "5242880"
+      MEDIA_UNATTACHED_TTL_HOURS: "24"
+      MEDIA_CLEANUP_INTERVAL_SECONDS: "900"
+      MEDIA_DELETE_LEASE_SECONDS: "300"
     depends_on:
       postgres:
         condition: service_healthy

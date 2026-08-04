@@ -31,3 +31,20 @@ export const auditOutcome = pgEnum("audit_outcome", ["SUCCESS", "FAILURE", "DENI
 export const governorateStatus = pgEnum("governorate_status", ["ACTIVE", "INACTIVE"]);
 export const cityStatus = pgEnum("city_status", ["DRAFT", "ACTIVE", "SUSPENDED", "ARCHIVED"]);
 export const zoneStatus = pgEnum("zone_status", ["ACTIVE", "INACTIVE", "ARCHIVED"]);
+export const mediaAssetPurpose = pgEnum("media_asset_purpose", [
+  "CATEGORY_IMAGE",
+  "STORE_LOGO",
+  "STORE_IMAGE",
+  "PRODUCT_IMAGE",
+  "DRIVER_PHOTO",
+  "DRIVER_DOCUMENT",
+  "USER_AVATAR",
+  "BANNER_IMAGE",
+]);
+export const mediaAssetVisibility = pgEnum("media_asset_visibility", ["PUBLIC", "PRIVATE"]);
+export const mediaAssetStatus = pgEnum("media_asset_status", [
+  "PENDING_UPLOAD",
+  "READY",
+  "DELETE_PENDING",
+  "DELETED",
+]);

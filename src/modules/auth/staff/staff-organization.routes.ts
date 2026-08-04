@@ -83,6 +83,9 @@ const employeeDto = t.Object({
       t.Literal("zones.create"),
       t.Literal("zones.update"),
       t.Literal("zones.archive"),
+      t.Literal("media.read"),
+      t.Literal("media.create"),
+      t.Literal("media.delete"),
     ]),
   ),
   cityId: t.String({ format: "uuid" }),
@@ -102,6 +105,9 @@ const permissionLiteral = t.Union([
   t.Literal("zones.create"),
   t.Literal("zones.update"),
   t.Literal("zones.archive"),
+  t.Literal("media.read"),
+  t.Literal("media.create"),
+  t.Literal("media.delete"),
 ]);
 
 const employeeRoleLiteral = t.Union([

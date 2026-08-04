@@ -8,12 +8,15 @@ import type { AuthModule } from "./modules/auth/auth-module";
 import { authRoutes } from "./modules/auth/routes";
 import type { GeographyService } from "./modules/geography/service";
 import { geographyRoutes } from "./modules/geography/routes";
+import type { MediaService } from "./modules/media/media.service";
+import { mediaRoutes } from "./modules/media/media.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
   production: boolean;
   authModule?: AuthModule;
   geographyService?: GeographyService;
+  mediaService?: MediaService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -35,6 +38,11 @@ export function createApp(dependencies: AppDependencies) {
             name: "Dashboard — Zones",
             description:
               "City-scoped Zone administration for ADMIN and granted employees. SUPER_ADMIN has no Zone access.",
+          },
+          {
+            name: "Dashboard — Media",
+            description:
+              "City-scoped media upload intents, confirmation, and deletion for ADMIN and granted employees. SUPER_ADMIN has no Media access. Direct browser-to-R2 uploads via short-lived presigned PUT URLs.",
           },
           {
             name: "Public — Geography",
@@ -98,5 +106,6 @@ export function createApp(dependencies: AppDependencies) {
     })
     .use(healthRoutes(dependencies))
     .use(dependencies.authModule ? authRoutes(dependencies.authModule) : new Elysia())
-    .use(dependencies.authModule && dependencies.geographyService ? geographyRoutes(dependencies.authModule, dependencies.geographyService) : new Elysia());
+    .use(dependencies.authModule && dependencies.geographyService ? geographyRoutes(dependencies.authModule, dependencies.geographyService) : new Elysia())
+    .use(dependencies.authModule && dependencies.mediaService ? mediaRoutes(dependencies.authModule, dependencies.mediaService) : new Elysia());
 }

@@ -66,9 +66,12 @@ describe("PostgreSQL identity foundation", () => {
     expect(tables.map((row) => row.table_name)).toContain("audit_logs");
     const roles = await client<{ code: string }[]>`select code::text as code from roles order by code`;
     expect(roles.map((row) => row.code).sort()).toEqual(["ACCOUNTANT", "ADMIN", "OPERATIONS", "SUPER_ADMIN", "SUPPORT"]);
-    expect(Number((await client<{ count: string }[]>`select count(*)::text as count from permissions`)[0]?.count)).toBe(4);
+    expect(Number((await client<{ count: string }[]>`select count(*)::text as count from permissions`)[0]?.count)).toBe(7);
     const permissionCodes = await client<{ code: string }[]>`select code from permissions order by code`;
     expect(permissionCodes.map((row) => row.code)).toEqual([
+      "media.create",
+      "media.delete",
+      "media.read",
       "zones.archive",
       "zones.create",
       "zones.read",

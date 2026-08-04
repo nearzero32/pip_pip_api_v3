@@ -8,7 +8,20 @@ export interface DatabaseConfig {
   databaseConnectionTimeoutMs: number;
 }
 
-export interface AppConfig extends DatabaseConfig {
+export interface MediaConfig {
+  r2Endpoint: string;
+  r2Bucket: string;
+  r2AccessKeyId: string;
+  r2SecretAccessKey: string;
+  r2PublicBaseUrl: string;
+  r2UploadUrlTtlSeconds: number;
+  mediaMaxImageBytes: number;
+  mediaUnattachedTtlHours: number;
+  mediaCleanupIntervalSeconds: number;
+  mediaDeleteLeaseSeconds: number;
+}
+
+export interface AppConfig extends DatabaseConfig, MediaConfig {
   host: string;
   port: number;
   logLevel: LogLevel;
@@ -50,6 +63,20 @@ function integer(env: Record<string, string | undefined>, name: string, minimum:
   return value;
 }
 
+function httpUrl(env: Record<string, string | undefined>, name: string): string {
+  const raw = required(env, name);
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new ConfigurationError(`${name} must be a valid URL`);
+  }
+  if (!new Set(["http:", "https:"]).has(parsed.protocol) || !parsed.hostname) {
+    throw new ConfigurationError(`${name} must use http:// or https:// and include a host`);
+  }
+  return raw.replace(/\/+$/, "");
+}
+
 function databaseUrl(env: Record<string, string | undefined>): string {
   const raw = required(env, "DATABASE_URL");
   let parsed: URL;
@@ -65,6 +92,25 @@ function databaseUrl(env: Record<string, string | undefined>): string {
     throw new ConfigurationError("DATABASE_URL uses a development placeholder password in production");
   }
   return raw;
+}
+
+export function loadMediaConfig(
+  env: Record<string, string | undefined> = process.env,
+): MediaConfig {
+  const r2Endpoint = httpUrl(env, "R2_ENDPOINT");
+  const r2PublicBaseUrl = httpUrl(env, "R2_PUBLIC_BASE_URL");
+  return {
+    r2Endpoint,
+    r2Bucket: required(env, "R2_BUCKET"),
+    r2AccessKeyId: required(env, "R2_ACCESS_KEY_ID"),
+    r2SecretAccessKey: required(env, "R2_SECRET_ACCESS_KEY"),
+    r2PublicBaseUrl,
+    r2UploadUrlTtlSeconds: integer(env, "R2_UPLOAD_URL_TTL_SECONDS", 60, 900),
+    mediaMaxImageBytes: integer(env, "MEDIA_MAX_IMAGE_BYTES", 1024, 20 * 1024 * 1024),
+    mediaUnattachedTtlHours: integer(env, "MEDIA_UNATTACHED_TTL_HOURS", 1, 168),
+    mediaCleanupIntervalSeconds: integer(env, "MEDIA_CLEANUP_INTERVAL_SECONDS", 60, 3600),
+    mediaDeleteLeaseSeconds: integer(env, "MEDIA_DELETE_LEASE_SECONDS", 60, 900),
+  };
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
@@ -110,6 +156,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     argon2MemoryCost: integer(env, "ARGON2_MEMORY_COST", 19_456, 1_048_576),
     argon2TimeCost: integer(env, "ARGON2_TIME_COST", 2, 10),
     argon2Parallelism: integer(env, "ARGON2_PARALLELISM", 1, 16),
+    ...loadMediaConfig(env),
   };
 }
 

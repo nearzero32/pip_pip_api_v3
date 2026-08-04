@@ -1,15 +1,15 @@
 import { afterAll,beforeAll,describe,expect,test } from "bun:test";
 import { SQL } from "bun";
-import type { AppConfig } from "../../src/config/env";
 import { applyMigrations } from "../../src/db/migration-runner";
 import { createAuthModule,type AuthModule } from "../../src/modules/auth/auth-module";
 import { customerContext,dashboardContext,driverContext } from "../../src/modules/auth/core/context";
 import { TestOtpDelivery } from "../../src/modules/auth/phone/delivery";
 import { InMemoryRateLimiter } from "../../src/modules/auth/rate-limit/rate-limiter";
 import { Argon2PasswordHasher } from "../../src/modules/auth/staff/password";
+import { integrationConfig } from "./helpers";
 
 const adminUrl=process.env.TEST_ADMIN_DATABASE_URL;if(!adminUrl)throw new Error("TEST_ADMIN_DATABASE_URL is required");const parsed=new URL(adminUrl);if(!["localhost","127.0.0.1"].includes(parsed.hostname)||/prod/i.test(parsed.pathname))throw new Error("Unsafe integration database");
-const config:AppConfig={nodeEnv:"test",host:"127.0.0.1",port:3000,logLevel:"error",databaseUrl:adminUrl,databasePoolSize:5,databaseConnectionTimeoutMs:5000,gracefulShutdownTimeoutMs:5000,redisUrl:"redis://localhost:6380",otpDeliveryAdapter:"test",secretVerifierKey:"integration-verifier-key-at-least-32-characters",secretVerifierKeyVersion:"v1",jwtIssuer:"integration",jwtKeyId:"integration-v1",jwtPrivateKeyBase64:"MC4CAQAwBQYDK2VwBCIEIOhYjslG5wawzghWHcQbYCMjFp8kzMYLVFZoKEOBzTA4",jwtPublicKeyBase64:"MCowBQYDK2VwAyEA+ly2CeP4N1AQ5vNUEt226L6GtOMU/uLE2rjFfo4OBCE=",accessTokenLifetimeSeconds:600,argon2MemoryCost:19456,argon2TimeCost:2,argon2Parallelism:1};
+const config={...integrationConfig,databaseUrl:adminUrl};
 
 describe("M2 separated authentication",()=>{const dbName=`pip_pip_v3_test_${crypto.randomUUID().replaceAll("-","")}`;let admin:SQL,client:SQL,delivery:TestOtpDelivery,auth:AuthModule;let clock=Date.now();const advance=()=>{clock+=3_600_001;};
 beforeAll(async()=>{admin=new SQL(adminUrl,{max:1});await admin.unsafe(`create database "${dbName}"`);const url=new URL(adminUrl);url.pathname=`/${dbName}`;client=new SQL(url.toString(),{max:12});await applyMigrations(client);delivery=new TestOtpDelivery();auth=createAuthModule(client,new InMemoryRateLimiter(()=>clock),delivery,config);},30000);
