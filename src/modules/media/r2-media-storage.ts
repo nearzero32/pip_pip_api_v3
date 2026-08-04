@@ -67,7 +67,12 @@ export class R2MediaStorage implements MediaStorage {
         accessKeyId: config.r2AccessKeyId,
         secretAccessKey: config.r2SecretAccessKey,
       },
-      forcePathStyle: false,
+      // Cloudflare R2 expects path-style addressing:
+      // https://<ACCOUNT_ID>.r2.cloudflarestorage.com/<bucket>/<key>
+      forcePathStyle: true,
+      // Keep browser PUTs simple: only Content-Type must match the signature.
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
     });
   }
 
