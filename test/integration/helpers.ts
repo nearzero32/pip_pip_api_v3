@@ -15,6 +15,7 @@ import { MediaCleanupWorker } from "../../src/modules/media/cleanup-worker";
 import { FakeMediaStorage } from "../../src/modules/media/fake-media-storage";
 import { MediaService } from "../../src/modules/media/media.service";
 import { MainCategoryService } from "../../src/modules/catalog/main-category.service";
+import { SubcategoryService } from "../../src/modules/catalog/subcategory.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
 
@@ -126,6 +127,7 @@ export type IntegrationHarness = {
   mediaStorage: FakeMediaStorage;
   mediaCleanup: MediaCleanupWorker;
   mainCategories: MainCategoryService;
+  subcategories: SubcategoryService;
   app: ReturnType<typeof createApp>;
   clock: { value: number; advance: () => void };
   close: () => Promise<void>;
@@ -178,6 +180,7 @@ export async function createIntegrationHarness(options?: {
     silentLogger,
   );
   const mainCategories = new MainCategoryService(client, media, mediaConfig);
+  const subcategories = new SubcategoryService(client, media, mediaConfig);
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -186,6 +189,7 @@ export async function createIntegrationHarness(options?: {
     geographyService: geography,
     mediaService: media,
     mainCategoryService: mainCategories,
+    subcategoryService: subcategories,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -200,6 +204,7 @@ export async function createIntegrationHarness(options?: {
     mediaStorage,
     mediaCleanup,
     mainCategories,
+    subcategories,
     app,
     clock,
     close: async () => {

@@ -11,6 +11,7 @@ import { MediaCleanupWorker } from "./modules/media/cleanup-worker";
 import { MediaService } from "./modules/media/media.service";
 import { R2MediaStorage } from "./modules/media/r2-media-storage";
 import { MainCategoryService } from "./modules/catalog/main-category.service";
+import { SubcategoryService } from "./modules/catalog/subcategory.service";
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
@@ -26,6 +27,11 @@ const mainCategoryService = new MainCategoryService(
   mediaService,
   config,
 );
+const subcategoryService = new SubcategoryService(
+  database.client,
+  mediaService,
+  config,
+);
 const mediaCleanup = new MediaCleanupWorker(database.client, mediaStorage, config, logger);
 mediaCleanup.start();
 
@@ -35,6 +41,7 @@ const app = createApp({
   geographyService,
   mediaService,
   mainCategoryService,
+  subcategoryService,
   production: config.nodeEnv === "production",
   readinessCheck: () => database.ping(),
   redisReadinessCheck: async () => {

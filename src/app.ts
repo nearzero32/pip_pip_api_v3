@@ -12,6 +12,8 @@ import type { MediaService } from "./modules/media/media.service";
 import { mediaRoutes } from "./modules/media/media.routes";
 import type { MainCategoryService } from "./modules/catalog/main-category.service";
 import { mainCategoryRoutes } from "./modules/catalog/main-category.routes";
+import type { SubcategoryService } from "./modules/catalog/subcategory.service";
+import { subcategoryRoutes } from "./modules/catalog/subcategory.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -20,6 +22,7 @@ export interface AppDependencies extends HealthDependencies {
   geographyService?: GeographyService;
   mediaService?: MediaService;
   mainCategoryService?: MainCategoryService;
+  subcategoryService?: SubcategoryService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -53,6 +56,11 @@ export function createApp(dependencies: AppDependencies) {
               "City-scoped Main Category administration for ADMIN and granted employees. SUPER_ADMIN has no Main Category access. Images are mandatory CATEGORY_IMAGE media assets.",
           },
           {
+            name: "Dashboard — Subcategories",
+            description:
+              "City-scoped Subcategory administration under Main Categories for ADMIN and granted employees. SUPER_ADMIN has no Subcategory access. Images are optional CATEGORY_IMAGE media assets.",
+          },
+          {
             name: "Public — Geography",
             description:
               "Unauthenticated geography reads for pre-login City selection and City-scoped Zone lookup via X-City-Id",
@@ -61,6 +69,11 @@ export function createApp(dependencies: AppDependencies) {
             name: "Public — Main Categories",
             description:
               "Unauthenticated Main Category catalog for the City selected by X-City-Id",
+          },
+          {
+            name: "Public — Subcategories",
+            description:
+              "Unauthenticated Subcategory catalog for a Main Category in the City selected by X-City-Id",
           },
         ],
         components: {
@@ -124,6 +137,11 @@ export function createApp(dependencies: AppDependencies) {
     .use(
       dependencies.authModule && dependencies.mainCategoryService
         ? mainCategoryRoutes(dependencies.authModule, dependencies.mainCategoryService)
+        : new Elysia(),
+    )
+    .use(
+      dependencies.authModule && dependencies.subcategoryService
+        ? subcategoryRoutes(dependencies.authModule, dependencies.subcategoryService)
         : new Elysia(),
     );
 }

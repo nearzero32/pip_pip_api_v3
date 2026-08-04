@@ -11,6 +11,10 @@ export const GRANTABLE_PERMISSION_CODES = [
   "main_categories.create",
   "main_categories.update",
   "main_categories.archive",
+  "subcategories.read",
+  "subcategories.create",
+  "subcategories.update",
+  "subcategories.archive",
 ] as const;
 
 export type GrantablePermissionCode =
