@@ -275,7 +275,7 @@ describe("M3-C0 Media assets and R2 infrastructure", () => {
       },
       {
         body: {
-          purpose: "STORE_LOGO",
+          purpose: "PRODUCT_IMAGE",
           fileName: "a.png",
           contentType: "image/png",
           sizeBytes: pngBytes.length,

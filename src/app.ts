@@ -1,8 +1,8 @@
-import { openapi } from "@elysiajs/openapi";
 import { Elysia, status } from "elysia";
 import { AppError } from "./errors/app-error";
 import { healthRoutes, type HealthDependencies } from "./health/routes";
 import type { Logger } from "./observability/logger";
+import { createOpenApiPlugin } from "./openapi";
 import { resolveRequestId } from "./shared/request-id";
 import type { AuthModule } from "./modules/auth/auth-module";
 import { authRoutes } from "./modules/auth/routes";
@@ -14,6 +14,8 @@ import type { MainCategoryService } from "./modules/catalog/main-category.servic
 import { mainCategoryRoutes } from "./modules/catalog/main-category.routes";
 import type { SubcategoryService } from "./modules/catalog/subcategory.service";
 import { subcategoryRoutes } from "./modules/catalog/subcategory.routes";
+import type { StoreService } from "./modules/stores/store.service";
+import { storeRoutes } from "./modules/stores/store.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -23,76 +25,12 @@ export interface AppDependencies extends HealthDependencies {
   mediaService?: MediaService;
   mainCategoryService?: MainCategoryService;
   subcategoryService?: SubcategoryService;
+  storeService?: StoreService;
 }
 
 export function createApp(dependencies: AppDependencies) {
   return new Elysia({ name: "pip-pip-api-v3" })
-    .use(openapi({
-      path: "/openapi",
-      specPath: "/openapi/json",
-      documentation: {
-        info: { title: "pip_pip_api_v3", version: "0.2.0", description: "Identity, authentication, and session security API" },
-        tags: [
-          { name: "Health", description: "Runtime health probes" },
-          { name: "Mobile — Customer Authentication", description: "Customer phone OTP authentication" },
-          { name: "Mobile — Driver Authentication", description: "Driver phone and numeric access-code authentication" },
-          { name: "Dashboard — Authentication", description: "Dashboard email and password authentication" },
-          { name: "Dashboard — Staff", description: "SUPER_ADMIN ADMIN management and ADMIN employee management" },
-          { name: "Dashboard — Governorates", description: "Governorate administration" },
-          { name: "Dashboard — Cities", description: "City administration" },
-          {
-            name: "Dashboard — Zones",
-            description:
-              "City-scoped Zone administration for ADMIN and granted employees. SUPER_ADMIN has no Zone access.",
-          },
-          {
-            name: "Dashboard — Media",
-            description:
-              "City-scoped media upload intents, confirmation, and deletion for ADMIN and granted employees. SUPER_ADMIN has no Media access. Direct browser-to-R2 uploads via short-lived presigned PUT URLs.",
-          },
-          {
-            name: "Dashboard — Main Categories",
-            description:
-              "City-scoped Main Category administration for ADMIN and granted employees. SUPER_ADMIN has no Main Category access. Images are mandatory CATEGORY_IMAGE media assets.",
-          },
-          {
-            name: "Dashboard — Subcategories",
-            description:
-              "City-scoped Subcategory administration under Main Categories for ADMIN and granted employees. SUPER_ADMIN has no Subcategory access. Images are optional CATEGORY_IMAGE media assets.",
-          },
-          {
-            name: "Public — Geography",
-            description:
-              "Unauthenticated geography reads for pre-login City selection and City-scoped Zone lookup via X-City-Id",
-          },
-          {
-            name: "Public — Main Categories",
-            description:
-              "Unauthenticated Main Category catalog for the City selected by X-City-Id",
-          },
-          {
-            name: "Public — Subcategories",
-            description:
-              "Unauthenticated Subcategory catalog for a Main Category in the City selected by X-City-Id",
-          },
-        ],
-        components: {
-          securitySchemes: {
-            bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
-          },
-          parameters: {
-            CityIdHeader: {
-              name: "X-City-Id",
-              in: "header",
-              required: true,
-              description:
-                "Canonical public/mobile City selection header. UUID of an ACTIVE City under an ACTIVE Governorate. Not an authentication credential and never overrides Dashboard signed City scope.",
-              schema: { type: "string", format: "uuid" },
-            },
-          },
-        },
-      },
-    }))
+    .use(createOpenApiPlugin())
     .derive(({ request, set }) => {
       const requestId = resolveRequestId(request.headers.get("x-request-id"));
       set.headers["x-request-id"] = requestId;
@@ -142,6 +80,11 @@ export function createApp(dependencies: AppDependencies) {
     .use(
       dependencies.authModule && dependencies.subcategoryService
         ? subcategoryRoutes(dependencies.authModule, dependencies.subcategoryService)
+        : new Elysia(),
+    )
+    .use(
+      dependencies.authModule && dependencies.storeService
+        ? storeRoutes(dependencies.authModule, dependencies.storeService)
         : new Elysia(),
     );
 }

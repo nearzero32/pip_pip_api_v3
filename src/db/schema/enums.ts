@@ -53,3 +53,22 @@ export const mainCategoryStatus = pgEnum("main_category_status", [
   "INACTIVE",
   "ARCHIVED",
 ]);
+export const storeStatus = pgEnum("store_status", [
+  "DRAFT",
+  "ACTIVE",
+  "INACTIVE",
+  "ARCHIVED",
+]);
+export const storeOrderAcceptanceStatus = pgEnum(
+  "store_order_acceptance_status",
+  ["ACCEPTING", "PAUSED"],
+);
+export const weekday = pgEnum("weekday", [
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+  "SATURDAY",
+  "SUNDAY",
+]);

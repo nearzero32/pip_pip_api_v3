@@ -46,6 +46,20 @@ export const buildCategoryImageObjectKey = (
 ): string =>
   `cities/${cityId}/categories/${assetId}/original.${canonicalExtensionForContentType(contentType)}`;
 
+export const buildStoreLogoObjectKey = (
+  cityId: string,
+  assetId: string,
+  contentType: AllowedImageContentType,
+): string =>
+  `cities/${cityId}/stores/${assetId}/logo.${canonicalExtensionForContentType(contentType)}`;
+
+export const buildStoreCoverObjectKey = (
+  cityId: string,
+  assetId: string,
+  contentType: AllowedImageContentType,
+): string =>
+  `cities/${cityId}/stores/${assetId}/cover.${canonicalExtensionForContentType(contentType)}`;
+
 export const buildPublicMediaUrl = (
   publicBaseUrl: string,
   objectKey: string,

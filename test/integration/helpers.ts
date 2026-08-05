@@ -16,6 +16,7 @@ import { FakeMediaStorage } from "../../src/modules/media/fake-media-storage";
 import { MediaService } from "../../src/modules/media/media.service";
 import { MainCategoryService } from "../../src/modules/catalog/main-category.service";
 import { SubcategoryService } from "../../src/modules/catalog/subcategory.service";
+import { StoreService } from "../../src/modules/stores/store.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
 
@@ -98,10 +99,11 @@ export const trackSql = (client: SQL) => {
         if (prop === "unsafe") {
           return (sql: string, values?: unknown[]) => {
             queries.push(sql);
-            return (t as SQL & { unsafe: (query: string, params?: unknown[]) => unknown }).unsafe(
-              sql,
-              values,
-            );
+            return (
+              t as SQL & {
+                unsafe: (query: string, params?: unknown[]) => unknown;
+              }
+            ).unsafe(sql, values);
           };
         }
         const value = Reflect.get(t, prop, receiver);
@@ -128,6 +130,7 @@ export type IntegrationHarness = {
   mediaCleanup: MediaCleanupWorker;
   mainCategories: MainCategoryService;
   subcategories: SubcategoryService;
+  stores: StoreService;
   app: ReturnType<typeof createApp>;
   clock: { value: number; advance: () => void };
   close: () => Promise<void>;
@@ -158,7 +161,12 @@ export async function createIntegrationHarness(options?: {
     );
   }
   if (options?.seed !== false) await seedGovernorates(raw);
-  const clock = { value: Date.now(), advance: () => { clock.value += 3_600_001; } };
+  const clock = {
+    value: Date.now(),
+    advance: () => {
+      clock.value += 3_600_001;
+    },
+  };
   const delivery = new TestOtpDelivery();
   const auth = createAuthModule(
     client,
@@ -172,7 +180,12 @@ export async function createIntegrationHarness(options?: {
     ...integrationConfig,
     databaseUrl: url.toString(),
   };
-  const media = new MediaService(client, mediaStorage, mediaConfig, silentLogger);
+  const media = new MediaService(
+    client,
+    mediaStorage,
+    mediaConfig,
+    silentLogger,
+  );
   const mediaCleanup = new MediaCleanupWorker(
     client,
     mediaStorage,
@@ -181,6 +194,7 @@ export async function createIntegrationHarness(options?: {
   );
   const mainCategories = new MainCategoryService(client, media, mediaConfig);
   const subcategories = new SubcategoryService(client, media, mediaConfig);
+  const stores = new StoreService(client, media, mediaConfig);
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -190,6 +204,7 @@ export async function createIntegrationHarness(options?: {
     mediaService: media,
     mainCategoryService: mainCategories,
     subcategoryService: subcategories,
+    storeService: stores,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -205,6 +220,7 @@ export async function createIntegrationHarness(options?: {
     mediaCleanup,
     mainCategories,
     subcategories,
+    stores,
     app,
     clock,
     close: async () => {
@@ -232,7 +248,9 @@ export async function createStaffAccount(
     managedByAccountId?: string;
   },
 ) {
-  const [account] = await client<{ id: string }[]>`insert into accounts default values returning id`;
+  const [account] = await client<
+    { id: string }[]
+  >`insert into accounts default values returning id`;
   await client`insert into account_emails(account_id,email_original,email_normalized,verified_at,is_primary)values(${account!.id},${input.email},${input.email.toLowerCase()},now(),true)`;
   await client`insert into staff_profiles(account_id,status,managed_by_account_id)values(${account!.id},'ACTIVE',${input.managedByAccountId ?? null})`;
   const hash = await new Argon2PasswordHasher({
@@ -270,10 +288,16 @@ export async function createDriverAccount(
   code: string,
   status: "ACTIVE" | "SUSPENDED" = "ACTIVE",
 ) {
-  const [account] = await client<{ id: string }[]>`insert into accounts default values returning id`;
+  const [account] = await client<
+    { id: string }[]
+  >`insert into accounts default values returning id`;
   await client`insert into account_phones(account_id,phone_e164,verified_at,is_primary)values(${account!.id},${phone},now(),true)`;
-  const [reviewer] = await client<{ id: string }[]>`insert into accounts default values returning id`;
-  const [application] = await client<{ id: string }[]>`insert into driver_applications(account_id,status,decided_at,decided_by_account_id)values(${account!.id},'APPROVED',now(),${reviewer!.id})returning id`;
+  const [reviewer] = await client<
+    { id: string }[]
+  >`insert into accounts default values returning id`;
+  const [application] = await client<
+    { id: string }[]
+  >`insert into driver_applications(account_id,status,decided_at,decided_by_account_id)values(${account!.id},'APPROVED',now(),${reviewer!.id})returning id`;
   const hasher = new Argon2PasswordHasher({
     memoryCost: 19456,
     timeCost: 2,

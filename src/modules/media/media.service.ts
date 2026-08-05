@@ -9,6 +9,8 @@ import { dateValue } from "../geography/shared";
 import {
   buildCategoryImageObjectKey,
   buildPublicMediaUrl,
+  buildStoreCoverObjectKey,
+  buildStoreLogoObjectKey,
   isAllowedImageContentType,
   validateOriginalFileName,
 } from "./object-key";
@@ -185,9 +187,17 @@ export class MediaService {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
     }
-    if (input.purpose !== "CATEGORY_IMAGE") {
+    if (
+      input.purpose !== "CATEGORY_IMAGE" &&
+      input.purpose !== "STORE_LOGO" &&
+      input.purpose !== "STORE_IMAGE"
+    ) {
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported media purpose");
     }
+    const purpose = input.purpose as
+      | "CATEGORY_IMAGE"
+      | "STORE_LOGO"
+      | "STORE_IMAGE";
     const contentType = String(input.contentType ?? "");
     if (!isAllowedImageContentType(contentType)) {
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported media content type");
@@ -209,11 +219,15 @@ export class MediaService {
     }
 
     const assetId = crypto.randomUUID();
-    const objectKey = buildCategoryImageObjectKey(cityId, assetId, contentType);
+    const objectKey =
+      purpose === "CATEGORY_IMAGE"
+        ? buildCategoryImageObjectKey(cityId, assetId, contentType)
+        : purpose === "STORE_LOGO"
+          ? buildStoreLogoObjectKey(cityId, assetId, contentType)
+          : buildStoreCoverObjectKey(cityId, assetId, contentType);
     const uploadExpiresAt = new Date(
       Date.now() + this.config.r2UploadUrlTtlSeconds * 1000,
     );
-
     let upload;
     try {
       upload = await this.storage.createUploadUrl({
@@ -254,7 +268,7 @@ export class MediaService {
         ) values (
           ${assetId},
           ${cityId},
-          'CATEGORY_IMAGE',
+          ${purpose}::media_asset_purpose,
           'PUBLIC',
           'PENDING_UPLOAD',
           ${objectKey},
@@ -274,7 +288,7 @@ export class MediaService {
         ${identity.accountId},
         'SUCCESS',
         ${requestId},
-        ${JSON.stringify({ asset_id: assetId, city_id: cityId, purpose: "CATEGORY_IMAGE" })}::jsonb
+        ${JSON.stringify({ asset_id: assetId, city_id: cityId, purpose })}::jsonb
       )`;
 
     const row = await this.loadCityScoped(assetId, cityId);
@@ -560,7 +574,7 @@ export class MediaService {
     input: {
       assetId: string;
       cityId: string;
-      purpose: "CATEGORY_IMAGE";
+      purpose: "CATEGORY_IMAGE" | "STORE_LOGO" | "STORE_IMAGE";
       visibility?: "PUBLIC" | "PRIVATE";
     },
   ): Promise<void> {

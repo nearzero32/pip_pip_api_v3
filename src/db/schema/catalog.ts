@@ -99,6 +99,13 @@ export const subcategories = pgTable(
       columns: [table.mainCategoryId, table.cityId],
       foreignColumns: [mainCategories.id, mainCategories.cityId],
     }),
+    /** Supports composite same-City / same-parent FKs from store_subcategories. */
+    uniqueIndex("subcategories_id_city_uidx").on(table.id, table.cityId),
+    uniqueIndex("subcategories_id_main_category_city_uidx").on(
+      table.id,
+      table.mainCategoryId,
+      table.cityId,
+    ),
     uniqueIndex("subcategories_image_asset_uidx")
       .on(table.imageAssetId)
       .where(sql`${table.imageAssetId} is not null`),

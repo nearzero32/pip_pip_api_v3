@@ -67,6 +67,8 @@ export const zones = pgTable("zones", {
 }, (table) => [
   index("zones_city_status_name_idx").on(table.cityId, table.status, table.name),
   index("zones_city_created_idx").on(table.cityId, table.createdAt, table.id),
+  /** Supports composite same-City FKs from store_zones. */
+  uniqueIndex("zones_id_city_uidx").on(table.id, table.cityId),
   index("zones_boundary_gix").using("gist", table.boundary),
   uniqueIndex("zones_city_name_active_uidx")
     .on(table.cityId, sql`lower(btrim(${table.name}))`)

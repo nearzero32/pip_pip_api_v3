@@ -21,7 +21,11 @@ const mediaStatus = t.Union([
   t.Literal("DELETED"),
 ]);
 
-const mediaPurpose = t.Literal("CATEGORY_IMAGE");
+const mediaPurpose = t.Union([
+  t.Literal("CATEGORY_IMAGE"),
+  t.Literal("STORE_LOGO"),
+  t.Literal("STORE_IMAGE"),
+]);
 
 const mediaAssetDto = t.Object({
   id: t.String({ format: "uuid" }),
@@ -105,7 +109,9 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
         detail: {
           tags: ["Dashboard — Media"],
           security: [{ bearerAuth: [] }],
-          summary: "Create a CATEGORY_IMAGE upload intent and presigned PUT URL",
+          summary: "Create a media upload intent and presigned PUT URL",
+          description:
+            "Supports CATEGORY_IMAGE, STORE_LOGO, and STORE_IMAGE. Visibility is server-assigned PUBLIC for these purposes.",
         },
       },
     )
