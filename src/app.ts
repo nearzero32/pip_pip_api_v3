@@ -16,6 +16,8 @@ import type { SubcategoryService } from "./modules/catalog/subcategory.service";
 import { subcategoryRoutes } from "./modules/catalog/subcategory.routes";
 import type { StoreService } from "./modules/stores/store.service";
 import { storeRoutes } from "./modules/stores/store.routes";
+import type { StoreCategoryService } from "./modules/catalog/store-category.service";
+import { storeCategoryRoutes } from "./modules/catalog/store-category.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -26,6 +28,7 @@ export interface AppDependencies extends HealthDependencies {
   mainCategoryService?: MainCategoryService;
   subcategoryService?: SubcategoryService;
   storeService?: StoreService;
+  storeCategoryService?: StoreCategoryService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -85,6 +88,14 @@ export function createApp(dependencies: AppDependencies) {
     .use(
       dependencies.authModule && dependencies.storeService
         ? storeRoutes(dependencies.authModule, dependencies.storeService)
+        : new Elysia(),
+    )
+    .use(
+      dependencies.authModule && dependencies.storeCategoryService
+        ? storeCategoryRoutes(
+            dependencies.authModule,
+            dependencies.storeCategoryService,
+          )
         : new Elysia(),
     );
 }

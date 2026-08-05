@@ -99,7 +99,7 @@ describe("PostgreSQL identity foundation", () => {
           >`select count(*)::text as count from permissions`
         )[0]?.count,
       ),
-    ).toBe(19);
+    ).toBe(23);
     const permissionCodes = await client<
       { code: string }[]
     >`select code from permissions order by code`;
@@ -111,6 +111,10 @@ describe("PostgreSQL identity foundation", () => {
       "media.create",
       "media.delete",
       "media.read",
+      "store_categories.archive",
+      "store_categories.create",
+      "store_categories.read",
+      "store_categories.update",
       "stores.archive",
       "stores.create",
       "stores.read",

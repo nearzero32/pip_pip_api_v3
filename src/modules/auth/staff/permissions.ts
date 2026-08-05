@@ -19,6 +19,10 @@ export const GRANTABLE_PERMISSION_CODES = [
   "stores.create",
   "stores.update",
   "stores.archive",
+  "store_categories.read",
+  "store_categories.create",
+  "store_categories.update",
+  "store_categories.archive",
 ] as const;
 
 export type GrantablePermissionCode =

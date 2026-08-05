@@ -18,6 +18,7 @@ import { instant } from "./columns";
 import {
   storeOrderAcceptanceStatus,
   storeStatus,
+  mainCategoryStatus,
   weekday,
 } from "./enums";
 import { cities, zones } from "./geography";
@@ -228,6 +229,96 @@ export const storeWorkingHours = pgTable(
     check(
       "store_working_hours_opens_closes_distinct_chk",
       sql`${table.opensAt} <> ${table.closesAt}`,
+    ),
+  ],
+);
+
+/**
+ * In-store product categories (Catalog) — not global store-classification categories.
+ * Optional two-level hierarchy: parent_category_id null = main; non-null = subcategory.
+ * Maximum depth is two (parent must itself be a root). Products (later) may omit categoryId.
+ */
+export const storeCategories = pgTable(
+  "store_categories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull(),
+    cityId: uuid("city_id").notNull(),
+    parentCategoryId: uuid("parent_category_id"),
+    name: text("name").notNull(),
+    status: mainCategoryStatus("status").notNull().default("ACTIVE"),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdByAccountId: uuid("created_by_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+    archivedAt: instant("archived_at"),
+  },
+  (table) => [
+    foreignKey({
+      name: "store_categories_store_city_fk",
+      columns: [table.storeId, table.cityId],
+      foreignColumns: [stores.id, stores.cityId],
+    }),
+    foreignKey({
+      name: "store_categories_parent_store_fk",
+      columns: [table.parentCategoryId, table.storeId],
+      foreignColumns: [table.id, table.storeId],
+    }),
+    uniqueIndex("store_categories_id_store_uidx").on(table.id, table.storeId),
+    uniqueIndex("store_categories_id_store_city_uidx").on(
+      table.id,
+      table.storeId,
+      table.cityId,
+    ),
+    /** Root-level usable names are unique per Store (NULL parent). */
+    uniqueIndex("store_categories_store_root_name_active_uidx")
+      .on(table.storeId, sql`lower(btrim(${table.name}))`)
+      .where(
+        sql`${table.status} <> 'ARCHIVED' and ${table.parentCategoryId} is null`,
+      ),
+    /** Sibling usable names are unique under the same parent. */
+    uniqueIndex("store_categories_store_parent_name_active_uidx")
+      .on(
+        table.storeId,
+        table.parentCategoryId,
+        sql`lower(btrim(${table.name}))`,
+      )
+      .where(
+        sql`${table.status} <> 'ARCHIVED' and ${table.parentCategoryId} is not null`,
+      ),
+    index("store_categories_store_status_order_idx").on(
+      table.storeId,
+      table.status,
+      table.displayOrder,
+      table.createdAt,
+      table.id,
+    ),
+    index("store_categories_store_parent_status_order_idx").on(
+      table.storeId,
+      table.parentCategoryId,
+      table.status,
+      table.displayOrder,
+      table.createdAt,
+      table.id,
+    ),
+    index("store_categories_city_store_idx").on(table.cityId, table.storeId),
+    check(
+      "store_categories_name_nonempty_chk",
+      sql`length(btrim(${table.name})) > 0`,
+    ),
+    check(
+      "store_categories_display_order_nonnegative_chk",
+      sql`${table.displayOrder} >= 0`,
+    ),
+    check(
+      "store_categories_archived_at_chk",
+      sql`(${table.status} = 'ARCHIVED' and ${table.archivedAt} is not null) or (${table.status} <> 'ARCHIVED' and ${table.archivedAt} is null)`,
+    ),
+    check(
+      "store_categories_no_self_parent_chk",
+      sql`${table.parentCategoryId} is null or ${table.parentCategoryId} <> ${table.id}`,
     ),
   ],
 );

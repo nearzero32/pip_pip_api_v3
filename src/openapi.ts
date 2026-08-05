@@ -61,6 +61,11 @@ export const createOpenApiPlugin = () =>
           "City-scoped Store administration for ADMIN and granted employees. SUPER_ADMIN has no Store access. City comes only from signed auth.cityId. Physical location and service Zones are separate. Weekly working hours support overnight periods in Asia/Baghdad.",
       },
       {
+        name: "Dashboard — Store Categories",
+        description:
+          "In-store product category administration under a Store for ADMIN and granted employees. SUPER_ADMIN has no Store Category access. Optional two-level hierarchy only. Not the global categories used to classify Stores.",
+      },
+      {
         name: "Public — Geography",
         description:
           "Unauthenticated geography reads for pre-login City selection and City-scoped Zone lookup via X-City-Id",

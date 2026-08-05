@@ -16,6 +16,7 @@ import { FakeMediaStorage } from "../../src/modules/media/fake-media-storage";
 import { MediaService } from "../../src/modules/media/media.service";
 import { MainCategoryService } from "../../src/modules/catalog/main-category.service";
 import { SubcategoryService } from "../../src/modules/catalog/subcategory.service";
+import { StoreCategoryService } from "../../src/modules/catalog/store-category.service";
 import { StoreService } from "../../src/modules/stores/store.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
@@ -131,6 +132,7 @@ export type IntegrationHarness = {
   mainCategories: MainCategoryService;
   subcategories: SubcategoryService;
   stores: StoreService;
+  storeCategories: StoreCategoryService;
   app: ReturnType<typeof createApp>;
   clock: { value: number; advance: () => void };
   close: () => Promise<void>;
@@ -195,6 +197,7 @@ export async function createIntegrationHarness(options?: {
   const mainCategories = new MainCategoryService(client, media, mediaConfig);
   const subcategories = new SubcategoryService(client, media, mediaConfig);
   const stores = new StoreService(client, media, mediaConfig);
+  const storeCategories = new StoreCategoryService(client);
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -205,6 +208,7 @@ export async function createIntegrationHarness(options?: {
     mainCategoryService: mainCategories,
     subcategoryService: subcategories,
     storeService: stores,
+    storeCategoryService: storeCategories,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -221,6 +225,7 @@ export async function createIntegrationHarness(options?: {
     mainCategories,
     subcategories,
     stores,
+    storeCategories,
     app,
     clock,
     close: async () => {
