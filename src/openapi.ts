@@ -118,12 +118,12 @@ export const createOpenApiPlugin = () =>
       {
         name: "Public — Stores",
         description:
-          "Unauthenticated Store discovery for the City selected by X-City-Id. Visibility is based on service Zones (store_zones), not physical Store proximity. Closed and PAUSED Stores remain listed with computed availability.",
+          "Unauthenticated Store discovery for the City selected by X-City-Id. Visibility is based on service Zones (store_zones), not physical Store proximity. Closed and PAUSED Stores remain listed with computed availability and orderAcceptanceStatus.",
       },
       {
         name: "Public — Products",
         description:
-          "Unauthenticated Product modifier reads for a Store Product in the City selected by X-City-Id. Returns only currently configured, available Options for the Product's current ModifierGroup.",
+          "Unauthenticated Store Product Catalog for the City selected by X-City-Id. Browse Store Categories, paginated Products (search/category filter), Product Details (images/sizes/availability/modifiers), and Modifier configuration. Temporarily unavailable Products/Options remain visible but non-orderable. PAUSED Stores remain browseable with orderAcceptanceStatus exposed. ARCHIVED/INACTIVE categories and Products are hidden.",
       },
     ],
     components: {

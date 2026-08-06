@@ -1453,13 +1453,28 @@ export class ModifierService {
         p.is_available
       from products p
       join stores s on s.id = p.store_id and s.city_id = p.city_id
+      join main_categories mc
+        on mc.id = s.main_category_id and mc.city_id = s.city_id
       where p.id = ${productId}
         and p.store_id = ${storeId}
         and p.city_id = ${cityId}
         and p.status = 'ACTIVE'
         and p.archived_at is null
         and s.status = 'ACTIVE'
-        and s.archived_at is null`;
+        and s.archived_at is null
+        and mc.status = 'ACTIVE'
+        and mc.archived_at is null
+        and (
+          p.category_id is null
+          or exists (
+            select 1 from store_categories sc
+            where sc.id = p.category_id
+              and sc.store_id = p.store_id
+              and sc.city_id = p.city_id
+              and sc.status = 'ACTIVE'
+              and sc.archived_at is null
+          )
+        )`;
     if (!product) {
       throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found");
     }
@@ -1509,6 +1524,8 @@ export class ModifierService {
         is_default: boolean;
         max_quantity: number;
         display_order: number;
+        option_is_available: boolean;
+        pmo_is_available: boolean;
       }[]
     >`
       select
@@ -1517,7 +1534,9 @@ export class ModifierService {
         pmo.price,
         pmo.is_default,
         pmo.max_quantity,
-        o.display_order
+        o.display_order,
+        o.is_available as option_is_available,
+        pmo.is_available as pmo_is_available
       from product_modifier_options pmo
       join modifier_options o on o.id = pmo.modifier_option_id
       where pmo.product_id = ${productId}
@@ -1526,8 +1545,6 @@ export class ModifierService {
         and o.modifier_group_id = ${product.modifier_group_id}
         and o.status = 'ACTIVE'
         and o.archived_at is null
-        and o.is_available = true
-        and pmo.is_available = true
       order by o.display_order asc, o.id asc`;
 
     return {
@@ -1538,14 +1555,20 @@ export class ModifierService {
         minSelect: Number(group.min_select),
         maxSelect: Number(group.max_select),
       },
-      options: rows.map((row) => ({
-        modifierOptionId: row.modifier_option_id,
-        name: row.name,
-        price: Number(row.price),
-        isDefault: Boolean(row.is_default),
-        maxQuantity: Number(row.max_quantity),
-        displayOrder: Number(row.display_order),
-      })),
+      options: rows.map((row) => {
+        const isAvailable =
+          Boolean(row.option_is_available) && Boolean(row.pmo_is_available);
+        return {
+          modifierOptionId: row.modifier_option_id,
+          name: row.name,
+          price: Number(row.price),
+          isDefault: Boolean(row.is_default),
+          maxQuantity: Number(row.max_quantity),
+          displayOrder: Number(row.display_order),
+          isAvailable,
+          isSelectable: isAvailable,
+        };
+      }),
     };
   }
 }

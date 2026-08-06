@@ -325,6 +325,7 @@ export class StoreService {
         orderAcceptanceStatus: row.order_acceptance_status,
         isOpen: schedule.isOpen,
       }),
+      orderAcceptanceStatus: row.order_acceptance_status,
       nextOpeningAt: schedule.nextOpeningAt,
       nextClosingAt: schedule.nextClosingAt,
     };

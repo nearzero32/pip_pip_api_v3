@@ -605,4 +605,58 @@ export class StoreCategoryService {
 
     return storeCategoryDto(await this.loadScoped(storeId, categoryId, cityId));
   }
+
+  /** Public Catalog: ACTIVE categories that have ≥1 public-visible Product. */
+  async listPublic(cityId: string, storeId: string) {
+    const [store] = await this.client<{ id: string }[]>`
+      select s.id::text as id
+      from stores s
+      join main_categories mc
+        on mc.id = s.main_category_id and mc.city_id = s.city_id
+      where s.id = ${storeId}
+        and s.city_id = ${cityId}
+        and s.status = 'ACTIVE'
+        and s.archived_at is null
+        and mc.status = 'ACTIVE'
+        and mc.archived_at is null`;
+    if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
+
+    const rows = (await this.client.unsafe(
+      `select ${CATEGORY_SELECT}
+       from store_categories c
+       left join store_categories p
+         on p.id = c.parent_category_id and p.store_id = c.store_id
+       where c.store_id = $1::uuid
+         and c.city_id = $2::uuid
+         and c.status = 'ACTIVE'
+         and c.archived_at is null
+         and exists (
+           select 1 from products prod
+           where prod.store_id = c.store_id
+             and prod.city_id = c.city_id
+             and prod.category_id = c.id
+             and prod.status = 'ACTIVE'
+             and prod.archived_at is null
+         )
+       order by
+         coalesce(p.display_order, c.display_order) asc,
+         coalesce(p.created_at, c.created_at) asc,
+         coalesce(p.id, c.id) asc,
+         (c.parent_category_id is not null) asc,
+         c.display_order asc,
+         c.created_at asc,
+         c.id asc`,
+      [storeId, cityId],
+    )) as StoreCategoryRow[];
+
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        storeId: row.store_id,
+        parentCategoryId: row.parent_category_id,
+        name: row.name,
+        displayOrder: Number(row.display_order),
+      })),
+    };
+  }
 }

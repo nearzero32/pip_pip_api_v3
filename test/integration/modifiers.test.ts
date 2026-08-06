@@ -830,10 +830,21 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
         ),
       )
     ).json()) as {
-      options: { modifierOptionId: string; displayOrder: number }[];
+      options: {
+        modifierOptionId: string;
+        displayOrder: number;
+        isAvailable: boolean;
+        isSelectable: boolean;
+      }[];
     };
-    expect(pub1.options.map((o) => o.modifierOptionId)).toEqual([sauce.id]);
+    expect(pub1.options.map((o) => o.modifierOptionId)).toEqual([
+      sauce.id,
+      cheese.id,
+    ]);
     expect(pub1.options[0]!.displayOrder).toBe(0);
+    expect(pub1.options[0]!.isAvailable).toBe(true);
+    expect(pub1.options[1]!.isAvailable).toBe(false);
+    expect(pub1.options[1]!.isSelectable).toBe(false);
 
     const pub2 = (await (
       await harness.app.handle(
@@ -842,9 +853,16 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
           { headers: { "X-City-Id": cityA } },
         ),
       )
-    ).json()) as { options: { modifierOptionId: string; price: number }[] };
+    ).json()) as {
+      options: {
+        modifierOptionId: string;
+        price: number;
+        isAvailable: boolean;
+      }[];
+    };
     expect(pub2.options).toHaveLength(1);
     expect(pub2.options[0]!.price).toBe(1500);
+    expect(pub2.options[0]!.isAvailable).toBe(true);
 
     await harness.app.handle(
       jsonRequest(
@@ -863,8 +881,11 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
           { headers: { "X-City-Id": cityA } },
         ),
       )
-    ).json()) as { options: unknown[] };
-    expect(pub1b.options).toHaveLength(0);
+    ).json()) as {
+      options: { modifierOptionId: string; isAvailable: boolean }[];
+    };
+    expect(pub1b.options).toHaveLength(2);
+    expect(pub1b.options.every((o) => o.isAvailable === false)).toBe(true);
   });
 
   test("city isolation, SUPER_ADMIN blocked, employee grants, concurrent name uniqueness", async () => {

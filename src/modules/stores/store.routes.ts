@@ -114,6 +114,10 @@ const publicStoreDto = t.Object({
   displayOrder: t.Integer({ minimum: 0 }),
   isOpen: t.Boolean(),
   isAcceptingOrders: t.Boolean(),
+  orderAcceptanceStatus: t.Union([
+    t.Literal("ACCEPTING"),
+    t.Literal("PAUSED"),
+  ]),
   nextOpeningAt: t.Nullable(t.String()),
   nextClosingAt: t.Nullable(t.String()),
 });

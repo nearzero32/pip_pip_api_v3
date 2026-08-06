@@ -6,6 +6,7 @@ import {
   parseAuthenticationBody,
   standardErrors,
 } from "../auth/http/shared";
+import { requirePublicCityContext } from "../auth/city/public-city-context";
 import {
   assertAllowedBodyKeys,
   authIdentity,
@@ -17,6 +18,7 @@ import {
   paginated,
   requestIdOf,
 } from "../geography/shared";
+import type { ModifierService } from "./modifier.service";
 import type { ProductService } from "./product.service";
 
 const productStatus = t.Union([
@@ -260,7 +262,11 @@ const parseProductBody = async (context: {
   return body;
 };
 
-export const productRoutes = (auth: AuthModule, service: ProductService) =>
+export const productRoutes = (
+  auth: AuthModule,
+  service: ProductService,
+  modifiers?: ModifierService,
+) =>
   new Elysia({ name: "product-routes" })
     .onParse(parseProductBody)
     .post(
@@ -576,6 +582,116 @@ export const productRoutes = (auth: AuthModule, service: ProductService) =>
           description:
             "Full replace of recurring weekly windows (Asia/Baghdad wall-clock). Same-day only; overlaps rejected.",
           security: [{ bearerAuth: [] }],
+        },
+      },
+    )
+    .get(
+      "/api/v1/public/stores/:storeId/products",
+      async ({ request, params, query }) => {
+        const { city } = await requirePublicCityContext(auth.client, request);
+        return service.listPublic(city.id, params.storeId, query);
+      },
+      {
+        params: storeIdParam,
+        query: t.Object(
+          {
+            page: pageQuery.page,
+            limit: pageQuery.limit,
+            search: pageQuery.search,
+            categoryId: t.Optional(t.String({ format: "uuid" })),
+          },
+          { additionalProperties: false },
+        ),
+        response: {
+          200: paginated(
+            t.Object({
+              id: t.String({ format: "uuid" }),
+              storeId: t.String({ format: "uuid" }),
+              categoryId: t.Nullable(t.String({ format: "uuid" })),
+              name: t.String(),
+              basePrice: t.Nullable(t.Integer({ exclusiveMinimum: 0 })),
+              price: t.Nullable(t.Integer({ exclusiveMinimum: 0 })),
+              isAvailable: t.Boolean(),
+              isOrderable: t.Boolean(),
+              displayOrder: t.Integer({ minimum: 0 }),
+              primaryImage: t.Nullable(
+                t.Object({
+                  id: t.String({ format: "uuid" }),
+                  assetId: t.String({ format: "uuid" }),
+                  url: t.Nullable(t.String()),
+                  isPrimary: t.Boolean(),
+                  displayOrder: t.Integer({ minimum: 0 }),
+                }),
+              ),
+            }),
+          ),
+          400: errorResponse,
+          404: errorResponse,
+          409: errorResponse,
+          ...standardErrors,
+        },
+        detail: {
+          tags: ["Public — Products"],
+          summary: "List public Store Products",
+          description:
+            "Requires X-City-Id. Paginated lightweight cards. ACTIVE Products only; INACTIVE/ARCHIVED categories hide their Products; isAvailable=false remains listed as non-orderable. Search is case-insensitive within the Store. PAUSED Stores remain browseable.",
+          parameters: [
+            {
+              name: "X-City-Id",
+              in: "header",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
+        },
+      },
+    )
+    .get(
+      "/api/v1/public/stores/:storeId/products/:productId",
+      async ({ request, params }) => {
+        const { city } = await requirePublicCityContext(auth.client, request);
+        const product = await service.getPublic(
+          city.id,
+          params.storeId,
+          params.productId,
+        );
+        const mods = modifiers
+          ? await modifiers.publicProductModifiers(
+              request,
+              params.storeId,
+              params.productId,
+            )
+          : { productId: params.productId, group: null, options: [] };
+        return {
+          ...product,
+          modifiers: {
+            group: mods.group,
+            options: mods.options,
+          },
+        };
+      },
+      {
+        params: productParams,
+        response: {
+          200: t.Any(),
+          400: errorResponse,
+          404: errorResponse,
+          409: errorResponse,
+          ...standardErrors,
+        },
+        detail: {
+          tags: ["Public — Products"],
+          summary: "Get public Product Details",
+          description:
+            "Requires X-City-Id. Full Customer-facing Product configuration including images, sizes, availability windows, Store orderAcceptanceStatus, and current-group Modifier configuration. Temporarily unavailable Products remain readable with isOrderable=false. Cross-Store/City IDs return not-found.",
+          parameters: [
+            {
+              name: "X-City-Id",
+              in: "header",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
         },
       },
     );

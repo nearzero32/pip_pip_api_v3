@@ -6,6 +6,7 @@ import {
   parseAuthenticationBody,
   standardErrors,
 } from "../auth/http/shared";
+import { requirePublicCityContext } from "../auth/city/public-city-context";
 import {
   assertAllowedBodyKeys,
   authIdentity,
@@ -247,6 +248,50 @@ export const storeCategoryRoutes = (
           description:
             "Sets status=ARCHIVED and archived_at. Rejects archiving a main category that still has non-archived children. Cascade soft-archives Products in this category (status+archived_at only; images/sizes/availability rows are kept). Idempotent when already ARCHIVED.",
           security: [{ bearerAuth: [] }],
+        },
+      },
+    )
+    .get(
+      "/api/v1/public/stores/:storeId/categories",
+      async ({ request, params }) => {
+        const { city } = await requirePublicCityContext(
+          auth.client,
+          request,
+        );
+        return service.listPublic(city.id, params.storeId);
+      },
+      {
+        params: storeIdParam,
+        response: {
+          200: t.Object({
+            data: t.Array(
+              t.Object({
+                id: t.String({ format: "uuid" }),
+                storeId: t.String({ format: "uuid" }),
+                parentCategoryId: t.Nullable(t.String({ format: "uuid" })),
+                name: t.String(),
+                displayOrder: t.Integer({ minimum: 0 }),
+              }),
+            ),
+          }),
+          400: errorResponse,
+          404: errorResponse,
+          409: errorResponse,
+          ...standardErrors,
+        },
+        detail: {
+          tags: ["Public — Products"],
+          summary: "List public Store Categories",
+          description:
+            "Requires X-City-Id. Returns ACTIVE categories that contain at least one public-visible Product. Empty, INACTIVE, and ARCHIVED categories are hidden. PAUSED Stores remain browseable.",
+          parameters: [
+            {
+              name: "X-City-Id",
+              in: "header",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+          ],
         },
       },
     );

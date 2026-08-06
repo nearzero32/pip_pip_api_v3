@@ -1900,4 +1900,282 @@ export class ProductService {
 
     return this.getDto(storeId, productId, cityId);
   }
+
+  private async assertPublicStore(cityId: string, storeId: string) {
+    const [store] = await this.client<
+      { id: string; order_acceptance_status: string }[]
+    >`
+      select
+        s.id::text as id,
+        s.order_acceptance_status::text as order_acceptance_status
+      from stores s
+      join main_categories mc
+        on mc.id = s.main_category_id and mc.city_id = s.city_id
+      where s.id = ${storeId}
+        and s.city_id = ${cityId}
+        and s.status = 'ACTIVE'
+        and s.archived_at is null
+        and mc.status = 'ACTIVE'
+        and mc.archived_at is null`;
+    if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
+    return store;
+  }
+
+  private async loadPublicImages(productIds: string[]): Promise<ImageRow[]> {
+    if (productIds.length === 0) return [];
+    const ids = this.client.array(productIds, "UUID");
+    return (await this.client`
+      select
+        pi.id::text as id,
+        pi.product_id::text as product_id,
+        pi.media_asset_id::text as media_asset_id,
+        pi.display_order,
+        pi.is_primary,
+        m.object_key,
+        m.visibility::text as visibility,
+        m.status::text as asset_status
+      from product_images pi
+      join media_assets m on m.id = pi.media_asset_id
+      where pi.product_id = any(${ids})
+        and m.status = 'READY'
+        and m.visibility = 'PUBLIC'
+      order by pi.display_order asc, pi.id asc`) as ImageRow[];
+  }
+
+  private async loadPublicSizes(productIds: string[]): Promise<SizeRow[]> {
+    if (productIds.length === 0) return [];
+    const ids = this.client.array(productIds, "UUID");
+    return (await this.client`
+      select
+        id::text as id,
+        product_id::text as product_id,
+        name,
+        price,
+        status::text as status,
+        is_available,
+        is_default,
+        display_order,
+        archived_at
+      from product_sizes
+      where product_id = any(${ids})
+        and status = 'ACTIVE'
+        and archived_at is null
+      order by display_order asc, id asc`) as SizeRow[];
+  }
+
+  private resolveListPrice(
+    basePrice: number | null,
+    sizes: SizeRow[],
+  ): number | null {
+    if (basePrice != null) return basePrice;
+    const defaultSize = sizes.find((size) => size.is_default) ?? sizes[0];
+    return defaultSize ? Number(defaultSize.price) : null;
+  }
+
+  private publicListCard(
+    row: ProductRow,
+    images: ImageRow[],
+    sizes: SizeRow[],
+  ) {
+    const primary =
+      images.find((image) => image.is_primary) ?? images[0] ?? null;
+    const isAvailable = Boolean(row.is_available);
+    return {
+      id: row.id,
+      storeId: row.store_id,
+      categoryId: row.category_id,
+      name: row.name,
+      basePrice: row.base_price == null ? null : Number(row.base_price),
+      price: this.resolveListPrice(
+        row.base_price == null ? null : Number(row.base_price),
+        sizes,
+      ),
+      isAvailable,
+      isOrderable: isAvailable,
+      displayOrder: Number(row.display_order),
+      primaryImage: primary
+        ? {
+            id: primary.id,
+            assetId: primary.media_asset_id,
+            url: buildPublicMediaUrl(
+              this.config.r2PublicBaseUrl,
+              primary.object_key,
+              (primary.visibility as "PUBLIC" | "PRIVATE") ?? "PRIVATE",
+              primary.asset_status,
+            ),
+            isPrimary: Boolean(primary.is_primary),
+            displayOrder: Number(primary.display_order),
+          }
+        : null,
+    };
+  }
+
+  /** Public Catalog product list — ACTIVE products under public Store/Category rules. */
+  async listPublic(
+    cityId: string,
+    storeId: string,
+    input: {
+      categoryId?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+  ) {
+    await this.assertPublicStore(cityId, storeId);
+    const { page, limit } = pageOf(input.page, input.limit);
+    const offset = (page - 1) * limit;
+    const search = input.search?.trim() || null;
+
+    let categoryId: string | null = null;
+    if (input.categoryId !== undefined && input.categoryId !== "null") {
+      categoryId = input.categoryId;
+      const [category] = await this.client<{ id: string }[]>`
+        select id::text as id from store_categories
+        where id = ${categoryId}
+          and store_id = ${storeId}
+          and city_id = ${cityId}
+          and status = 'ACTIVE'
+          and archived_at is null`;
+      if (!category) {
+        throw new AppError(404, "STORE_CATEGORY_NOT_FOUND", "Store category not found");
+      }
+    }
+
+    const rows = (await this.client.unsafe(
+      `select ${PRODUCT_SELECT}, count(*) over()::int as total_count
+       from products p
+       where p.store_id = $1::uuid
+         and p.city_id = $2::uuid
+         and p.status = 'ACTIVE'
+         and p.archived_at is null
+         and (
+           p.category_id is null
+           or exists (
+             select 1 from store_categories sc
+             where sc.id = p.category_id
+               and sc.store_id = p.store_id
+               and sc.city_id = p.city_id
+               and sc.status = 'ACTIVE'
+               and sc.archived_at is null
+           )
+         )
+         and ($3::uuid is null or p.category_id = $3::uuid)
+         and ($4::text is null or p.name ilike ('%' || $4 || '%'))
+       order by p.display_order asc, p.created_at asc, p.id asc
+       limit $5::int offset $6::int`,
+      [storeId, cityId, categoryId, search, limit, offset],
+    )) as (ProductRow & { total_count: number })[];
+
+    const total = rows[0]?.total_count ?? 0;
+    const productIds = rows.map((row) => row.id);
+    const [images, sizes] = await Promise.all([
+      this.loadPublicImages(productIds),
+      this.loadPublicSizes(productIds),
+    ]);
+    const imagesByProduct = new Map<string, ImageRow[]>();
+    const sizesByProduct = new Map<string, SizeRow[]>();
+    for (const image of images) {
+      const list = imagesByProduct.get(image.product_id) ?? [];
+      list.push(image);
+      imagesByProduct.set(image.product_id, list);
+    }
+    for (const size of sizes) {
+      const list = sizesByProduct.get(size.product_id) ?? [];
+      list.push(size);
+      sizesByProduct.set(size.product_id, list);
+    }
+
+    return {
+      data: rows.map((row) =>
+        this.publicListCard(
+          row,
+          imagesByProduct.get(row.id) ?? [],
+          sizesByProduct.get(row.id) ?? [],
+        ),
+      ),
+      page,
+      limit,
+      total: Number(total),
+    };
+  }
+
+  /** Public Product Details — temporarily unavailable Products remain readable. */
+  async getPublic(cityId: string, storeId: string, productId: string) {
+    const store = await this.assertPublicStore(cityId, storeId);
+    const rows = (await this.client.unsafe(
+      `select ${PRODUCT_SELECT}
+       from products p
+       where p.id = $1::uuid
+         and p.store_id = $2::uuid
+         and p.city_id = $3::uuid
+         and p.status = 'ACTIVE'
+         and p.archived_at is null
+         and (
+           p.category_id is null
+           or exists (
+             select 1 from store_categories sc
+             where sc.id = p.category_id
+               and sc.store_id = p.store_id
+               and sc.city_id = p.city_id
+               and sc.status = 'ACTIVE'
+               and sc.archived_at is null
+           )
+         )`,
+      [productId, storeId, cityId],
+    )) as ProductRow[];
+    const row = rows[0];
+    if (!row) {
+      throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found");
+    }
+
+    const [images, sizes, availability, category] = await Promise.all([
+      this.loadPublicImages([productId]),
+      this.loadPublicSizes([productId]),
+      this.loadAvailability([productId]),
+      row.category_id
+        ? this.client<{ id: string; name: string }[]>`
+            select id::text as id, name from store_categories
+            where id = ${row.category_id}
+              and store_id = ${storeId}
+              and city_id = ${cityId}
+              and status = 'ACTIVE'
+              and archived_at is null`
+        : Promise.resolve([] as { id: string; name: string }[]),
+    ]);
+
+    const isAvailable = Boolean(row.is_available);
+    return {
+      id: row.id,
+      storeId: row.store_id,
+      categoryId: row.category_id,
+      category: category[0]
+        ? { id: category[0].id, name: category[0].name }
+        : null,
+      modifierGroupId: row.modifier_group_id,
+      name: row.name,
+      description: row.description,
+      basePrice: row.base_price == null ? null : Number(row.base_price),
+      price: this.resolveListPrice(
+        row.base_price == null ? null : Number(row.base_price),
+        sizes,
+      ),
+      isAvailable,
+      isOrderable: isAvailable,
+      displayOrder: Number(row.display_order),
+      images: images.map((image) => this.imageDto(image)),
+      sizes: sizes.map((size) => ({
+        id: size.id,
+        name: size.name,
+        price: Number(size.price),
+        isAvailable: Boolean(size.is_available),
+        isDefault: Boolean(size.is_default),
+        displayOrder: Number(size.display_order),
+      })),
+      availability: availability.map((window) => this.availabilityDto(window)),
+      store: {
+        id: store.id,
+        orderAcceptanceStatus: store.order_acceptance_status,
+      },
+    };
+  }
 }

@@ -94,6 +94,8 @@ const publicModifiersDto = t.Object({
       isDefault: t.Boolean(),
       maxQuantity: t.Integer({ minimum: 1 }),
       displayOrder: t.Integer({ minimum: 0 }),
+      isAvailable: t.Boolean(),
+      isSelectable: t.Boolean(),
     }),
   ),
 });
@@ -572,7 +574,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
           tags: ["Public — Products"],
           summary: "Public effective Product modifiers",
           description:
-            "Requires X-City-Id. Returns only current-Group configured Options that are ACTIVE and available at both Option and ProductModifierOption levels. Insufficient available Options never hide the Product.",
+            "Requires X-City-Id. Returns only current-Group configured Options that are ACTIVE (not archived). Temporarily unavailable Options remain visible with isAvailable/isSelectable=false. Insufficient available Options never hide the Product.",
           parameters: [cityIdHeaderParam],
         },
       },
