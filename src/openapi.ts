@@ -76,6 +76,31 @@ export const createOpenApiPlugin = () =>
           "Store Modifier Groups and Options for ADMIN and granted employees. SUPER_ADMIN has no Modifier access. Product → 0..1 Group; Group → many Options; Option → exactly one Group. ProductModifierOption stores per-Product price/default/maxQuantity. Restore fails on normalized Store-level name conflicts.",
       },
       {
+        name: "Dashboard — Merchants",
+        description:
+          "City-scoped Merchant account management for ADMIN and granted employees. SUPER_ADMIN has no Merchant access. Merchants authenticate via MERCHANT_APP (phone+password), belong to exactly one Store, and are never Dashboard Staff.",
+      },
+      {
+        name: "Mobile — Merchant Authentication",
+        description:
+          "Merchant phone + password authentication. JWT audience merchant-app. Trusted cityId and storeId are embedded from merchant_profiles. Max 3 active devices. Separate from Customer, Driver, and Dashboard Staff.",
+      },
+      {
+        name: "Mobile — Merchant Catalog",
+        description:
+          "Merchant management of Products, Store Categories, and Modifiers for the authenticated Merchant's trusted Store only. Client storeId is never authorization scope.",
+      },
+      {
+        name: "Mobile — Merchant Store",
+        description:
+          "Merchant operational Store controls for the trusted Store (orderAcceptanceStatus ACCEPTING/PAUSED).",
+      },
+      {
+        name: "Mobile — Merchant Media",
+        description:
+          "Merchant PRODUCT_IMAGE upload intents in the Merchant's City. Other media purposes are rejected.",
+      },
+      {
         name: "Public — Geography",
         description:
           "Unauthenticated geography reads for pre-login City selection and City-scoped Zone lookup via X-City-Id",

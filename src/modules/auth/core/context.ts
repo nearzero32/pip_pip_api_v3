@@ -1,5 +1,13 @@
-export type AuthApplication = "CUSTOMER_APP" | "DRIVER_APP" | "DASHBOARD";
-export type AuthAudience = "customer-app" | "driver-app" | "dashboard";
+export type AuthApplication =
+  | "CUSTOMER_APP"
+  | "DRIVER_APP"
+  | "DASHBOARD"
+  | "MERCHANT_APP";
+export type AuthAudience =
+  | "customer-app"
+  | "driver-app"
+  | "dashboard"
+  | "merchant-app";
 
 export type AuthenticationContext =
   | {
@@ -16,6 +24,11 @@ export type AuthenticationContext =
       applicationType: "DASHBOARD";
       audience: "dashboard";
       namespace: "dashboard";
+    }
+  | {
+      applicationType: "MERCHANT_APP";
+      audience: "merchant-app";
+      namespace: "merchant";
     };
 
 export const customerContext = {
@@ -32,4 +45,9 @@ export const dashboardContext = {
   applicationType: "DASHBOARD",
   audience: "dashboard",
   namespace: "dashboard",
+} as const;
+export const merchantContext = {
+  applicationType: "MERCHANT_APP",
+  audience: "merchant-app",
+  namespace: "merchant",
 } as const;

@@ -396,8 +396,8 @@ describe("API foundation", () => {
     const app = createApp({ logger: silentLogger, production: false, readinessCheck: async () => undefined, authModule: fakeModule() });
     const document = await (await app.handle(new Request("http://localhost/openapi/json"))).json() as { paths: Record<string,Record<string,{requestBody?:unknown;responses?:unknown;security?:unknown}>> };
     const applicationPaths=Object.keys(document.paths).filter(path=>path.includes("auth"));
-    expect(applicationPaths.length).toBe(18);
-    expect(applicationPaths.every(path=>path.startsWith("/api/v1/mobile/customer/")||path.startsWith("/api/v1/mobile/driver/")||path.startsWith("/api/v1/dashboard/"))).toBeTrue();
+    expect(applicationPaths.length).toBe(26);
+    expect(applicationPaths.every(path=>path.startsWith("/api/v1/mobile/customer/")||path.startsWith("/api/v1/mobile/driver/")||path.startsWith("/api/v1/mobile/merchant/")||path.startsWith("/api/v1/dashboard/"))).toBeTrue();
     expect(applicationPaths.some(path=>path.startsWith("/api/v1/auth/")||path.startsWith("/v1/")||path.startsWith("/auth/"))).toBeFalse();
     for (const path of applicationPaths) {
       const operation = Object.values(document.paths[path]!).find(value=>value && typeof value==="object" && "responses" in value);
@@ -408,6 +408,9 @@ describe("API foundation", () => {
     expect(document.paths["/api/v1/mobile/customer/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
     expect(document.paths["/api/v1/mobile/driver/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
     expect(document.paths["/api/v1/dashboard/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
+    expect(document.paths["/api/v1/mobile/merchant/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
+    expect(document.paths["/api/v1/mobile/merchant/auth/login"]?.post?.requestBody).toBeDefined();
+    expect(document.paths["/api/v1/mobile/merchant/auth/me"]?.get?.security).toEqual([{bearerAuth:[]}]);
     const openApiText=JSON.stringify(document);
     for(const field of ["appType","applicationType","application","audience","clientType"]) expect(openApiText.includes(`\"${field}\"`)).toBeFalse();
   });

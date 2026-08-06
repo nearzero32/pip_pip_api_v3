@@ -2,6 +2,7 @@ import type { SQL } from "bun";
 import type { MediaConfig } from "../../config/env";
 import { AppError } from "../../errors/app-error";
 import type { Logger } from "../../observability/logger";
+import { authorizeMerchantStoreScope } from "../auth/merchant/merchant-access";
 import { requireCityPermission } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
@@ -129,6 +130,9 @@ export class MediaService {
     identity: AuthIdentity,
     permission: "media.read" | "media.create" | "media.delete",
   ): Promise<string> {
+    if (identity.applicationType === "MERCHANT_APP") {
+      return authorizeMerchantStoreScope(this.client, identity);
+    }
     const cityId = await requireCityPermission(this.client, identity, permission);
     await assertActiveCity(this.client, cityId);
     return cityId;
@@ -192,6 +196,12 @@ export class MediaService {
       input.purpose !== "CATEGORY_IMAGE" &&
       input.purpose !== "STORE_LOGO" &&
       input.purpose !== "STORE_IMAGE" &&
+      input.purpose !== "PRODUCT_IMAGE"
+    ) {
+      throw new AppError(422, "VALIDATION_FAILED", "Unsupported media purpose");
+    }
+    if (
+      identity.applicationType === "MERCHANT_APP" &&
       input.purpose !== "PRODUCT_IMAGE"
     ) {
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported media purpose");

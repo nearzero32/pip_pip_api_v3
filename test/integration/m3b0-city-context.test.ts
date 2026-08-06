@@ -23,6 +23,7 @@ const identity = (
   accountId: crypto.randomUUID(),
   sessionId: crypto.randomUUID(),
   applicationType: "DASHBOARD",
+  storeId: null,
   ...partial,
 });
 
@@ -210,6 +211,7 @@ describe("M3-B0 trusted City context and staff authorization", () => {
           roles: ["ADMIN"],
           scopeType: "CITY",
           cityId: cityA,
+          storeId: null,
         },
         employeeId,
         "zones.read",

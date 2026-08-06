@@ -25,8 +25,23 @@ export const staffRoleCode = pgEnum("staff_role_code", ["SUPER_ADMIN", "ADMIN", 
 export const roleScopeType = pgEnum("role_scope_type", ["GLOBAL", "CITY"]);
 export const mfaMethod = pgEnum("mfa_method", ["TOTP"]);
 export const mfaCredentialStatus = pgEnum("mfa_credential_status", ["PENDING", "ACTIVE", "RESET", "REMOVED"]);
-export const applicationType = pgEnum("application_type", ["CUSTOMER_APP", "DRIVER_APP", "DASHBOARD"]);
-export const authenticationMethod = pgEnum("authentication_method", ["PHONE_OTP", "PASSWORD_TOTP", "PASSWORD", "DRIVER_ACCESS_CODE"]);
+export const applicationType = pgEnum("application_type", [
+  "CUSTOMER_APP",
+  "DRIVER_APP",
+  "DASHBOARD",
+  "MERCHANT_APP",
+]);
+export const authenticationMethod = pgEnum("authentication_method", [
+  "PHONE_OTP",
+  "PASSWORD_TOTP",
+  "PASSWORD",
+  "DRIVER_ACCESS_CODE",
+]);
+export const merchantProfileStatus = pgEnum("merchant_profile_status", [
+  "ACTIVE",
+  "INACTIVE",
+  "SUSPENDED",
+]);
 export const auditOutcome = pgEnum("audit_outcome", ["SUCCESS", "FAILURE", "DENIED"]);
 export const governorateStatus = pgEnum("governorate_status", ["ACTIVE", "INACTIVE"]);
 export const cityStatus = pgEnum("city_status", ["DRAFT", "ACTIVE", "SUSPENDED", "ARCHIVED"]);

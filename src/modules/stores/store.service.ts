@@ -2,6 +2,7 @@ import type { SQL } from "bun";
 import type { MediaConfig } from "../../config/env";
 import { AppError } from "../../errors/app-error";
 import { normalizePhone } from "../auth/shared/normalization";
+import { authorizeMerchantStoreScope } from "../auth/merchant/merchant-access";
 import { requireCityPermission } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
@@ -127,6 +128,67 @@ export class StoreService {
     );
     await assertActiveCity(this.client, cityId);
     return cityId;
+  }
+
+  /** Merchant-only: toggle Store order acceptance (open/closed operational state). */
+  async updateMerchantOrderAcceptance(
+    identity: AuthIdentity,
+    body: unknown,
+    requestId: string,
+  ) {
+    const cityId = await authorizeMerchantStoreScope(this.client, identity);
+    const storeId = identity.storeId!;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    }
+    const input = body as Record<string, unknown>;
+    for (const key of Object.keys(input)) {
+      if (key !== "orderAcceptanceStatus") {
+        throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+      }
+    }
+    const orderAcceptanceStatus = input.orderAcceptanceStatus;
+    if (
+      orderAcceptanceStatus !== "ACCEPTING" &&
+      orderAcceptanceStatus !== "PAUSED"
+    ) {
+      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    }
+
+    await beginWithGeographyRetry(this.client, async (tx) => {
+      const state = await lockCityGeography(tx, cityId);
+      assertCityOperability(state);
+      const [locked] = await tx<{ id: string; status: string }[]>`
+        select id::text as id, status::text as status
+        from stores
+        where id = ${storeId} and city_id = ${cityId}
+        for update`;
+      if (!locked) {
+        throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
+      }
+      if (locked.status === "ARCHIVED") {
+        throw new AppError(409, "STORE_ARCHIVED", "Store is archived");
+      }
+      await tx`
+        update stores set
+          order_acceptance_status = ${orderAcceptanceStatus}::store_order_acceptance_status,
+          updated_at = now()
+        where id = ${storeId}
+          and city_id = ${cityId}`;
+    });
+
+    await this.client`
+      insert into audit_logs (
+        event_type, actor_account_id, outcome, request_correlation_id, redacted_metadata
+      ) values (
+        'STORE_ORDER_ACCEPTANCE_UPDATED',
+        ${identity.accountId},
+        'SUCCESS',
+        ${requestId},
+        ${JSON.stringify({ storeId, cityId, orderAcceptanceStatus })}::jsonb
+      )`;
+
+    return this.getDto(cityId, storeId);
   }
 
   private async loadHours(

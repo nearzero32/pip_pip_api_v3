@@ -78,4 +78,16 @@ describe("M2 security primitives", () => {
     const value=redact({Password:"x",accessCode:"001927",accessCodeHash:"hash",otpCode:"123456",accessToken:"a",apiKey:"b",nested:[{refresh_token:"y",Authorization:"Bearer z",cookie:"sid=x"}],error:{databaseUrl:"postgres://secret",clientSecret:"c",safe:"ok"}}) as Record<string,unknown>;
     expect(JSON.stringify(value)).not.toContain("Bearer z"); expect(JSON.stringify(value)).not.toContain("001927"); expect(JSON.stringify(value)).not.toContain("123456"); expect(JSON.stringify(value)).not.toContain("postgres://secret"); expect(JSON.stringify(value)).toContain("[REDACTED]"); expect(JSON.stringify(value)).toContain("ok");
   });
+  test("embeds Merchant store claims and rejects incomplete Merchant tokens", async () => {
+    const service = new Ed25519AccessTokenService({issuer:"issuer",keyId:"kid",privateKeyBase64:privateKey,publicKeyBase64:publicKey,lifetimeSeconds:600});
+    const accountId = crypto.randomUUID(), sessionId = crypto.randomUUID();
+    const cityId = crypto.randomUUID(), storeId = crypto.randomUUID();
+    const merchant = await service.sign({accountId,sessionId,applicationType:"MERCHANT_APP",roles:[],cityId,storeId},1000);
+    const verified = await service.verify(merchant.token,"MERCHANT_APP",1001);
+    expect(verified.cityId).toBe(cityId);
+    expect(verified.storeId).toBe(storeId);
+    expect(verified.roles).toEqual([]);
+    await expect(service.verify(merchant.token,"DASHBOARD",1001)).rejects.toThrow();
+    await expect(service.sign({accountId,sessionId,applicationType:"MERCHANT_APP",roles:[],cityId,storeId:null},1000)).rejects.toThrow();
+  });
 });

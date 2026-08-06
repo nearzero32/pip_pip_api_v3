@@ -14,6 +14,7 @@ export const sessionResponse = t.Object({
     t.Literal("CUSTOMER_APP"),
     t.Literal("DRIVER_APP"),
     t.Literal("DASHBOARD"),
+    t.Literal("MERCHANT_APP"),
   ]),
 });
 export const standardErrors = {
@@ -43,6 +44,7 @@ export const sessionsResponse = t.Object({
         t.Literal("CUSTOMER_APP"),
         t.Literal("DRIVER_APP"),
         t.Literal("DASHBOARD"),
+        t.Literal("MERCHANT_APP"),
       ]),
       device_id: t.Nullable(t.String()),
       device_name: t.String(),

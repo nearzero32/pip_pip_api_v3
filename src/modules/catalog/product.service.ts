@@ -1,6 +1,7 @@
 import type { SQL } from "bun";
 import type { MediaConfig } from "../../config/env";
 import { AppError } from "../../errors/app-error";
+import { authorizeMerchantStoreScope } from "../auth/merchant/merchant-access";
 import { requireCityPermission } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
@@ -310,7 +311,11 @@ export class ProductService {
       | "products.create"
       | "products.update"
       | "products.archive",
+    storeId?: string,
   ) {
+    if (identity.applicationType === "MERCHANT_APP") {
+      return authorizeMerchantStoreScope(this.client, identity, storeId);
+    }
     const cityId = await requireCityPermission(
       this.client,
       identity,
@@ -757,7 +762,7 @@ export class ProductService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "products.create");
+    const cityId = await this.authorize(identity, "products.create", storeId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -894,7 +899,7 @@ export class ProductService {
       limit?: number;
     },
   ) {
-    const cityId = await this.authorize(identity, "products.read");
+    const cityId = await this.authorize(identity, "products.read", storeId);
     const [store] = await this.client<{ id: string }[]>`
       select id::text as id from stores
       where id = ${storeId} and city_id = ${cityId}`;
@@ -1009,7 +1014,7 @@ export class ProductService {
   }
 
   async get(identity: AuthIdentity, storeId: string, productId: string) {
-    const cityId = await this.authorize(identity, "products.read");
+    const cityId = await this.authorize(identity, "products.read", storeId);
     const [store] = await this.client<{ id: string }[]>`
       select id::text as id from stores
       where id = ${storeId} and city_id = ${cityId}`;
@@ -1024,7 +1029,7 @@ export class ProductService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "products.update");
+    const cityId = await this.authorize(identity, "products.update", storeId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -1208,7 +1213,7 @@ export class ProductService {
     productId: string,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "products.archive");
+    const cityId = await this.authorize(identity, "products.archive", storeId);
     await beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
       assertCityOperability(state);
@@ -1248,7 +1253,7 @@ export class ProductService {
     imagesRaw: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "products.update");
+    const cityId = await this.authorize(identity, "products.update", storeId);
     const images = parseImages(imagesRaw);
 
     try {
@@ -1326,7 +1331,7 @@ export class ProductService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "products.update");
+    const cityId = await this.authorize(identity, "products.update", storeId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -1490,7 +1495,7 @@ export class ProductService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "products.update");
+    const cityId = await this.authorize(identity, "products.update", storeId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -1702,7 +1707,7 @@ export class ProductService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "products.update");
+    const cityId = await this.authorize(identity, "products.update", storeId);
     const input =
       body && typeof body === "object" && !Array.isArray(body)
         ? (body as Record<string, unknown>)
@@ -1851,7 +1856,7 @@ export class ProductService {
     windowsRaw: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "products.update");
+    const cityId = await this.authorize(identity, "products.update", storeId);
     if (!Array.isArray(windowsRaw)) {
       throw new AppError(
         422,

@@ -7,6 +7,7 @@ const audiences: Record<AuthApplication, string> = {
   CUSTOMER_APP: "customer-app",
   DRIVER_APP: "driver-app",
   DASHBOARD: "dashboard",
+  MERCHANT_APP: "merchant-app",
 };
 
 export const DASHBOARD_ROLE_CODES = [
@@ -34,6 +35,8 @@ export interface AccessTokenClaims {
   /** Present only for Dashboard tokens. */
   scopeType?: DashboardScopeType | null;
   cityId?: string | null;
+  /** Present only for Merchant tokens — trusted Store. */
+  storeId?: string | null;
 }
 
 export interface VerifiedAccessToken extends AccessTokenClaims {
@@ -88,6 +91,13 @@ const parseDashboardScope = (
   throw new Error("INVALID_TOKEN");
 };
 
+const parseMerchantScope = (payload: Record<string, unknown>) => {
+  if (!isUuid(payload.cityId) || !isUuid(payload.storeId)) {
+    throw new Error("INVALID_TOKEN");
+  }
+  return { cityId: payload.cityId as string, storeId: payload.storeId as string };
+};
+
 export class Ed25519AccessTokenService {
   private privateKey: Promise<CryptoKey>;
   private publicKey: Promise<CryptoKey>;
@@ -126,15 +136,19 @@ export class Ed25519AccessTokenService {
       input.applicationType === "DASHBOARD"
         ? input.roles.filter(isDashboardRoleCode)
         : [];
-    const scopePayload =
-      input.applicationType === "DASHBOARD"
-        ? {
-            scopeType: input.scopeType ?? null,
-            cityId: input.cityId ?? null,
-          }
-        : {};
+    let scopePayload: Record<string, unknown> = {};
     if (input.applicationType === "DASHBOARD") {
+      scopePayload = {
+        scopeType: input.scopeType ?? null,
+        cityId: input.cityId ?? null,
+      };
       parseDashboardScope(scopePayload, roles);
+    } else if (input.applicationType === "MERCHANT_APP") {
+      scopePayload = {
+        cityId: input.cityId ?? null,
+        storeId: input.storeId ?? null,
+      };
+      parseMerchantScope(scopePayload);
     }
     const header = encodeBase64Url(
       JSON.stringify({ alg: "EdDSA", typ: "JWT", kid: this.config.keyId }),
@@ -214,17 +228,42 @@ export class Ed25519AccessTokenService {
     )
       throw new Error("INVALID_TOKEN");
     const roles = parseRolesClaim(p.roles, expectedApplication);
-    const scope =
-      expectedApplication === "DASHBOARD"
-        ? parseDashboardScope(p, roles)
-        : { scopeType: null as null, cityId: null as null };
+    if (expectedApplication === "DASHBOARD") {
+      const scope = parseDashboardScope(p, roles);
+      return {
+        accountId: p.sub,
+        sessionId: p.sid,
+        applicationType: expectedApplication,
+        roles,
+        scopeType: scope.scopeType,
+        cityId: scope.cityId,
+        storeId: null,
+        tokenId: p.jti,
+        expiresAt: p.exp,
+      };
+    }
+    if (expectedApplication === "MERCHANT_APP") {
+      const scope = parseMerchantScope(p);
+      return {
+        accountId: p.sub,
+        sessionId: p.sid,
+        applicationType: expectedApplication,
+        roles: [],
+        scopeType: null,
+        cityId: scope.cityId,
+        storeId: scope.storeId,
+        tokenId: p.jti,
+        expiresAt: p.exp,
+      };
+    }
     return {
       accountId: p.sub,
       sessionId: p.sid,
       applicationType: expectedApplication,
-      roles,
-      scopeType: scope.scopeType,
-      cityId: scope.cityId,
+      roles: [],
+      scopeType: null,
+      cityId: null,
+      storeId: null,
       tokenId: p.jti,
       expiresAt: p.exp,
     };

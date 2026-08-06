@@ -1,5 +1,6 @@
 import type { SQL } from "bun";
 import { AppError } from "../../errors/app-error";
+import { authorizeMerchantStoreScope } from "../auth/merchant/merchant-access";
 import { requireCityPermission } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
@@ -80,7 +81,11 @@ export class StoreCategoryService {
       | "store_categories.create"
       | "store_categories.update"
       | "store_categories.archive",
+    storeId?: string,
   ) {
+    if (identity.applicationType === "MERCHANT_APP") {
+      return authorizeMerchantStoreScope(this.client, identity, storeId);
+    }
     const cityId = await requireCityPermission(
       this.client,
       identity,
@@ -228,7 +233,7 @@ export class StoreCategoryService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "store_categories.create");
+    const cityId = await this.authorize(identity, "store_categories.create", storeId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -311,7 +316,7 @@ export class StoreCategoryService {
     storeId: string,
     input: { status?: string; parentCategoryId?: string },
   ) {
-    const cityId = await this.authorize(identity, "store_categories.read");
+    const cityId = await this.authorize(identity, "store_categories.read", storeId);
     const [store] = await this.client<{ id: string }[]>`
       select id::text as id from stores
       where id = ${storeId} and city_id = ${cityId}`;
@@ -360,7 +365,7 @@ export class StoreCategoryService {
   }
 
   async get(identity: AuthIdentity, storeId: string, categoryId: string) {
-    const cityId = await this.authorize(identity, "store_categories.read");
+    const cityId = await this.authorize(identity, "store_categories.read", storeId);
     const [store] = await this.client<{ id: string }[]>`
       select id::text as id from stores
       where id = ${storeId} and city_id = ${cityId}`;
@@ -375,7 +380,7 @@ export class StoreCategoryService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "store_categories.update");
+    const cityId = await this.authorize(identity, "store_categories.update", storeId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -541,7 +546,7 @@ export class StoreCategoryService {
     categoryId: string,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "store_categories.archive");
+    const cityId = await this.authorize(identity, "store_categories.archive", storeId);
     await beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
       assertCityOperability(state);

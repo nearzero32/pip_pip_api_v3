@@ -127,6 +127,20 @@
       "when": 1786015944518,
       "tag": "0017_blushing_amphibian",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786022103331,
+      "tag": "0018_sticky_beyonder",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786022103332,
+      "tag": "0019_merchant_profiles",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,7 @@ import type { Ed25519AccessTokenService } from "../tokens/access-token";
 import type { AuthenticationContext, AuthApplication } from "../core/context";
 import type { SecurityAuditWriter } from "../audit/audit-writer";
 import { loadTrustedDashboardContext } from "../staff/dashboard-scope";
+import { loadTrustedMerchantContext } from "../merchant/merchant-scope";
 import { requireSuperAdmin as assertSuperAdmin } from "../staff/authorization";
 
 export type AuthIdentity = {
@@ -17,6 +18,8 @@ export type AuthIdentity = {
   roles: string[];
   scopeType: "GLOBAL" | "CITY" | null;
   cityId: string | null;
+  /** Trusted Merchant Store — set only for MERCHANT_APP. */
+  storeId: string | null;
 };
 export type SessionResult = {
   access_token: string;
@@ -55,7 +58,9 @@ export class SessionService {
         ? 5
         : context.applicationType === "DRIVER_APP"
           ? 1
-          : 3;
+          : context.applicationType === "MERCHANT_APP"
+            ? 3
+            : 3;
     await tx`select pg_advisory_xact_lock(hashtextextended(${`${accountId}:${context.applicationType}`},0))`;
     const active = await tx<
       { id: string }[]
@@ -82,13 +87,18 @@ export class SessionService {
       context.applicationType === "DASHBOARD"
         ? await loadTrustedDashboardContext(this.client, accountId)
         : null;
+    const merchant =
+      context.applicationType === "MERCHANT_APP"
+        ? await loadTrustedMerchantContext(this.client, accountId)
+        : null;
     const access = await this.tokens.sign({
       accountId,
       sessionId: created.sessionId,
       applicationType: context.applicationType,
       roles: dashboard?.roles ?? [],
       scopeType: dashboard?.scopeType ?? null,
-      cityId: dashboard?.cityId ?? null,
+      cityId: dashboard?.cityId ?? merchant?.cityId ?? null,
+      storeId: merchant?.storeId ?? null,
     });
     return {
       access_token: access.token,
@@ -106,7 +116,7 @@ export class SessionService {
    */
   private async stateAllowed(client: SQL, row: SessionRow): Promise<boolean> {
     const found =
-      await client`select 1 where (${row.application_type}::application_type='CUSTOMER_APP' and exists(select 1 from customer_profiles where account_id=${row.account_id} and status='ACTIVE')) or (${row.application_type}::application_type='DRIVER_APP' and exists(select 1 from driver_profiles where account_id=${row.account_id} and approval_status='APPROVED' and operational_status='ACTIVE')) or (${row.application_type}::application_type='DASHBOARD' and exists(select 1 from staff_profiles where account_id=${row.account_id} and status='ACTIVE'))`;
+      await client`select 1 where (${row.application_type}::application_type='CUSTOMER_APP' and exists(select 1 from customer_profiles where account_id=${row.account_id} and status='ACTIVE')) or (${row.application_type}::application_type='DRIVER_APP' and exists(select 1 from driver_profiles where account_id=${row.account_id} and approval_status='APPROVED' and operational_status='ACTIVE')) or (${row.application_type}::application_type='DASHBOARD' and exists(select 1 from staff_profiles where account_id=${row.account_id} and status='ACTIVE')) or (${row.application_type}::application_type='MERCHANT_APP' and exists(select 1 from merchant_profiles where account_id=${row.account_id} and status='ACTIVE'))`;
     return found.length > 0;
   }
 
@@ -123,6 +133,7 @@ export class SessionService {
         roles: verified.roles,
         scopeType: verified.scopeType ?? null,
         cityId: verified.cityId ?? null,
+        storeId: verified.storeId ?? null,
       };
     } catch {
       throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
@@ -149,6 +160,17 @@ export class SessionService {
         reasonCode: "INACTIVE_SECURITY_STATE",
       });
       throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+    }
+    if (context.applicationType === "MERCHANT_APP") {
+      const merchant = await loadTrustedMerchantContext(
+        this.client,
+        identity.accountId,
+      );
+      return {
+        ...identity,
+        cityId: merchant.cityId,
+        storeId: merchant.storeId,
+      };
     }
     return identity;
   }

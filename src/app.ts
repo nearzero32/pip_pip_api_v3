@@ -22,6 +22,7 @@ import type { ProductService } from "./modules/catalog/product.service";
 import { productRoutes } from "./modules/catalog/product.routes";
 import type { ModifierService } from "./modules/catalog/modifier.service";
 import { modifierRoutes } from "./modules/catalog/modifier.routes";
+import { merchantCatalogRoutes } from "./modules/catalog/merchant-catalog.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -112,6 +113,22 @@ export function createApp(dependencies: AppDependencies) {
     .use(
       dependencies.authModule && dependencies.modifierService
         ? modifierRoutes(dependencies.authModule, dependencies.modifierService)
+        : new Elysia(),
+    )
+    .use(
+      dependencies.authModule &&
+        dependencies.productService &&
+        dependencies.storeCategoryService &&
+        dependencies.modifierService &&
+        dependencies.storeService &&
+        dependencies.mediaService
+        ? merchantCatalogRoutes(dependencies.authModule, {
+            products: dependencies.productService,
+            storeCategories: dependencies.storeCategoryService,
+            modifiers: dependencies.modifierService,
+            stores: dependencies.storeService,
+            media: dependencies.mediaService,
+          })
         : new Elysia(),
     );
 }

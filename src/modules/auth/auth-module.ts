@@ -4,6 +4,8 @@ import { SecurityAuditWriter } from "./audit/audit-writer";
 import { DashboardAuthService } from "./dashboard/dashboard-auth.service";
 import { CustomerAuthService } from "./mobile/customer/customer-auth.service";
 import { DriverAuthService } from "./mobile/driver/driver-auth.service";
+import { MerchantAuthService } from "./merchant/merchant-auth.service";
+import { MerchantOrganizationService } from "./merchant/merchant-organization.service";
 import type { OtpDeliveryPort } from "./phone/delivery";
 import type { RateLimiter } from "./rate-limit/rate-limiter";
 import { SessionService } from "./sessions/session-service";
@@ -17,6 +19,8 @@ export interface AuthModule {
   customer: CustomerAuthService;
   driver: DriverAuthService;
   dashboard: DashboardAuthService;
+  merchant: MerchantAuthService;
+  merchants: MerchantOrganizationService;
   sessions: SessionService;
   roles: DashboardRoleService;
   staff: StaffOrganizationService;
@@ -84,5 +88,14 @@ export function createAuthModule(
       sessions,
       audit,
     ),
+    merchant: new MerchantAuthService(
+      client,
+      limiter,
+      password,
+      verifier,
+      sessions,
+      audit,
+    ),
+    merchants: new MerchantOrganizationService(client, password),
   };
 }

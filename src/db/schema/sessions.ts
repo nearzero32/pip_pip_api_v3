@@ -33,7 +33,7 @@ export const sessions = pgTable(
     index("sessions_account_device_idx").on(table.accountId, table.deviceId),
     check("sessions_expiry_after_creation_chk", sql`${table.absoluteExpiresAt} > ${table.createdAt}`),
     check("sessions_max_lifetime_chk", sql`${table.absoluteExpiresAt} <= ${table.createdAt} + interval '30 days'`),
-    check("sessions_auth_method_chk", sql`(${table.applicationType} = 'DASHBOARD' and ${table.authenticationMethod} = 'PASSWORD') or (${table.applicationType} = 'CUSTOMER_APP' and ${table.authenticationMethod} = 'PHONE_OTP') or (${table.applicationType} = 'DRIVER_APP' and ${table.authenticationMethod} = 'DRIVER_ACCESS_CODE')`),
+    check("sessions_auth_method_chk", sql`(${table.applicationType} = 'DASHBOARD' and ${table.authenticationMethod} = 'PASSWORD') or (${table.applicationType} = 'CUSTOMER_APP' and ${table.authenticationMethod} = 'PHONE_OTP') or (${table.applicationType} = 'DRIVER_APP' and ${table.authenticationMethod} = 'DRIVER_ACCESS_CODE') or (${table.applicationType} = 'MERCHANT_APP' and ${table.authenticationMethod} = 'PASSWORD')`),
     check("sessions_revocation_reason_chk", sql`${table.revokedAt} is null or ${table.revocationReason} is not null`),
   ],
 );
