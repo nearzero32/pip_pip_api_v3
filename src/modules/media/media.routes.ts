@@ -25,6 +25,7 @@ const mediaPurpose = t.Union([
   t.Literal("CATEGORY_IMAGE"),
   t.Literal("STORE_LOGO"),
   t.Literal("STORE_IMAGE"),
+  t.Literal("PRODUCT_IMAGE"),
 ]);
 
 const mediaAssetDto = t.Object({
@@ -111,7 +112,7 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
           security: [{ bearerAuth: [] }],
           summary: "Create a media upload intent and presigned PUT URL",
           description:
-            "Supports CATEGORY_IMAGE, STORE_LOGO, and STORE_IMAGE. Visibility is server-assigned PUBLIC for these purposes.",
+            "Supports CATEGORY_IMAGE, STORE_LOGO, STORE_IMAGE, and PRODUCT_IMAGE. Visibility is server-assigned PUBLIC for these purposes.",
         },
       },
     )

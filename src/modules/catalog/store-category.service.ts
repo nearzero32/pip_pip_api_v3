@@ -7,6 +7,7 @@ import {
   normalizeArabicCategoryName,
   validateDisplayOrder,
 } from "../catalog/arabic-name";
+import { archiveProductsForCategory } from "./product.service";
 import {
   assertCityOperability,
   beginWithGeographyRetry,
@@ -581,6 +582,9 @@ export class StoreCategoryService {
         where id = ${categoryId}
           and store_id = ${storeId}
           and city_id = ${cityId}`;
+
+      // Soft-archive products in this category (status+archived_at only).
+      await archiveProductsForCategory(tx, storeId, cityId, categoryId);
     });
 
     await this.client`

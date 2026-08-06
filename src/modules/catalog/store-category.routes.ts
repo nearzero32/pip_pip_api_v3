@@ -245,7 +245,7 @@ export const storeCategoryRoutes = (
           tags: ["Dashboard — Store Categories"],
           summary: "Soft-archive an in-store product category",
           description:
-            "Sets status=ARCHIVED and archived_at. Rejects archiving a main category that still has non-archived children. Does not cascade to Products. Idempotent when already ARCHIVED.",
+            "Sets status=ARCHIVED and archived_at. Rejects archiving a main category that still has non-archived children. Cascade soft-archives Products in this category (status+archived_at only; images/sizes/availability rows are kept). Idempotent when already ARCHIVED.",
           security: [{ bearerAuth: [] }],
         },
       },

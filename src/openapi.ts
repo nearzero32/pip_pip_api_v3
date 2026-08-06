@@ -66,6 +66,11 @@ export const createOpenApiPlugin = () =>
           "In-store product category administration under a Store for ADMIN and granted employees. SUPER_ADMIN has no Store Category access. Optional two-level hierarchy only. Not the global categories used to classify Stores.",
       },
       {
+        name: "Dashboard — Products",
+        description:
+          "City-scoped Store Product administration for ADMIN and granted employees. SUPER_ADMIN has no Product access. Products belong to a path Store in the signed City. Pricing is either basePrice or sizes (never both). Images are mandatory PRODUCT_IMAGE media assets.",
+      },
+      {
         name: "Public — Geography",
         description:
           "Unauthenticated geography reads for pre-login City selection and City-scoped Zone lookup via X-City-Id",

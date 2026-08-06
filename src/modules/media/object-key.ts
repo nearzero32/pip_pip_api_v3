@@ -60,6 +60,13 @@ export const buildStoreCoverObjectKey = (
 ): string =>
   `cities/${cityId}/stores/${assetId}/cover.${canonicalExtensionForContentType(contentType)}`;
 
+export const buildProductImageObjectKey = (
+  cityId: string,
+  assetId: string,
+  contentType: AllowedImageContentType,
+): string =>
+  `cities/${cityId}/products/${assetId}/original.${canonicalExtensionForContentType(contentType)}`;
+
 export const buildPublicMediaUrl = (
   publicBaseUrl: string,
   objectKey: string,

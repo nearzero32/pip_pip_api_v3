@@ -17,6 +17,7 @@ import { MediaService } from "../../src/modules/media/media.service";
 import { MainCategoryService } from "../../src/modules/catalog/main-category.service";
 import { SubcategoryService } from "../../src/modules/catalog/subcategory.service";
 import { StoreCategoryService } from "../../src/modules/catalog/store-category.service";
+import { ProductService } from "../../src/modules/catalog/product.service";
 import { StoreService } from "../../src/modules/stores/store.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
@@ -133,6 +134,7 @@ export type IntegrationHarness = {
   subcategories: SubcategoryService;
   stores: StoreService;
   storeCategories: StoreCategoryService;
+  products: ProductService;
   app: ReturnType<typeof createApp>;
   clock: { value: number; advance: () => void };
   close: () => Promise<void>;
@@ -198,6 +200,7 @@ export async function createIntegrationHarness(options?: {
   const subcategories = new SubcategoryService(client, media, mediaConfig);
   const stores = new StoreService(client, media, mediaConfig);
   const storeCategories = new StoreCategoryService(client);
+  const products = new ProductService(client, media, mediaConfig);
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -209,6 +212,7 @@ export async function createIntegrationHarness(options?: {
     subcategoryService: subcategories,
     storeService: stores,
     storeCategoryService: storeCategories,
+    productService: products,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -226,6 +230,7 @@ export async function createIntegrationHarness(options?: {
     subcategories,
     stores,
     storeCategories,
+    products,
     app,
     clock,
     close: async () => {

@@ -14,6 +14,7 @@ import { MainCategoryService } from "./modules/catalog/main-category.service";
 import { SubcategoryService } from "./modules/catalog/subcategory.service";
 import { StoreService } from "./modules/stores/store.service";
 import { StoreCategoryService } from "./modules/catalog/store-category.service";
+import { ProductService } from "./modules/catalog/product.service";
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
@@ -36,6 +37,7 @@ const subcategoryService = new SubcategoryService(
 );
 const storeService = new StoreService(database.client, mediaService, config);
 const storeCategoryService = new StoreCategoryService(database.client);
+const productService = new ProductService(database.client, mediaService, config);
 const mediaCleanup = new MediaCleanupWorker(database.client, mediaStorage, config, logger);
 mediaCleanup.start();
 
@@ -48,6 +50,7 @@ const app = createApp({
   subcategoryService,
   storeService,
   storeCategoryService,
+  productService,
   production: config.nodeEnv === "production",
   readinessCheck: () => database.ping(),
   redisReadinessCheck: async () => {

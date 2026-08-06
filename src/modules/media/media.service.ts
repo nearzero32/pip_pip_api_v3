@@ -8,6 +8,7 @@ import type { AuthIdentity } from "../auth/sessions/session-service";
 import { dateValue } from "../geography/shared";
 import {
   buildCategoryImageObjectKey,
+  buildProductImageObjectKey,
   buildPublicMediaUrl,
   buildStoreCoverObjectKey,
   buildStoreLogoObjectKey,
@@ -190,14 +191,16 @@ export class MediaService {
     if (
       input.purpose !== "CATEGORY_IMAGE" &&
       input.purpose !== "STORE_LOGO" &&
-      input.purpose !== "STORE_IMAGE"
+      input.purpose !== "STORE_IMAGE" &&
+      input.purpose !== "PRODUCT_IMAGE"
     ) {
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported media purpose");
     }
     const purpose = input.purpose as
       | "CATEGORY_IMAGE"
       | "STORE_LOGO"
-      | "STORE_IMAGE";
+      | "STORE_IMAGE"
+      | "PRODUCT_IMAGE";
     const contentType = String(input.contentType ?? "");
     if (!isAllowedImageContentType(contentType)) {
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported media content type");
@@ -224,7 +227,9 @@ export class MediaService {
         ? buildCategoryImageObjectKey(cityId, assetId, contentType)
         : purpose === "STORE_LOGO"
           ? buildStoreLogoObjectKey(cityId, assetId, contentType)
-          : buildStoreCoverObjectKey(cityId, assetId, contentType);
+          : purpose === "STORE_IMAGE"
+            ? buildStoreCoverObjectKey(cityId, assetId, contentType)
+            : buildProductImageObjectKey(cityId, assetId, contentType);
     const uploadExpiresAt = new Date(
       Date.now() + this.config.r2UploadUrlTtlSeconds * 1000,
     );
@@ -574,7 +579,7 @@ export class MediaService {
     input: {
       assetId: string;
       cityId: string;
-      purpose: "CATEGORY_IMAGE" | "STORE_LOGO" | "STORE_IMAGE";
+      purpose: "CATEGORY_IMAGE" | "STORE_LOGO" | "STORE_IMAGE" | "PRODUCT_IMAGE";
       visibility?: "PUBLIC" | "PRIVATE";
     },
   ): Promise<void> {

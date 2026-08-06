@@ -72,3 +72,9 @@ export const weekday = pgEnum("weekday", [
   "SATURDAY",
   "SUNDAY",
 ]);
+/** Product / product-size lifecycle — same semantics as catalog status. */
+export const productStatus = pgEnum("product_status", [
+  "ACTIVE",
+  "INACTIVE",
+  "ARCHIVED",
+]);
