@@ -20,6 +20,8 @@ import type { StoreCategoryService } from "./modules/catalog/store-category.serv
 import { storeCategoryRoutes } from "./modules/catalog/store-category.routes";
 import type { ProductService } from "./modules/catalog/product.service";
 import { productRoutes } from "./modules/catalog/product.routes";
+import type { ModifierService } from "./modules/catalog/modifier.service";
+import { modifierRoutes } from "./modules/catalog/modifier.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -32,6 +34,7 @@ export interface AppDependencies extends HealthDependencies {
   storeService?: StoreService;
   storeCategoryService?: StoreCategoryService;
   productService?: ProductService;
+  modifierService?: ModifierService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -104,6 +107,11 @@ export function createApp(dependencies: AppDependencies) {
     .use(
       dependencies.authModule && dependencies.productService
         ? productRoutes(dependencies.authModule, dependencies.productService)
+        : new Elysia(),
+    )
+    .use(
+      dependencies.authModule && dependencies.modifierService
+        ? modifierRoutes(dependencies.authModule, dependencies.modifierService)
         : new Elysia(),
     );
 }

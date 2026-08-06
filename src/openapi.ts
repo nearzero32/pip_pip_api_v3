@@ -68,7 +68,12 @@ export const createOpenApiPlugin = () =>
       {
         name: "Dashboard — Products",
         description:
-          "City-scoped Store Product administration for ADMIN and granted employees. SUPER_ADMIN has no Product access. Products belong to a path Store in the signed City. Pricing is either basePrice or sizes (never both). Images are mandatory PRODUCT_IMAGE media assets.",
+          "City-scoped Store Product administration for ADMIN and granted employees. SUPER_ADMIN has no Product access. Products belong to a path Store in the signed City. Pricing is either basePrice or sizes (never both). Images are mandatory PRODUCT_IMAGE media assets. Optional modifierGroupId assigns at most one ModifierGroup.",
+      },
+      {
+        name: "Dashboard — Modifiers",
+        description:
+          "Store Modifier Groups and Options for ADMIN and granted employees. SUPER_ADMIN has no Modifier access. Product → 0..1 Group; Group → many Options; Option → exactly one Group. ProductModifierOption stores per-Product price/default/maxQuantity. Restore fails on normalized Store-level name conflicts.",
       },
       {
         name: "Public — Geography",
@@ -89,6 +94,11 @@ export const createOpenApiPlugin = () =>
         name: "Public — Stores",
         description:
           "Unauthenticated Store discovery for the City selected by X-City-Id. Visibility is based on service Zones (store_zones), not physical Store proximity. Closed and PAUSED Stores remain listed with computed availability.",
+      },
+      {
+        name: "Public — Products",
+        description:
+          "Unauthenticated Product modifier reads for a Store Product in the City selected by X-City-Id. Returns only currently configured, available Options for the Product's current ModifierGroup.",
       },
     ],
     components: {

@@ -106,6 +106,10 @@ const employeeDto = t.Object({
       t.Literal("products.create"),
       t.Literal("products.update"),
       t.Literal("products.archive"),
+      t.Literal("modifiers.read"),
+      t.Literal("modifiers.create"),
+      t.Literal("modifiers.update"),
+      t.Literal("modifiers.archive"),
     ]),
   ),
   cityId: t.String({ format: "uuid" }),
@@ -148,6 +152,10 @@ const permissionLiteral = t.Union([
   t.Literal("products.create"),
   t.Literal("products.update"),
   t.Literal("products.archive"),
+  t.Literal("modifiers.read"),
+  t.Literal("modifiers.create"),
+  t.Literal("modifiers.update"),
+  t.Literal("modifiers.archive"),
 ]);
 
 const employeeRoleLiteral = t.Union([

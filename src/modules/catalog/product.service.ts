@@ -30,6 +30,7 @@ type ProductRow = {
   store_id: string;
   city_id: string;
   category_id: string | null;
+  modifier_group_id: string | null;
   name: string;
   description: string | null;
   base_price: number | null;
@@ -92,6 +93,7 @@ const PRODUCT_SELECT = `
   p.store_id::text as store_id,
   p.city_id::text as city_id,
   p.category_id::text as category_id,
+  p.modifier_group_id::text as modifier_group_id,
   p.name,
   p.description,
   p.base_price,
@@ -403,6 +405,36 @@ export class ProductService {
     return row;
   }
 
+  private async lockModifierGroup(
+    tx: SQL,
+    storeId: string,
+    cityId: string,
+    groupId: string,
+  ) {
+    const [row] = await tx<{ id: string; status: string }[]>`
+      select id::text as id, status::text as status
+      from modifier_groups
+      where id = ${groupId}
+        and store_id = ${storeId}
+        and city_id = ${cityId}
+      for update`;
+    if (!row) {
+      throw new AppError(
+        404,
+        "MODIFIER_GROUP_NOT_FOUND",
+        "Modifier group not found",
+      );
+    }
+    if (row.status === "ARCHIVED") {
+      throw new AppError(
+        409,
+        "MODIFIER_GROUP_ARCHIVED",
+        "Modifier group is archived",
+      );
+    }
+    return row;
+  }
+
   private async lockProduct(
     tx: SQL,
     storeId: string,
@@ -414,6 +446,7 @@ export class ProductService {
       id: string;
       status: string;
       category_id: string | null;
+      modifier_group_id: string | null;
       base_price: number | null;
       name: string;
       description: string | null;
@@ -424,6 +457,7 @@ export class ProductService {
         id::text as id,
         status::text as status,
         category_id::text as category_id,
+        modifier_group_id::text as modifier_group_id,
         base_price,
         name,
         description,
@@ -663,6 +697,7 @@ export class ProductService {
       id: row.id,
       storeId: row.store_id,
       categoryId: row.category_id,
+      modifierGroupId: row.modifier_group_id,
       name: row.name,
       description: row.description,
       basePrice: row.base_price == null ? null : Number(row.base_price),
@@ -761,6 +796,13 @@ export class ProductService {
       }
       categoryId = input.categoryId;
     }
+    let modifierGroupId: string | null = null;
+    if ("modifierGroupId" in input && input.modifierGroupId != null) {
+      if (typeof input.modifierGroupId !== "string") {
+        throw new AppError(422, "VALIDATION_FAILED", "Invalid modifierGroupId");
+      }
+      modifierGroupId = input.modifierGroupId;
+    }
     const images = parseImages(input.images);
     const sizes = parseCreateSizes(input.sizes);
     const basePrice = this.assertCreatePricing(input.basePrice, sizes);
@@ -788,6 +830,9 @@ export class ProductService {
         if (categoryId) {
           await this.lockCategory(tx, storeId, cityId, categoryId);
         }
+        if (modifierGroupId) {
+          await this.lockModifierGroup(tx, storeId, cityId, modifierGroupId);
+        }
         await this.claimProductImages(
           tx,
           cityId,
@@ -795,12 +840,13 @@ export class ProductService {
         );
         const [inserted] = await tx<{ id: string }[]>`
           insert into products (
-            store_id, city_id, category_id, name, description, base_price,
+            store_id, city_id, category_id, modifier_group_id, name, description, base_price,
             status, is_available, display_order, created_by_account_id
           ) values (
             ${storeId},
             ${cityId},
             ${categoryId},
+            ${modifierGroupId},
             ${name},
             ${description ?? null},
             ${basePrice},
@@ -999,6 +1045,7 @@ export class ProductService {
       "name",
       "description",
       "categoryId",
+      "modifierGroupId",
       "basePrice",
       "status",
       "isAvailable",
@@ -1040,8 +1087,27 @@ export class ProductService {
           }
         }
 
+        let requestedGroup: string | null | undefined;
+        const groupChanging = "modifierGroupId" in input;
+        if (groupChanging) {
+          if (input.modifierGroupId === null) {
+            requestedGroup = null;
+          } else if (typeof input.modifierGroupId === "string") {
+            requestedGroup = input.modifierGroupId;
+          } else {
+            throw new AppError(
+              422,
+              "VALIDATION_FAILED",
+              "Invalid modifierGroupId",
+            );
+          }
+        }
+
         if (requestedCategory) {
           await this.lockCategory(tx, storeId, cityId, requestedCategory);
+        }
+        if (requestedGroup) {
+          await this.lockModifierGroup(tx, storeId, cityId, requestedGroup);
         }
 
         const locked = await this.lockProduct(tx, storeId, cityId, productId);
@@ -1092,6 +1158,9 @@ export class ProductService {
         const nextCategory = categoryChanging
           ? (requestedCategory ?? null)
           : locked.category_id;
+        const nextGroup = groupChanging
+          ? (requestedGroup ?? null)
+          : locked.modifier_group_id;
         const nextDescription =
           description !== undefined ? description : locked.description;
         const nextBase =
@@ -1100,6 +1169,7 @@ export class ProductService {
         await tx`
           update products set
             category_id = ${nextCategory},
+            modifier_group_id = ${nextGroup},
             name = coalesce(${name}, name),
             description = ${nextDescription},
             base_price = ${nextBase},

@@ -67,6 +67,7 @@ const productDto = t.Object({
   id: t.String({ format: "uuid" }),
   storeId: t.String({ format: "uuid" }),
   categoryId: t.Nullable(t.String({ format: "uuid" })),
+  modifierGroupId: t.Nullable(t.String({ format: "uuid" })),
   name: t.String(),
   description: t.Nullable(t.String()),
   basePrice: t.Nullable(t.Integer({ exclusiveMinimum: 0 })),
@@ -163,6 +164,7 @@ const createBodyKeys = new Set([
   "name",
   "description",
   "categoryId",
+  "modifierGroupId",
   "basePrice",
   "status",
   "isAvailable",
@@ -175,6 +177,7 @@ const patchBodyKeys = new Set([
   "name",
   "description",
   "categoryId",
+  "modifierGroupId",
   "basePrice",
   "status",
   "isAvailable",
@@ -278,6 +281,9 @@ export const productRoutes = (auth: AuthModule, service: ProductService) =>
             categoryId: t.Optional(
               t.Union([t.String({ format: "uuid" }), t.Null()]),
             ),
+            modifierGroupId: t.Optional(
+              t.Union([t.String({ format: "uuid" }), t.Null()]),
+            ),
             basePrice: t.Optional(
               t.Union([t.Integer({ exclusiveMinimum: 0 }), t.Null()]),
             ),
@@ -295,7 +301,7 @@ export const productRoutes = (auth: AuthModule, service: ProductService) =>
           tags: ["Dashboard — Products"],
           summary: "Create a Store product",
           description:
-            "Atomic create with 1–10 images (exactly one primary), optional sizes, and optional weekly availability. Pricing invariant: either positive basePrice with no sizes, or null basePrice with ≥1 size and exactly one ACTIVE default. Do not send cityId or storeId in the body.",
+            "Atomic create with 1–10 images (exactly one primary), optional sizes, and optional weekly availability. Pricing invariant: either positive basePrice with no sizes, or null basePrice with ≥1 size and exactly one ACTIVE default. Optional modifierGroupId assigns a Group without auto-enabling Options. Do not send cityId or storeId in the body.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -371,6 +377,9 @@ export const productRoutes = (auth: AuthModule, service: ProductService) =>
             categoryId: t.Optional(
               t.Union([t.String({ format: "uuid" }), t.Null()]),
             ),
+            modifierGroupId: t.Optional(
+              t.Union([t.String({ format: "uuid" }), t.Null()]),
+            ),
             basePrice: t.Optional(
               t.Union([t.Integer({ exclusiveMinimum: 0 }), t.Null()]),
             ),
@@ -385,7 +394,7 @@ export const productRoutes = (auth: AuthModule, service: ProductService) =>
           tags: ["Dashboard — Products"],
           summary: "Update a Store product",
           description:
-            "Omitted fields unchanged. categoryId null clears the category. status ARCHIVED is rejected — use DELETE. Images, sizes, and availability have dedicated endpoints.",
+            "Omitted fields unchanged. categoryId/modifierGroupId null clears those relations. Changing modifierGroupId preserves old ProductModifierOption rows and does not auto-activate Options from the new Group. status ARCHIVED is rejected — use DELETE.",
           security: [{ bearerAuth: [] }],
         },
       },
