@@ -4,7 +4,8 @@ import { dateValue } from "../geography/shared";
 
 type SelectionInput = { modifierOptionId: string; quantity?: number };
 type CatalogSelection = { id: string; name: string; price: number; quantity: number; maxQuantity: number; isDefault: boolean };
-type ValidatedProduct = { id: string; name: string; unitPrice: number; selections: CatalogSelection[]; modifiersPrice: number; configurationKey: string };
+type CatalogSize = { id: string; name: string; price: number };
+type ValidatedProduct = { id: string; name: string; unitPrice: number; selectedSize: CatalogSize | null; selections: CatalogSelection[]; modifiersPrice: number; configurationKey: string };
 
 const quantityOf = (raw: unknown, field = "quantity") => {
   if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 1 || raw > 99)
@@ -41,23 +42,34 @@ export class CartService {
     return rows[0] ?? null;
   }
 
-  private async validateProduct(tx: SQL, cityId: string, storeId: string, productId: string, rawSelections: unknown): Promise<ValidatedProduct> {
+  private async validateProduct(tx: SQL, cityId: string, storeId: string, productId: string, sizeId: string | null | undefined, rawSelections: unknown): Promise<ValidatedProduct> {
     const [store] = await tx<{ order_acceptance_status:string }[]>`select s.order_acceptance_status::text order_acceptance_status from stores s join main_categories mc on mc.id=s.main_category_id and mc.city_id=s.city_id where s.id=${storeId} and s.city_id=${cityId} and s.status='ACTIVE' and s.archived_at is null and mc.status='ACTIVE' and mc.archived_at is null for share of s`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
     if (store.order_acceptance_status !== "ACCEPTING") throw new AppError(409, "STORE_NOT_ACCEPTING_ORDERS", "Store is not accepting cart changes");
-    const [product] = await tx<{id:string;name:string;base_price:number|null;modifier_group_id:string|null;size_price:number|null}[]>`
-      select p.id::text id,p.name,p.base_price,p.modifier_group_id::text modifier_group_id,
-        (select ps.price from product_sizes ps where ps.product_id=p.id and ps.status='ACTIVE' and ps.archived_at is null and ps.is_default=true and ps.is_available=true limit 1) size_price
+    const [product] = await tx<{id:string;name:string;base_price:number|null;modifier_group_id:string|null}[]>`
+      select p.id::text id,p.name,p.base_price,p.modifier_group_id::text modifier_group_id
       from products p where p.id=${productId} and p.store_id=${storeId} and p.city_id=${cityId} and p.status='ACTIVE' and p.archived_at is null and p.is_available=true
         and (p.category_id is null or exists(select 1 from store_categories sc where sc.id=p.category_id and sc.store_id=p.store_id and sc.city_id=p.city_id and sc.status='ACTIVE' and sc.archived_at is null))`;
     if (!product) throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found");
-    const unitPrice = Number(product.base_price ?? product.size_price);
+    let selectedSize: CatalogSize | null = null;
+    if (product.base_price != null) {
+      if (sizeId != null) throw new AppError(422, "PRODUCT_SIZE_NOT_APPLICABLE", "Product does not use sizes");
+    } else {
+      if (!sizeId) throw new AppError(422, "PRODUCT_SIZE_REQUIRED", "A Product Size is required");
+      const [size] = await tx<{id:string;name:string;price:number}[]>`
+        select id::text id,name,price from product_sizes
+        where id=${sizeId} and product_id=${productId} and store_id=${storeId} and city_id=${cityId}
+          and status='ACTIVE' and archived_at is null and is_available=true`;
+      if (!size) throw new AppError(404, "PRODUCT_SIZE_NOT_FOUND", "Product Size not found");
+      selectedSize={id:size.id,name:size.name,price:Number(size.price)};
+    }
+    const unitPrice = Number(product.base_price ?? selectedSize?.price);
     if (!Number.isSafeInteger(unitPrice) || unitPrice <= 0) throw new AppError(409, "PRODUCT_NOT_ORDERABLE", "Product is not orderable");
 
     const requested = parseSelections(rawSelections);
     if (!product.modifier_group_id) {
       if (requested.length) throw new AppError(422, "INVALID_MODIFIER_SELECTION", "Product has no modifier group");
-      return { id:product.id,name:product.name,unitPrice,selections:[],modifiersPrice:0,configurationKey:"none" };
+      return { id:product.id,name:product.name,unitPrice,selectedSize,selections:[],modifiersPrice:0,configurationKey:`${selectedSize ? `size:${selectedSize.id}` : "base"}|none` };
     }
     const [group] = await tx<{min_select:number;max_select:number}[]>`select min_select,max_select from modifier_groups where id=${product.modifier_group_id} and store_id=${storeId} and city_id=${cityId} and status='ACTIVE' and archived_at is null`;
     if (!group) throw new AppError(409, "PRODUCT_MODIFIERS_INVALID", "Product modifier configuration is invalid");
@@ -79,14 +91,15 @@ export class CartService {
     if (totalSelected < Number(group.min_select) || totalSelected > Number(group.max_select)) throw new AppError(422,"INVALID_MODIFIER_SELECTION","Modifier selection limits are not satisfied");
     selections.sort((a,b)=>a.id.localeCompare(b.id));
     const modifiersPrice = selections.reduce((sum,s)=>sum+s.price*s.quantity,0);
-    return { id:product.id,name:product.name,unitPrice,selections,modifiersPrice,configurationKey:selections.map(s=>`${s.id}:${s.quantity}`).join("|") || "none" };
+    const modifiersKey=selections.map(s=>`${s.id}:${s.quantity}`).join("|") || "none";
+    return { id:product.id,name:product.name,unitPrice,selectedSize,selections,modifiersPrice,configurationKey:`${selectedSize ? `size:${selectedSize.id}` : "base"}|${modifiersKey}` };
   }
 
   private async insertOrMerge(tx: SQL, cartId:string, cityId:string, storeId:string, validated:ValidatedProduct, quantity:number) {
     const [item] = await tx<{id:string;quantity:number}[]>`
-      insert into cart_items(cart_id,store_id,city_id,product_id,configuration_key,quantity,product_name_snapshot,unit_price_snapshot,modifiers_price_snapshot)
-      values(${cartId},${storeId},${cityId},${validated.id},${validated.configurationKey},${quantity},${validated.name},${validated.unitPrice},${validated.modifiersPrice})
-      on conflict(cart_id,product_id,configuration_key) do update set quantity=cart_items.quantity+excluded.quantity,unit_price_snapshot=excluded.unit_price_snapshot,modifiers_price_snapshot=excluded.modifiers_price_snapshot,product_name_snapshot=excluded.product_name_snapshot,updated_at=now()
+      insert into cart_items(cart_id,store_id,city_id,product_id,selected_size_id,selected_size_name_snapshot,configuration_key,quantity,product_name_snapshot,unit_price_snapshot,modifiers_price_snapshot)
+      values(${cartId},${storeId},${cityId},${validated.id},${validated.selectedSize?.id??null},${validated.selectedSize?.name??null},${validated.configurationKey},${quantity},${validated.name},${validated.unitPrice},${validated.modifiersPrice})
+      on conflict(cart_id,product_id,configuration_key) do update set quantity=cart_items.quantity+excluded.quantity,selected_size_id=excluded.selected_size_id,selected_size_name_snapshot=excluded.selected_size_name_snapshot,unit_price_snapshot=excluded.unit_price_snapshot,modifiers_price_snapshot=excluded.modifiers_price_snapshot,product_name_snapshot=excluded.product_name_snapshot,updated_at=now()
       where cart_items.quantity + excluded.quantity <= 99
       returning id::text id,quantity`;
     if (!item) throw new AppError(422,"INVALID_CART_QUANTITY","Resulting quantity exceeds 99");
@@ -95,13 +108,13 @@ export class CartService {
     for (const s of validated.selections) await tx`insert into cart_item_modifier_selections(cart_item_id,cart_id,modifier_option_id,quantity,option_name_snapshot,unit_price_snapshot,configuration_snapshot) values(${item.id},${cartId},${s.id},${s.quantity},${s.name},${s.price},${JSON.stringify({maxQuantity:s.maxQuantity,isDefault:s.isDefault})}::jsonb)`;
   }
 
-  async add(accountId:string, cityId:string, storeId:string, input:{productId:string;quantity:number;modifierSelections?:unknown}) {
+  async add(accountId:string, cityId:string, storeId:string, input:{productId:string;sizeId?:string|null;quantity:number;modifierSelections?:unknown}) {
     const quantity=quantityOf(input.quantity);
     await this.client.begin(async tx=>{
       await this.lockCustomer(tx,accountId);
       const cart=await this.activeCart(tx,accountId,true);
       if (cart && (cart.city_id!==cityId || cart.store_id!==storeId)) throw new AppError(409,cart.city_id!==cityId?"CART_CITY_CONFLICT":"CART_STORE_CONFLICT","Active cart belongs to another store or city");
-      const validated=await this.validateProduct(tx,cityId,storeId,input.productId,input.modifierSelections);
+      const validated=await this.validateProduct(tx,cityId,storeId,input.productId,input.sizeId,input.modifierSelections);
       let cartId=cart?.id;
       if (!cartId) { const [created]=await tx<{id:string}[]>`insert into carts(customer_account_id,city_id,store_id) values(${accountId},${cityId},${storeId}) returning id::text id`; if(!created) throw new AppError(500,"INTERNAL_SERVER_ERROR","Cart could not be created"); cartId=created.id; }
       await this.insertOrMerge(tx,cartId!,cityId,storeId,validated,quantity);
@@ -110,11 +123,11 @@ export class CartService {
     return this.get(accountId,cityId);
   }
 
-  async replace(accountId:string,cityId:string,storeId:string,input:{productId:string;quantity:number;modifierSelections?:unknown}) {
+  async replace(accountId:string,cityId:string,storeId:string,input:{productId:string;sizeId?:string|null;quantity:number;modifierSelections?:unknown}) {
     const quantity=quantityOf(input.quantity);
     await this.client.begin(async tx=>{
       await this.lockCustomer(tx,accountId);
-      const validated=await this.validateProduct(tx,cityId,storeId,input.productId,input.modifierSelections);
+      const validated=await this.validateProduct(tx,cityId,storeId,input.productId,input.sizeId,input.modifierSelections);
       let cart=await this.activeCart(tx,accountId,true);
       if (!cart) { const [created]=await tx<{id:string;city_id:string;store_id:string}[]>`insert into carts(customer_account_id,city_id,store_id) values(${accountId},${cityId},${storeId}) returning id::text id,city_id::text city_id,store_id::text store_id`; cart=created!; }
       await tx`delete from cart_items where cart_id=${cart.id}`;
@@ -124,9 +137,30 @@ export class CartService {
     return this.get(accountId,cityId);
   }
 
-  async update(accountId:string,cityId:string,itemId:string,quantityRaw:unknown) {
-    const quantity=quantityOf(quantityRaw);
-    await this.client.begin(async tx=>{ await this.lockCustomer(tx,accountId); const cart=await this.activeCart(tx,accountId,true); if(!cart||cart.city_id!==cityId) throw new AppError(404,"CART_NOT_FOUND","Cart not found"); await this.assertMutationStore(tx,cart.store_id,cityId); const changed=await tx`update cart_items set quantity=${quantity},updated_at=now() where id=${itemId} and cart_id=${cart.id} returning id`; if(!changed[0]) throw new AppError(404,"CART_ITEM_NOT_FOUND","Cart item not found"); await tx`update carts set updated_at=now() where id=${cart.id}`; }); return this.get(accountId,cityId);
+  async update(accountId:string,cityId:string,itemId:string,input:{quantity:number;sizeId?:string|null;modifierSelections?:unknown}) {
+    const quantity=quantityOf(input.quantity);
+    await this.client.begin(async tx=>{
+      await this.lockCustomer(tx,accountId);
+      const cart=await this.activeCart(tx,accountId,true);
+      if(!cart||cart.city_id!==cityId) throw new AppError(404,"CART_NOT_FOUND","Cart not found");
+      await this.assertMutationStore(tx,cart.store_id,cityId);
+      const [item]=await tx<{product_id:string;selected_size_id:string|null;configuration_key:string}[]>`select product_id::text product_id,selected_size_id::text selected_size_id,configuration_key from cart_items where id=${itemId} and cart_id=${cart.id} for update`;
+      if(!item) throw new AppError(404,"CART_ITEM_NOT_FOUND","Cart item not found");
+      const storedSelections=await tx<{modifierOptionId:string;quantity:number}[]>`select modifier_option_id::text "modifierOptionId",quantity from cart_item_modifier_selections where cart_item_id=${itemId} order by modifier_option_id`;
+      const sizeId=input.sizeId===undefined?item.selected_size_id:input.sizeId;
+      const rawSelections=input.modifierSelections===undefined?storedSelections:input.modifierSelections;
+      const validated=await this.validateProduct(tx,cityId,cart.store_id,item.product_id,sizeId,rawSelections);
+      if(validated.configurationKey===item.configuration_key){
+        await tx`update cart_items set quantity=${quantity},selected_size_id=${validated.selectedSize?.id??null},selected_size_name_snapshot=${validated.selectedSize?.name??null},product_name_snapshot=${validated.name},unit_price_snapshot=${validated.unitPrice},modifiers_price_snapshot=${validated.modifiersPrice},updated_at=now() where id=${itemId}`;
+        await tx`delete from cart_item_modifier_selections where cart_item_id=${itemId}`;
+        for(const s of validated.selections) await tx`insert into cart_item_modifier_selections(cart_item_id,cart_id,modifier_option_id,quantity,option_name_snapshot,unit_price_snapshot,configuration_snapshot) values(${itemId},${cart.id},${s.id},${s.quantity},${s.name},${s.price},${JSON.stringify({maxQuantity:s.maxQuantity,isDefault:s.isDefault})}::jsonb)`;
+      }else{
+        await tx`delete from cart_items where id=${itemId}`;
+        await this.insertOrMerge(tx,cart.id,cityId,cart.store_id,validated,quantity);
+      }
+      await tx`update carts set updated_at=now() where id=${cart.id}`;
+    });
+    return this.get(accountId,cityId);
   }
   private async assertMutationStore(tx:SQL,storeId:string,cityId:string) { const [s]=await tx<{status:string;acceptance:string}[]>`select status::text status,order_acceptance_status::text acceptance from stores where id=${storeId} and city_id=${cityId}`; if(!s||s.status!=="ACTIVE") throw new AppError(404,"STORE_NOT_FOUND","Store not found"); if(s.acceptance!=="ACCEPTING") throw new AppError(409,"STORE_NOT_ACCEPTING_ORDERS","Store is not accepting cart changes"); }
   async remove(accountId:string,cityId:string,itemId:string) { await this.client.begin(async tx=>{await this.lockCustomer(tx,accountId);const cart=await this.activeCart(tx,accountId,true);if(!cart||cart.city_id!==cityId)throw new AppError(404,"CART_NOT_FOUND","Cart not found");await this.assertMutationStore(tx,cart.store_id,cityId);const rows=await tx`delete from cart_items where id=${itemId} and cart_id=${cart.id} returning id`;if(!rows[0])throw new AppError(404,"CART_ITEM_NOT_FOUND","Cart item not found");await tx`update carts set updated_at=now() where id=${cart.id}`;});return this.get(accountId,cityId); }
@@ -135,13 +169,18 @@ export class CartService {
   async get(accountId:string,cityId:string) {
     const [cart]=await this.client<{id:string;city_id:string;store_id:string;created_at:Date;updated_at:Date;store_name:string;store_status:string;acceptance:string}[]>`select c.id::text id,c.city_id::text city_id,c.store_id::text store_id,c.created_at,c.updated_at,s.name store_name,s.status::text store_status,s.order_acceptance_status::text acceptance from carts c join stores s on s.id=c.store_id and s.city_id=c.city_id where c.customer_account_id=${accountId} and c.status='ACTIVE' and c.city_id=${cityId}`;
     if(!cart)throw new AppError(404,"CART_NOT_FOUND","Cart not found");
-    const items=await this.client<any[]>`select ci.*,ci.id::text id,ci.product_id::text product_id,p.name current_name,p.status::text product_status,p.is_available,p.archived_at,p.base_price,
-      (select ps.price from product_sizes ps where ps.product_id=p.id and ps.status='ACTIVE' and ps.archived_at is null and ps.is_default=true and ps.is_available=true limit 1) size_price,
-      sc.status::text category_status from cart_items ci left join products p on p.id=ci.product_id and p.store_id=ci.store_id and p.city_id=ci.city_id left join store_categories sc on sc.id=p.category_id where ci.cart_id=${cart.id} order by ci.created_at,ci.id`;
+    const items=await this.client<any[]>`select ci.*,ci.id::text id,ci.product_id::text product_id,ci.selected_size_id::text selected_size_id,p.name current_name,p.status::text product_status,p.is_available,p.archived_at,p.base_price,
+      ps.name current_size_name,ps.price current_size_price,ps.status::text size_status,ps.is_available size_available,ps.archived_at size_archived_at,
+      p.modifier_group_id::text current_modifier_group_id,current_mg.status::text current_group_status,current_mg.min_select current_group_min_select,current_mg.max_select current_group_max_select,
+      sc.status::text category_status from cart_items ci
+      left join products p on p.id=ci.product_id and p.store_id=ci.store_id and p.city_id=ci.city_id
+      left join product_sizes ps on ps.id=ci.selected_size_id and ps.product_id=ci.product_id and ps.store_id=ci.store_id and ps.city_id=ci.city_id
+      left join modifier_groups current_mg on current_mg.id=p.modifier_group_id and current_mg.store_id=ci.store_id and current_mg.city_id=ci.city_id
+      left join store_categories sc on sc.id=p.category_id where ci.cart_id=${cart.id} order by ci.created_at,ci.id`;
     const selections=await this.client<any[]>`select s.*,s.cart_item_id::text cart_item_id,s.modifier_option_id::text modifier_option_id,o.name current_name,o.status::text option_status,o.is_available option_available,o.archived_at,pmo.price current_price,pmo.is_available configured_available,pmo.max_quantity,mg.status::text group_status,mg.min_select,mg.max_select,p.modifier_group_id::text product_group_id,o.modifier_group_id::text option_group_id from cart_item_modifier_selections s left join cart_items ci on ci.id=s.cart_item_id left join products p on p.id=ci.product_id left join modifier_options o on o.id=s.modifier_option_id left join product_modifier_options pmo on pmo.product_id=ci.product_id and pmo.modifier_option_id=s.modifier_option_id left join modifier_groups mg on mg.id=p.modifier_group_id where s.cart_id=${cart.id} order by s.cart_item_id,s.modifier_option_id`;
     const byItem=new Map<string,any[]>();for(const s of selections){const a=byItem.get(s.cart_item_id)??[];a.push(s);byItem.set(s.cart_item_id,a)}
     let itemsSubtotal=0;let cartPriceChanged=false;let allOrderable=cart.store_status==="ACTIVE"&&cart.acceptance==="ACCEPTING";
-    const mapped=items.map(row=>{const selected=byItem.get(row.id)??[];const reasons:string[]=[];let valid=row.product_status==="ACTIVE"&&!row.archived_at&&Boolean(row.is_available)&&(row.category_status==null||row.category_status==="ACTIVE")&&cart.store_status==="ACTIVE";if(!valid)reasons.push("PRODUCT_NOT_ORDERABLE");const unit=Number(row.base_price??row.size_price??row.unit_price_snapshot);let modifierPrice=0;const mods=selected.map(s=>{const ok=s.option_status==="ACTIVE"&&!s.archived_at&&s.option_available&&s.configured_available&&s.group_status==="ACTIVE"&&s.product_group_id===s.option_group_id&&Number(s.quantity)<=Number(s.max_quantity);if(!ok){valid=false;reasons.push("MODIFIER_NOT_SELECTABLE")}const price=s.current_price==null?Number(s.unit_price_snapshot):Number(s.current_price);modifierPrice+=price*Number(s.quantity);return{modifierOptionId:s.modifier_option_id,name:s.current_name??s.option_name_snapshot,quantity:Number(s.quantity),currentUnitPrice:price,isValid:ok};});if(selected.length){const total=selected.reduce((n,s)=>n+Number(s.quantity),0);if(total<Number(selected[0].min_select)||total>Number(selected[0].max_select)){valid=false;reasons.push("MODIFIER_LIMITS_CHANGED")}}const priceChanged=unit!==Number(row.unit_price_snapshot)||modifierPrice!==Number(row.modifiers_price_snapshot);const line=(unit+modifierPrice)*Number(row.quantity);itemsSubtotal+=line;cartPriceChanged ||= priceChanged;allOrderable&&=valid;return{id:row.id,product:{id:row.product_id,name:row.current_name??row.product_name_snapshot},quantity:Number(row.quantity),modifierSelections:mods,currentUnitPrice:unit,currentModifiersPrice:modifierPrice,currentLineTotal:line,priceChanged,isAvailable:Boolean(row.is_available),isValid:valid,isOrderable:valid&&cart.acceptance==="ACCEPTING",validationReasons:[...new Set(reasons)]};});
+    const mapped=items.map(row=>{const selected=byItem.get(row.id)??[];const reasons:string[]=[];let valid=row.product_status==="ACTIVE"&&!row.archived_at&&Boolean(row.is_available)&&(row.category_status==null||row.category_status==="ACTIVE")&&cart.store_status==="ACTIVE";if(!valid)reasons.push("PRODUCT_NOT_ORDERABLE");let sizeValid=true;if(row.base_price==null){sizeValid=Boolean(row.selected_size_id)&&row.size_status==="ACTIVE"&&!row.size_archived_at&&Boolean(row.size_available);if(!sizeValid){valid=false;reasons.push(row.selected_size_id?"PRODUCT_SIZE_NOT_SELECTABLE":"PRODUCT_SIZE_REQUIRED")}}else if(row.selected_size_id){sizeValid=false;valid=false;reasons.push("PRODUCT_SIZE_NOT_APPLICABLE")}const unit=Number(row.base_price??row.current_size_price??row.unit_price_snapshot);const selectedSize=row.selected_size_id?{id:row.selected_size_id,name:row.current_size_name??row.selected_size_name_snapshot,currentPrice:unit,isAvailable:Boolean(row.size_available),isValid:sizeValid}:null;let modifierPrice=0;const mods=selected.map(s=>{const ok=s.option_status==="ACTIVE"&&!s.archived_at&&s.option_available&&s.configured_available&&s.group_status==="ACTIVE"&&s.product_group_id===s.option_group_id&&Number(s.quantity)<=Number(s.max_quantity);if(!ok){valid=false;reasons.push("MODIFIER_NOT_SELECTABLE")}const price=s.current_price==null?Number(s.unit_price_snapshot):Number(s.current_price);modifierPrice+=price*Number(s.quantity);return{modifierOptionId:s.modifier_option_id,name:s.current_name??s.option_name_snapshot,quantity:Number(s.quantity),currentUnitPrice:price,isValid:ok};});const selectedTotal=selected.reduce((n,s)=>n+Number(s.quantity),0);if(row.current_modifier_group_id&&(row.current_group_status!=="ACTIVE"||selectedTotal<Number(row.current_group_min_select)||selectedTotal>Number(row.current_group_max_select))){valid=false;reasons.push("MODIFIER_LIMITS_CHANGED")}else if(!row.current_modifier_group_id&&selected.length){valid=false;reasons.push("MODIFIER_CONFIGURATION_CHANGED")}const priceChanged=unit!==Number(row.unit_price_snapshot)||modifierPrice!==Number(row.modifiers_price_snapshot);const line=(unit+modifierPrice)*Number(row.quantity);itemsSubtotal+=line;cartPriceChanged ||= priceChanged;allOrderable&&=valid;return{id:row.id,product:{id:row.product_id,name:row.current_name??row.product_name_snapshot},selectedSize,quantity:Number(row.quantity),modifierSelections:mods,currentUnitPrice:unit,currentModifiersPrice:modifierPrice,currentLineTotal:line,priceChanged,isAvailable:Boolean(row.is_available),isValid:valid,isOrderable:valid&&cart.acceptance==="ACCEPTING",validationReasons:[...new Set(reasons)]};});
     return{id:cart.id,status:"ACTIVE",cityId:cart.city_id,store:{id:cart.store_id,name:cart.store_name,orderAcceptanceStatus:cart.acceptance},items:mapped,itemsSubtotal,priceChanged:cartPriceChanged,isOrderable:allOrderable&&mapped.length>0,createdAt:dateValue(cart.created_at)!,updatedAt:dateValue(cart.updated_at)!} as any;
   }
 }

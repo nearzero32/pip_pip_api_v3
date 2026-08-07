@@ -148,6 +148,13 @@
       "when": 1786133669609,
       "tag": "0020_optimal_doctor_faustus",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786136792211,
+      "tag": "0021_typical_leper_queen",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { check, foreignKey, index, integer, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { accounts } from "./accounts";
 import { instant } from "./columns";
-import { products } from "./products";
+import { products, productSizes } from "./products";
 import { stores } from "./stores";
 
 export const carts = pgTable("carts", {
@@ -27,6 +27,8 @@ export const cartItems = pgTable("cart_items", {
   storeId: uuid("store_id").notNull(),
   cityId: uuid("city_id").notNull(),
   productId: uuid("product_id").notNull(),
+  selectedSizeId: uuid("selected_size_id"),
+  selectedSizeNameSnapshot: text("selected_size_name_snapshot"),
   configurationKey: text("configuration_key").notNull(),
   quantity: integer("quantity").notNull(),
   productNameSnapshot: text("product_name_snapshot").notNull(),
@@ -37,11 +39,13 @@ export const cartItems = pgTable("cart_items", {
 }, (table) => [
   foreignKey({ name: "cart_items_cart_store_city_fk", columns: [table.cartId, table.storeId, table.cityId], foreignColumns: [carts.id, carts.storeId, carts.cityId] }).onDelete("cascade"),
   foreignKey({ name: "cart_items_product_store_city_fk", columns: [table.productId, table.storeId, table.cityId], foreignColumns: [products.id, products.storeId, products.cityId] }),
+  foreignKey({ name: "cart_items_size_product_store_city_fk", columns: [table.selectedSizeId, table.productId, table.storeId, table.cityId], foreignColumns: [productSizes.id, productSizes.productId, productSizes.storeId, productSizes.cityId] }),
   uniqueIndex("cart_items_cart_product_config_uidx").on(table.cartId, table.productId, table.configurationKey),
   uniqueIndex("cart_items_id_cart_uidx").on(table.id, table.cartId),
   index("cart_items_cart_idx").on(table.cartId),
   check("cart_items_quantity_chk", sql`${table.quantity} between 1 and 99`),
   check("cart_items_prices_chk", sql`${table.unitPriceSnapshot} > 0 and ${table.modifiersPriceSnapshot} >= 0`),
+  check("cart_items_size_snapshot_chk", sql`(${table.selectedSizeId} is null) = (${table.selectedSizeNameSnapshot} is null)`),
 ]);
 
 export const cartItemModifierSelections = pgTable("cart_item_modifier_selections", {

@@ -169,6 +169,12 @@ export const productSizes = pgTable(
     uniqueIndex("product_sizes_product_default_active_uidx")
       .on(table.productId)
       .where(sql`${table.isDefault} = true and ${table.status} = 'ACTIVE'`),
+    uniqueIndex("product_sizes_id_product_store_city_uidx").on(
+      table.id,
+      table.productId,
+      table.storeId,
+      table.cityId,
+    ),
     index("product_sizes_product_status_order_idx").on(
       table.productId,
       table.status,
