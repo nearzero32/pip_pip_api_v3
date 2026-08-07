@@ -19,6 +19,7 @@ import { SubcategoryService } from "../../src/modules/catalog/subcategory.servic
 import { StoreCategoryService } from "../../src/modules/catalog/store-category.service";
 import { ProductService } from "../../src/modules/catalog/product.service";
 import { ModifierService } from "../../src/modules/catalog/modifier.service";
+import { CartService } from "../../src/modules/cart/cart.service";
 import { StoreService } from "../../src/modules/stores/store.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
@@ -137,6 +138,7 @@ export type IntegrationHarness = {
   storeCategories: StoreCategoryService;
   products: ProductService;
   modifiers: ModifierService;
+  cart: CartService;
   app: ReturnType<typeof createApp>;
   clock: { value: number; advance: () => void };
   close: () => Promise<void>;
@@ -204,6 +206,7 @@ export async function createIntegrationHarness(options?: {
   const storeCategories = new StoreCategoryService(client);
   const products = new ProductService(client, media, mediaConfig);
   const modifiers = new ModifierService(client);
+  const cart = new CartService(client);
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -217,6 +220,7 @@ export async function createIntegrationHarness(options?: {
     storeCategoryService: storeCategories,
     productService: products,
     modifierService: modifiers,
+    cartService: cart,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -236,6 +240,7 @@ export async function createIntegrationHarness(options?: {
     storeCategories,
     products,
     modifiers,
+    cart,
     app,
     clock,
     close: async () => {
