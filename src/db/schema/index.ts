@@ -7,3 +7,4 @@ export * from "./modifiers";
 export * from "./products";
 export * from "./merchants";
 export * from "./carts";
+export * from "./customer-addresses";

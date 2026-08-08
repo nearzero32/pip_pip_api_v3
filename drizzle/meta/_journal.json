@@ -155,6 +155,13 @@
       "when": 1786136792211,
       "tag": "0021_typical_leper_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786192876681,
+      "tag": "0022_material_nightcrawler",
+      "breakpoints": true
     }
   ]
 }

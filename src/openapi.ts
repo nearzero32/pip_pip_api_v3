@@ -125,6 +125,16 @@ export const createOpenApiPlugin = () =>
         description:
           "Unauthenticated Store Product Catalog for the City selected by X-City-Id. Browse Store Categories, paginated Products (search/category filter), Product Details (images/sizes/availability/modifiers), and Modifier configuration. Temporarily unavailable Products/Options remain visible but non-orderable. PAUSED Stores remain browseable with orderAcceptanceStatus exposed. ARCHIVED/INACTIVE categories and Products are hidden.",
       },
+      {
+        name: "Customer — Cart",
+        description:
+          "Customer-authenticated persistent Cart scoped by trusted X-City-Id. Current Catalog prices and validation are authoritative.",
+      },
+      {
+        name: "Customer — Addresses",
+        description:
+          "Customer Saved Addresses scoped by Customer JWT + trusted X-City-Id. Max 20 per Customer per City. One default per Customer+City. Location is a PostGIS Point; deliveryAvailable/zone are computed from current ACTIVE Zones via ST_Covers and are never persisted.",
+      },
     ],
     components: {
       securitySchemes: {

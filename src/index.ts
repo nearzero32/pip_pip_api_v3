@@ -17,6 +17,7 @@ import { StoreCategoryService } from "./modules/catalog/store-category.service";
 import { ProductService } from "./modules/catalog/product.service";
 import { ModifierService } from "./modules/catalog/modifier.service";
 import { CartService } from "./modules/cart/cart.service";
+import { CustomerAddressService } from "./modules/customer-addresses/customer-address.service";
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
@@ -42,6 +43,7 @@ const storeCategoryService = new StoreCategoryService(database.client);
 const productService = new ProductService(database.client, mediaService, config);
 const modifierService = new ModifierService(database.client);
 const cartService = new CartService(database.client);
+const customerAddressService = new CustomerAddressService(database.client);
 const mediaCleanup = new MediaCleanupWorker(database.client, mediaStorage, config, logger);
 mediaCleanup.start();
 
@@ -57,6 +59,7 @@ const app = createApp({
   productService,
   modifierService,
   cartService,
+  customerAddressService,
   production: config.nodeEnv === "production",
   readinessCheck: () => database.ping(),
   redisReadinessCheck: async () => {
