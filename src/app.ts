@@ -86,6 +86,7 @@ export function createApp(dependencies: AppDependencies) {
         return status(error.statusCode, {
           error: { code: error.publicCode, message: error.message },
           request_id: requestId,
+          ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
         });
       }
       if (code === "NOT_FOUND") {

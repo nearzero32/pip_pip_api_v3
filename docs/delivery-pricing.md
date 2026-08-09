@@ -1,11 +1,27 @@
 # Routing and versioned delivery pricing
 
-Delivery pricing versions are immutable. A SUPER_ADMIN creates a DRAFT for a non-archived City and explicitly activates it; activation atomically retires the previous ACTIVE version. INACTIVE versions are terminal and historical values can only be reused by creating a new version. PostgreSQL enforces one ACTIVE version per City and guards value immutability.
+## Lifecycle and cache
 
-The Customer estimate endpoint requires Customer authentication, `X-City-Id`, a public ACTIVE Store (ACCEPTING or PAUSED), and exactly one of an owned same-City `addressId` or destination coordinates. The destination must be covered by an ACTIVE Zone assigned to the Store. Otherwise it returns `deliveryAvailable=false`, `reason=ADDRESS_OUTSIDE_DELIVERY_ZONE`, and no fee, without invoking routing.
+Pricing values are immutable. SUPER_ADMIN creates a DRAFT and explicitly activates it; activation atomically retires the previous ACTIVE version. INACTIVE is terminal. PostgreSQL enforces one ACTIVE version per City.
 
-OSRM implements the replaceable routing-provider interface and is configured using `OSRM_BASE_URL`, `OSRM_PROFILE`, and `OSRM_TIMEOUT_MS`. No OSRM container is bundled because a usable instance requires a prepared dataset. Tests use the fake provider.
+Active reads use Redis cache-aside with key `delivery-pricing:active:v1:{cityId}`. The validated server-side payload contains only pricing, fallback, provider name, timeout, currency, lifecycle, and IDs—never Customer/Store/address data, credentials, URLs, headers, or secrets. `DELIVERY_PRICING_CACHE_TTL_SECONDS` defaults to 21600 seconds and receives deterministic ±10% jitter.
 
-OSRM meters are priced without whole-meter pre-rounding. When an enabled policy permits fallback, PostGIS `ST_DistanceSphere` is rounded upward with `ceil` to the next whole meter, then `fallbackExtraDistanceMeters` is added. Sources are exactly `ROUTE` and `STRAIGHT_LINE_FALLBACK`. Coordinates and provider response bodies are excluded from structured logs.
+PostgreSQL remains authoritative. Cache miss/corruption reloads DB; Redis failure logs a sanitized event and falls back to DB. Activation writes through only after commit, with one quick retry. Migration 0024 adds a globally monotonic `activationRevision`. A Redis Lua CAS writes only when the incoming revision is not older, preventing a pre-activation cache-miss reader from overwriting the newly activated value. In-process promise deduplication reduces stampedes and is not required for correctness.
 
-Only `deliveryFee` in integer IQD is calculated. No Cart/Order snapshot, delivery promotion, discount, coupon, or Checkout behavior is included.
+## Routing and fallback
+
+OSRM is behind `RoutingProvider`; tests use fakes. `OSRM_PROFILE` is strictly `driving`. Each request has at most two independent timed attempts. Retry is limited to timeout/network errors and HTTP 408/429/502/503/504, with a small bounded jitter and a bounded numeric `Retry-After` for 429. No retry occurs for NoRoute, cancellation, invalid coordinates/JSON/schema, permanent HTTP errors, or internal errors.
+
+Typed classifications are `NO_ROUTE`, `TIMEOUT`, `NETWORK_ERROR`, `TEMPORARY_HTTP_ERROR`, `PERMANENT_HTTP_ERROR`, `INVALID_JSON`, `INVALID_PROVIDER_RESPONSE`, `INVALID_COORDINATES`, `REQUEST_CANCELLED`, and `INTERNAL_ERROR`.
+
+NoRoute fallback requires `fallbackOnNoRoute`. Provider-failure fallback requires an exhausted transient classification and `fallbackOnProviderFailure`. Other classifications never fall back. Straight-line pricing uses `ceil(ST_DistanceSphere(...)) + fallbackExtraDistanceMeters`; routed OSRM meters remain unrounded until rational integer-safe pricing.
+
+## Contracts and arithmetic
+
+Outside Zone, NoRoute without fallback, and maximum-distance breaches are domain-unavailable HTTP 200 results with `deliveryFee=null`. Exhausted transient routing without fallback is sanitized `ROUTING_UNAVAILABLE`/503. Successful public results expose only safe UI fields. A separate internal snapshot includes coordinates, formula inputs, rational raw numerator/denominator, route/fallback evidence, version, and final integer IQD fee; it is not persisted or returned publicly.
+
+Formula: billable meters are `max(0, pricingDistance-includedDistance)`, raw fee is `baseFee + billable*pricePerKm/1000`, and final fee is rounded upward to `roundingStep`. Configuration is bounded by PostgreSQL integer limits and rejects unsafe, contradictory, NaN, infinite, negative, overflow, and invalid maximum values.
+
+Routing attempt logs contain sanitized host and typed metadata, never full URLs, coordinates, headers, provider bodies, or personal data. Pricing creation/activation uses the existing `audit_logs` table and records success inside the DB transaction.
+
+No OSRM container is bundled because it requires a prepared dataset. Configure `OSRM_BASE_URL`, `OSRM_TIMEOUT_MS`, and the fixed driving profile. Suggested future metrics—without IDs as labels—are request/success/NoRoute/failure/fallback counts, latency, and unavailable quotes; no metrics dependency is added now.

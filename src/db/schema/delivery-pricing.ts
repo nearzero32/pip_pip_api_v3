@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, pgTable, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, index, integer, pgTable, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { accounts } from "./accounts";
 import { instant } from "./columns";
 import { deliveryPricingStatus } from "./enums";
@@ -23,10 +23,12 @@ export const cityDeliveryPricingVersions = pgTable("city_delivery_pricing_versio
   createdAt: instant("created_at").notNull().defaultNow(),
   activatedAt: instant("activated_at"),
   deactivatedAt: instant("deactivated_at"),
+  activationRevision: bigint("activation_revision", { mode: "number" }),
 }, (table) => [
   uniqueIndex("city_delivery_pricing_city_version_uidx").on(table.cityId, table.version),
   uniqueIndex("city_delivery_pricing_one_active_uidx").on(table.cityId).where(sql`${table.status} = 'ACTIVE'`),
   index("city_delivery_pricing_city_created_idx").on(table.cityId, table.createdAt, table.id),
+  uniqueIndex("city_delivery_pricing_activation_revision_uidx").on(table.activationRevision).where(sql`${table.activationRevision} is not null`),
   check("city_delivery_pricing_version_positive_chk", sql`${table.version} > 0`),
   check("city_delivery_pricing_values_chk", sql`${table.baseFee} >= 0 and ${table.includedDistanceMeters} >= 0 and ${table.pricePerKm} >= 0 and ${table.roundingStep} > 0 and ${table.fallbackExtraDistanceMeters} >= 0 and (${table.maximumDeliveryDistanceMeters} is null or ${table.maximumDeliveryDistanceMeters} > 0)`),
   check("city_delivery_pricing_fallback_consistency_chk", sql`${table.routingFallbackEnabled} or (not ${table.fallbackOnNoRoute} and not ${table.fallbackOnProviderFailure})`),

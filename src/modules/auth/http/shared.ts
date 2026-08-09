@@ -4,6 +4,7 @@ import { AppError } from "../../../errors/app-error";
 export const errorResponse = t.Object({
   error: t.Object({ code: t.String(), message: t.String() }),
   request_id: t.String(),
+  retryable: t.Optional(t.Boolean()),
 });
 export const sessionResponse = t.Object({
   access_token: t.String(),

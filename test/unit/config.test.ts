@@ -47,6 +47,7 @@ const validEnv = {
   OSRM_BASE_URL: "https://osrm.test.example/",
   OSRM_PROFILE: "driving",
   OSRM_TIMEOUT_MS: "3000",
+  DELIVERY_PRICING_CACHE_TTL_SECONDS: "21600",
 };
 
 describe("configuration", () => {
@@ -75,6 +76,7 @@ describe("configuration", () => {
       osrmBaseUrl: "https://osrm.test.example",
       osrmProfile: "driving",
       osrmTimeoutMs: 3000,
+      deliveryPricingCacheTtlSeconds: 21600,
       r2Endpoint: "https://acct.r2.cloudflarestorage.com",
       r2Bucket: "bucket",
       r2AccessKeyId: "key",
@@ -87,6 +89,7 @@ describe("configuration", () => {
       mediaDeleteLeaseSeconds: 300,
     });
   });
+  test("validates delivery cache TTL and fixes OSRM profile",()=>{expect(()=>loadConfig({...validEnv,DELIVERY_PRICING_CACHE_TTL_SECONDS:"0"})).toThrow(ConfigurationError);expect(()=>loadConfig({...validEnv,OSRM_PROFILE:"walking"})).toThrow(ConfigurationError);});
 
   test("fails when required configuration is missing", () => {
     const env = { ...validEnv, DATABASE_URL: undefined };

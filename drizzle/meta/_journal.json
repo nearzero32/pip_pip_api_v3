@@ -169,6 +169,13 @@
       "when": 1786283186566,
       "tag": "0023_boring_miss_america",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786285272998,
+      "tag": "0024_puzzling_domino",
+      "breakpoints": true
     }
   ]
 }

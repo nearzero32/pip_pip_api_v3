@@ -20,6 +20,7 @@ import { CartService } from "./modules/cart/cart.service";
 import { CustomerAddressService } from "./modules/customer-addresses/customer-address.service";
 import { DeliveryPricingService } from "./modules/delivery-pricing/delivery-pricing.service";
 import { OsrmRoutingProvider } from "./modules/delivery-pricing/osrm-routing-provider";
+import { RedisActivePricingCache } from "./modules/delivery-pricing/active-pricing-cache";
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
@@ -46,8 +47,9 @@ const productService = new ProductService(database.client, mediaService, config)
 const modifierService = new ModifierService(database.client);
 const cartService = new CartService(database.client);
 const customerAddressService = new CustomerAddressService(database.client);
-const routingProvider = new OsrmRoutingProvider(config.osrmBaseUrl, config.osrmProfile, config.osrmTimeoutMs);
-const deliveryPricingService = new DeliveryPricingService(database.client, routingProvider, logger);
+const routingProvider = new OsrmRoutingProvider(config.osrmBaseUrl, config.osrmProfile, config.osrmTimeoutMs, logger);
+const activePricingCache = new RedisActivePricingCache(config.redisUrl);
+const deliveryPricingService = new DeliveryPricingService(database.client, routingProvider, logger, activePricingCache, {cacheTtlSeconds:config.deliveryPricingCacheTtlSeconds,routingTimeoutMs:config.osrmTimeoutMs,routingProvider:"OSRM"});
 const mediaCleanup = new MediaCleanupWorker(database.client, mediaStorage, config, logger);
 mediaCleanup.start();
 
@@ -82,6 +84,7 @@ const shutdown = createShutdownHandler({
   },
   closeDatabase: async () => {
     await rateLimiter.close();
+    activePricingCache.close();
     await database.close();
   },
   logger,

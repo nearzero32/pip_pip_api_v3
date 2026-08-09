@@ -23,6 +23,7 @@ import { CartService } from "../../src/modules/cart/cart.service";
 import { CustomerAddressService } from "../../src/modules/customer-addresses/customer-address.service";
 import { DeliveryPricingService } from "../../src/modules/delivery-pricing/delivery-pricing.service";
 import { FakeRoutingProvider } from "../../src/modules/delivery-pricing/routing-provider";
+import { FakeActivePricingCache } from "../../src/modules/delivery-pricing/active-pricing-cache";
 import { StoreService } from "../../src/modules/stores/store.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
@@ -63,6 +64,7 @@ export const integrationConfig: AppConfig = {
   osrmBaseUrl: "https://osrm.test.invalid",
   osrmProfile: "driving",
   osrmTimeoutMs: 1000,
+  deliveryPricingCacheTtlSeconds: 21600,
 };
 
 export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";
@@ -148,6 +150,7 @@ export type IntegrationHarness = {
   addresses: CustomerAddressService;
   deliveryPricing: DeliveryPricingService;
   routingProvider: FakeRoutingProvider;
+  activePricingCache: FakeActivePricingCache;
   app: ReturnType<typeof createApp>;
   clock: { value: number; advance: () => void };
   close: () => Promise<void>;
@@ -218,7 +221,8 @@ export async function createIntegrationHarness(options?: {
   const cart = new CartService(client);
   const addresses = new CustomerAddressService(client);
   const routingProvider = new FakeRoutingProvider({ distanceMeters: 1000, durationSeconds: 120 });
-  const deliveryPricing = new DeliveryPricingService(client, routingProvider, silentLogger);
+  const activePricingCache = new FakeActivePricingCache();
+  const deliveryPricing = new DeliveryPricingService(client,routingProvider,silentLogger,activePricingCache,{cacheTtlSeconds:21600,routingTimeoutMs:1000,routingProvider:"OSRM"});
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -258,6 +262,7 @@ export async function createIntegrationHarness(options?: {
     addresses,
     deliveryPricing,
     routingProvider,
+    activePricingCache,
     app,
     clock,
     close: async () => {

@@ -19,6 +19,7 @@ import { dateValue, pageOf } from "../geography/shared";
 import { parseCoordinate } from "../geography/zone/geometry";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
+import { PUBLIC_STORE_ELIGIBILITY_SQL } from "./public-store-eligibility";
 import {
   computeIsAcceptingOrders,
   evaluateStoreSchedule,
@@ -1043,12 +1044,8 @@ export class StoreService {
        left join media_assets cover on cover.id = s.cover_asset_id
        join store_zones sz on sz.store_id = s.id and sz.zone_id = $2::uuid
        where s.city_id = $1::uuid
-         and s.status = 'ACTIVE'
-         and s.archived_at is null
-         and mc.status = 'ACTIVE'
-         and mc.archived_at is null
+         and ${PUBLIC_STORE_ELIGIBILITY_SQL}
          and ($3::uuid is null or s.main_category_id = $3::uuid)
-         and logo.status = 'READY' and logo.visibility = 'PUBLIC'
        order by s.display_order asc, s.created_at asc, s.id asc`,
       [cityId, input.zoneId, mainCategoryId],
     )) as StoreRow[];
@@ -1069,9 +1066,7 @@ export class StoreService {
        join media_assets logo on logo.id = s.logo_asset_id
        left join media_assets cover on cover.id = s.cover_asset_id
        where s.id = $1::uuid and s.city_id = $2::uuid
-         and s.status = 'ACTIVE' and s.archived_at is null
-         and mc.status = 'ACTIVE' and mc.archived_at is null
-         and logo.status = 'READY' and logo.visibility = 'PUBLIC'`,
+         and ${PUBLIC_STORE_ELIGIBILITY_SQL}`,
       [storeId, cityId],
     )) as StoreRow[];
     const row = rows[0];
