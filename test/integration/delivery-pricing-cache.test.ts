@@ -8,6 +8,6 @@ const value=(revision:number):ActivePricing=>({cityId,pricingVersionId:crypto.ra
 describe("Redis active pricing cache CAS",()=>{
   beforeAll(async()=>{cache=new RedisActivePricingCache(process.env.TEST_REDIS_URL??"redis://127.0.0.1:6380");await cache.client.del(key);});
   afterAll(async()=>{await cache.client.del(key);cache.close();});
-  test("writes TTL and atomically rejects stale revision",async()=>{const newer=value(20),stale=value(19);expect(await cache.writeIfNewer(cityId,newer,21600)).toBeTrue();expect(await cache.writeIfNewer(cityId,stale,21600)).toBeFalse();expect(JSON.parse((await cache.get(cityId))!).activationRevision).toBe(20);const ttl=Number(await cache.client.send("TTL",[key]));expect(ttl).toBeGreaterThan(21000);});
+  test("writes TTL and atomically rejects stale revision without extending TTL",async()=>{const newer=value(20),stale=value(19);expect(await cache.writeIfNewer(cityId,newer,21600)).toBeTrue();const ttlBefore=Number(await cache.client.send("TTL",[key]));expect(await cache.writeIfNewer(cityId,stale,86400)).toBeFalse();const ttlAfter=Number(await cache.client.send("TTL",[key]));expect(ttlAfter).toBeLessThanOrEqual(ttlBefore);expect(JSON.parse((await cache.get(cityId))!).activationRevision).toBe(20);expect(ttlAfter).toBeGreaterThan(21000);});
   test("corrupt entry is atomically replaced",async()=>{await cache.client.set(key,"corrupt");const fresh=value(21);expect(await cache.writeIfNewer(cityId,fresh,21600)).toBeTrue();expect(JSON.parse((await cache.get(cityId))!).activationRevision).toBe(21);});
 });

@@ -6,7 +6,13 @@ Pricing values are immutable. SUPER_ADMIN creates a DRAFT and explicitly activat
 
 Active reads use Redis cache-aside with key `delivery-pricing:active:v1:{cityId}`. The validated server-side payload contains only pricing, fallback, provider name, timeout, currency, lifecycle, and IDs—never Customer/Store/address data, credentials, URLs, headers, or secrets. `DELIVERY_PRICING_CACHE_TTL_SECONDS` defaults to 21600 seconds and receives deterministic ±10% jitter.
 
-PostgreSQL remains authoritative. Cache miss/corruption reloads DB; Redis failure logs a sanitized event and falls back to DB. Activation writes through only after commit, with one quick retry. Migration 0024 adds a globally monotonic `activationRevision`. A Redis Lua CAS writes only when the incoming revision is not older, preventing a pre-activation cache-miss reader from overwriting the newly activated value. In-process promise deduplication reduces stampedes and is not required for correctness.
+PostgreSQL remains authoritative. Cache miss/corruption reloads DB; Redis failure logs a sanitized event and falls back to DB. Activation writes through only after commit, with one quick retry. Migration 0024 adds a globally monotonic `activationRevision`. A Redis Lua CAS writes only when the incoming revision is not older, preventing a pre-activation cache-miss reader from overwriting the newly activated value.
+
+Lua CAS alone is not sufficient: if every post-commit Redis write fails, Redis can recover while still holding the old value until TTL. Therefore every otherwise-valid cache hit performs one lightweight PostgreSQL query for the City's current ACTIVE `activation_revision`. Only an exact match is accepted. A mismatch loads the full ACTIVE row once through the existing single-flight path and attempts CAS refill. The returned pricing object is frozen and remains unchanged for the whole quote.
+
+This revision validation is the cross-instance consistency barrier. It uses durable PostgreSQL state rather than process memory or Redis availability. On activation success, the revision and pricing change commit together before write-through. On rollback, neither revision nor cache value changes and no activation audit success exists. If post-commit write-through fails—or Redis later recovers with an old value—the next read detects the revision mismatch and uses PostgreSQL. A reader that loaded the old row before activation cannot republish it over the newer revision because Lua CAS still rejects the older revision.
+
+The trade-off is one indexed scalar PostgreSQL read on each cache hit; the full pricing configuration remains cached and is not reread when the revision matches. TTL is cleanup/refresh only, never the consistency mechanism. In-process promise deduplication reduces full-row reload stampedes and its entry is removed in `finally` on success and failure.
 
 ## Routing and fallback
 
