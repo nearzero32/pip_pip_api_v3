@@ -106,6 +106,7 @@ const integer = (value: unknown, min: number, max: number) =>
   Number.isSafeInteger(value) &&
   value >= min &&
   value <= max;
+
 export function parseActivePricing(
   raw: string,
   expectedCityId: string,
