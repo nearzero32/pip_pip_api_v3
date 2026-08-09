@@ -44,6 +44,9 @@ const validEnv = {
   MEDIA_UNATTACHED_TTL_HOURS: "24",
   MEDIA_CLEANUP_INTERVAL_SECONDS: "900",
   MEDIA_DELETE_LEASE_SECONDS: "300",
+  OSRM_BASE_URL: "https://osrm.test.example/",
+  OSRM_PROFILE: "driving",
+  OSRM_TIMEOUT_MS: "3000",
 };
 
 describe("configuration", () => {
@@ -69,6 +72,9 @@ describe("configuration", () => {
       argon2MemoryCost: 65536,
       argon2TimeCost: 3,
       argon2Parallelism: 1,
+      osrmBaseUrl: "https://osrm.test.example",
+      osrmProfile: "driving",
+      osrmTimeoutMs: 3000,
       r2Endpoint: "https://acct.r2.cloudflarestorage.com",
       r2Bucket: "bucket",
       r2AccessKeyId: "key",

@@ -18,6 +18,8 @@ import { ProductService } from "./modules/catalog/product.service";
 import { ModifierService } from "./modules/catalog/modifier.service";
 import { CartService } from "./modules/cart/cart.service";
 import { CustomerAddressService } from "./modules/customer-addresses/customer-address.service";
+import { DeliveryPricingService } from "./modules/delivery-pricing/delivery-pricing.service";
+import { OsrmRoutingProvider } from "./modules/delivery-pricing/osrm-routing-provider";
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
@@ -44,6 +46,8 @@ const productService = new ProductService(database.client, mediaService, config)
 const modifierService = new ModifierService(database.client);
 const cartService = new CartService(database.client);
 const customerAddressService = new CustomerAddressService(database.client);
+const routingProvider = new OsrmRoutingProvider(config.osrmBaseUrl, config.osrmProfile, config.osrmTimeoutMs);
+const deliveryPricingService = new DeliveryPricingService(database.client, routingProvider, logger);
 const mediaCleanup = new MediaCleanupWorker(database.client, mediaStorage, config, logger);
 mediaCleanup.start();
 
@@ -60,6 +64,7 @@ const app = createApp({
   modifierService,
   cartService,
   customerAddressService,
+  deliveryPricingService,
   production: config.nodeEnv === "production",
   readinessCheck: () => database.ping(),
   redisReadinessCheck: async () => {

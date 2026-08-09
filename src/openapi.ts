@@ -135,6 +135,8 @@ export const createOpenApiPlugin = () =>
         description:
           "Customer Saved Addresses scoped by Customer JWT + trusted X-City-Id. Max 20 per Customer per City. One default per Customer+City. Location is a PostGIS Point; deliveryAvailable/zone are computed from current ACTIVE Zones via ST_Covers and are never persisted.",
       },
+      { name: "Dashboard — Delivery Pricing", description: "SUPER_ADMIN immutable, versioned City delivery pricing management; City ADMIN can read only its signed City's active version." },
+      { name: "Customer — Delivery Estimate", description: "Customer-authenticated routing and delivery estimates using trusted X-City-Id." },
     ],
     components: {
       securitySchemes: {

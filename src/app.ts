@@ -27,6 +27,8 @@ import type { CartService } from "./modules/cart/cart.service";
 import { cartRoutes } from "./modules/cart/cart.routes";
 import type { CustomerAddressService } from "./modules/customer-addresses/customer-address.service";
 import { customerAddressRoutes } from "./modules/customer-addresses/customer-address.routes";
+import type { DeliveryPricingService } from "./modules/delivery-pricing/delivery-pricing.service";
+import { deliveryPricingRoutes } from "./modules/delivery-pricing/delivery-pricing.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -42,6 +44,7 @@ export interface AppDependencies extends HealthDependencies {
   modifierService?: ModifierService;
   cartService?: CartService;
   customerAddressService?: CustomerAddressService;
+  deliveryPricingService?: DeliveryPricingService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -124,6 +127,7 @@ export function createApp(dependencies: AppDependencies) {
       });
     })
     .use(healthRoutes(dependencies))
+    .use(dependencies.authModule && dependencies.deliveryPricingService ? deliveryPricingRoutes(dependencies.authModule, dependencies.deliveryPricingService) : new Elysia())
     .use(
       dependencies.authModule && dependencies.cartService
         ? cartRoutes(dependencies.authModule, dependencies.cartService)

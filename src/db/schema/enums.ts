@@ -93,3 +93,8 @@ export const productStatus = pgEnum("product_status", [
   "INACTIVE",
   "ARCHIVED",
 ]);
+export const deliveryPricingStatus = pgEnum("delivery_pricing_status", [
+  "DRAFT",
+  "ACTIVE",
+  "INACTIVE",
+]);

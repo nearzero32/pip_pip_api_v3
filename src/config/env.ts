@@ -38,6 +38,9 @@ export interface AppConfig extends DatabaseConfig, MediaConfig {
   argon2MemoryCost: number;
   argon2TimeCost: number;
   argon2Parallelism: number;
+  osrmBaseUrl: string;
+  osrmProfile: string;
+  osrmTimeoutMs: number;
 }
 
 export class ConfigurationError extends Error {
@@ -156,6 +159,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     argon2MemoryCost: integer(env, "ARGON2_MEMORY_COST", 19_456, 1_048_576),
     argon2TimeCost: integer(env, "ARGON2_TIME_COST", 2, 10),
     argon2Parallelism: integer(env, "ARGON2_PARALLELISM", 1, 16),
+    osrmBaseUrl: httpUrl(env, "OSRM_BASE_URL"),
+    osrmProfile: required(env, "OSRM_PROFILE"),
+    osrmTimeoutMs: integer(env, "OSRM_TIMEOUT_MS", 100, 30_000),
     ...loadMediaConfig(env),
   };
 }

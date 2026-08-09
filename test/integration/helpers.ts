@@ -21,6 +21,8 @@ import { ProductService } from "../../src/modules/catalog/product.service";
 import { ModifierService } from "../../src/modules/catalog/modifier.service";
 import { CartService } from "../../src/modules/cart/cart.service";
 import { CustomerAddressService } from "../../src/modules/customer-addresses/customer-address.service";
+import { DeliveryPricingService } from "../../src/modules/delivery-pricing/delivery-pricing.service";
+import { FakeRoutingProvider } from "../../src/modules/delivery-pricing/routing-provider";
 import { StoreService } from "../../src/modules/stores/store.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
@@ -58,6 +60,9 @@ export const integrationConfig: AppConfig = {
   mediaUnattachedTtlHours: 24,
   mediaCleanupIntervalSeconds: 900,
   mediaDeleteLeaseSeconds: 300,
+  osrmBaseUrl: "https://osrm.test.invalid",
+  osrmProfile: "driving",
+  osrmTimeoutMs: 1000,
 };
 
 export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";
@@ -141,6 +146,8 @@ export type IntegrationHarness = {
   modifiers: ModifierService;
   cart: CartService;
   addresses: CustomerAddressService;
+  deliveryPricing: DeliveryPricingService;
+  routingProvider: FakeRoutingProvider;
   app: ReturnType<typeof createApp>;
   clock: { value: number; advance: () => void };
   close: () => Promise<void>;
@@ -210,6 +217,8 @@ export async function createIntegrationHarness(options?: {
   const modifiers = new ModifierService(client);
   const cart = new CartService(client);
   const addresses = new CustomerAddressService(client);
+  const routingProvider = new FakeRoutingProvider({ distanceMeters: 1000, durationSeconds: 120 });
+  const deliveryPricing = new DeliveryPricingService(client, routingProvider, silentLogger);
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -225,6 +234,7 @@ export async function createIntegrationHarness(options?: {
     modifierService: modifiers,
     cartService: cart,
     customerAddressService: addresses,
+    deliveryPricingService: deliveryPricing,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -246,6 +256,8 @@ export async function createIntegrationHarness(options?: {
     modifiers,
     cart,
     addresses,
+    deliveryPricing,
+    routingProvider,
     app,
     clock,
     close: async () => {

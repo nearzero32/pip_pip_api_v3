@@ -166,9 +166,7 @@ export class CustomerAddressService {
   }
 
   private async assertActiveCustomer(tx: SQL, accountId: string) {
-    const [customer] = await tx<
-      { id: string }[]
-    >`select cp.account_id::text id
+    const [customer] = await tx<{ id: string }[]>`select cp.account_id::text id
       from customer_profiles cp
       join accounts a on a.id = cp.account_id
       where cp.account_id = ${accountId}
@@ -222,8 +220,7 @@ export class CustomerAddressService {
   async get(accountId: string, cityId: string, addressId: string) {
     await this.assertActiveCustomer(this.client, accountId);
     const row = await this.fetchOne(this.client, accountId, cityId, addressId);
-    if (!row)
-      throw new AppError(404, "ADDRESS_NOT_FOUND", "Address not found");
+    if (!row) throw new AppError(404, "ADDRESS_NOT_FOUND", "Address not found");
     return toDto(row);
   }
 
@@ -336,9 +333,7 @@ export class CustomerAddressService {
       await this.lockScope(tx, accountId, cityId);
       await this.assertActiveCustomer(tx, accountId);
 
-      const existing = await tx<
-        { id: string }[]
-      >`select id::text as id
+      const existing = await tx<{ id: string }[]>`select id::text as id
         from customer_addresses
         where id = ${addressId}
           and customer_account_id = ${accountId}
@@ -437,9 +432,7 @@ export class CustomerAddressService {
           and city_id = ${cityId}`;
 
       if (target.is_default) {
-        const [replacement] = await tx<
-          { id: string }[]
-        >`select id::text as id
+        const [replacement] = await tx<{ id: string }[]>`select id::text as id
           from customer_addresses
           where customer_account_id = ${accountId}
             and city_id = ${cityId}
