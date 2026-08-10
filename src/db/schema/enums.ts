@@ -98,3 +98,41 @@ export const deliveryPricingStatus = pgEnum("delivery_pricing_status", [
   "ACTIVE",
   "INACTIVE",
 ]);
+export const orderStatus = pgEnum("order_status", [
+  "UNDER_STORE_REVIEW",
+  "APPROVED_BY_STORE",
+  "SEARCHING_DRIVER",
+  "DRIVER_ASSIGNED",
+  "READY_FOR_PICKUP",
+  "ACCEPTED_BY_DRIVER",
+  "PICKED_UP",
+  "ARRIVED_AT_CUSTOMER",
+  "DELIVERED",
+  "CANCELLED",
+]);
+export const orderPaymentMethod = pgEnum("order_payment_method", [
+  "CASH",
+  "ONLINE",
+]);
+export const orderPaymentStatus = pgEnum("order_payment_status", [
+  "UNPAID",
+  "AWAITING_PAYMENT",
+  "PAID",
+  "FAILED",
+]);
+export const orderItemState = pgEnum("order_item_state", [
+  "ACTIVE",
+  "REPLACED",
+]);
+export const orderActorType = pgEnum("order_actor_type", [
+  "CUSTOMER",
+  "MERCHANT",
+  "STAFF",
+  "SYSTEM",
+]);
+export const orderActionSource = pgEnum("order_action_source", [
+  "CUSTOMER_APP",
+  "MERCHANT_APP",
+  "DASHBOARD",
+  "SYSTEM",
+]);

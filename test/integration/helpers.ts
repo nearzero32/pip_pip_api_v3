@@ -24,6 +24,7 @@ import { CustomerAddressService } from "../../src/modules/customer-addresses/cus
 import { DeliveryPricingService } from "../../src/modules/delivery-pricing/delivery-pricing.service";
 import { FakeRoutingProvider } from "../../src/modules/delivery-pricing/routing-provider";
 import { FakeActivePricingCache } from "../../src/modules/delivery-pricing/active-pricing-cache";
+import { OrderService } from "../../src/modules/orders/order.service";
 import { StoreService } from "../../src/modules/stores/store.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
@@ -149,6 +150,7 @@ export type IntegrationHarness = {
   cart: CartService;
   addresses: CustomerAddressService;
   deliveryPricing: DeliveryPricingService;
+  orders: OrderService;
   routingProvider: FakeRoutingProvider;
   activePricingCache: FakeActivePricingCache;
   app: ReturnType<typeof createApp>;
@@ -223,6 +225,7 @@ export async function createIntegrationHarness(options?: {
   const routingProvider = new FakeRoutingProvider({ distanceMeters: 1000, durationSeconds: 120 });
   const activePricingCache = new FakeActivePricingCache();
   const deliveryPricing = new DeliveryPricingService(client,routingProvider,silentLogger,activePricingCache,{cacheTtlSeconds:21600,routingTimeoutMs:1000,routingProvider:"OSRM"});
+  const orders = new OrderService(client, deliveryPricing);
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -239,6 +242,7 @@ export async function createIntegrationHarness(options?: {
     cartService: cart,
     customerAddressService: addresses,
     deliveryPricingService: deliveryPricing,
+    orderService: orders,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -261,6 +265,7 @@ export async function createIntegrationHarness(options?: {
     cart,
     addresses,
     deliveryPricing,
+    orders,
     routingProvider,
     activePricingCache,
     app,

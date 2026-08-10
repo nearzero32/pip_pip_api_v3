@@ -34,6 +34,10 @@ export const GRANTABLE_PERMISSION_CODES = [
   "merchants.read",
   "merchants.create",
   "merchants.update",
+  "orders.read",
+  "orders.cancel",
+  "orders.approve",
+  "orders.items.replace",
 ] as const;
 
 export type GrantablePermissionCode =

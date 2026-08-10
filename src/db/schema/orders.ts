@@ -1,0 +1,398 @@
+import { sql } from "drizzle-orm";
+import {
+  boolean,
+  check,
+  doublePrecision,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { accounts } from "./accounts";
+import { instant } from "./columns";
+import { customerAddresses } from "./customer-addresses";
+import { cityDeliveryPricingVersions } from "./delivery-pricing";
+import {
+  orderActionSource,
+  orderActorType,
+  orderItemState,
+  orderPaymentMethod,
+  orderPaymentStatus,
+  orderStatus,
+} from "./enums";
+import { cities, zones } from "./geography";
+import { products, productSizes } from "./products";
+import { stores } from "./stores";
+
+export const orders = pgTable(
+  "orders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderNumber: text("order_number").notNull(),
+    cityId: uuid("city_id")
+      .notNull()
+      .references(() => cities.id),
+    zoneId: uuid("zone_id").notNull(),
+    storeId: uuid("store_id").notNull(),
+    customerAccountId: uuid("customer_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    driverAccountId: uuid("driver_account_id").references(() => accounts.id),
+    status: orderStatus("status").notNull().default("UNDER_STORE_REVIEW"),
+    paymentMethod: orderPaymentMethod("payment_method").notNull(),
+    paymentStatus: orderPaymentStatus("payment_status").notNull(),
+    productsSubtotal: integer("products_subtotal").notNull(),
+    deliveryFee: integer("delivery_fee").notNull(),
+    total: integer("total").notNull(),
+    currency: text("currency").notNull().default("IQD"),
+    version: integer("version").notNull().default(1),
+    statusChangedAt: instant("status_changed_at").notNull().defaultNow(),
+    deliveredAt: instant("delivered_at"),
+    cancelledAt: instant("cancelled_at"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("orders_order_number_uidx").on(table.orderNumber),
+    foreignKey({
+      name: "orders_store_city_fk",
+      columns: [table.storeId, table.cityId],
+      foreignColumns: [stores.id, stores.cityId],
+    }),
+    foreignKey({
+      name: "orders_zone_city_fk",
+      columns: [table.zoneId, table.cityId],
+      foreignColumns: [zones.id, zones.cityId],
+    }),
+    index("orders_city_status_created_idx").on(
+      table.cityId,
+      table.status,
+      table.createdAt,
+      table.id,
+    ),
+    index("orders_store_status_created_idx").on(
+      table.storeId,
+      table.status,
+      table.createdAt,
+      table.id,
+    ),
+    index("orders_customer_created_idx").on(
+      table.customerAccountId,
+      table.createdAt,
+      table.id,
+    ),
+    index("orders_city_created_idx").on(
+      table.cityId,
+      table.createdAt,
+      table.id,
+    ),
+    check(
+      "orders_money_nonneg_chk",
+      sql`${table.productsSubtotal} >= 0 and ${table.deliveryFee} >= 0 and ${table.total} >= 0`,
+    ),
+    check(
+      "orders_total_sum_chk",
+      sql`${table.total} = ${table.productsSubtotal} + ${table.deliveryFee}`,
+    ),
+    check("orders_currency_chk", sql`${table.currency} = 'IQD'`),
+    check("orders_version_positive_chk", sql`${table.version} > 0`),
+    check(
+      "orders_cancelled_at_chk",
+      sql`(${table.status} = 'CANCELLED' and ${table.cancelledAt} is not null) or (${table.status} <> 'CANCELLED' and ${table.cancelledAt} is null)`,
+    ),
+    check(
+      "orders_delivered_at_chk",
+      sql`(${table.status} = 'DELIVERED' and ${table.deliveredAt} is not null) or (${table.status} <> 'DELIVERED' and ${table.deliveredAt} is null)`,
+    ),
+  ],
+);
+
+export const orderItems = pgTable(
+  "order_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
+    productId: uuid("product_id").notNull(),
+    selectedSizeId: uuid("selected_size_id"),
+    productNameSnapshot: text("product_name_snapshot").notNull(),
+    selectedSizeNameSnapshot: text("selected_size_name_snapshot"),
+    unitPriceSnapshot: integer("unit_price_snapshot").notNull(),
+    modifiersPriceSnapshot: integer("modifiers_price_snapshot").notNull(),
+    quantity: integer("quantity").notNull(),
+    lineTotal: integer("line_total").notNull(),
+    state: orderItemState("state").notNull().default("ACTIVE"),
+    replacesOrderItemId: uuid("replaces_order_item_id"),
+    modifierSelectionsSnapshot: jsonb("modifier_selections_snapshot")
+      .$type<
+        Array<{
+          modifierOptionId: string;
+          name: string;
+          quantity: number;
+          unitPrice: number;
+        }>
+      >()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("order_items_order_state_idx").on(table.orderId, table.state),
+    foreignKey({
+      name: "order_items_product_fk",
+      columns: [table.productId],
+      foreignColumns: [products.id],
+    }),
+    foreignKey({
+      name: "order_items_size_fk",
+      columns: [table.selectedSizeId],
+      foreignColumns: [productSizes.id],
+    }),
+    foreignKey({
+      name: "order_items_replaces_fk",
+      columns: [table.replacesOrderItemId],
+      foreignColumns: [table.id],
+    }),
+    check("order_items_quantity_chk", sql`${table.quantity} between 1 and 99`),
+    check(
+      "order_items_prices_chk",
+      sql`${table.unitPriceSnapshot} > 0 and ${table.modifiersPriceSnapshot} >= 0 and ${table.lineTotal} > 0`,
+    ),
+    check(
+      "order_items_line_total_chk",
+      sql`${table.lineTotal} = (${table.unitPriceSnapshot} + ${table.modifiersPriceSnapshot}) * ${table.quantity}`,
+    ),
+    check(
+      "order_items_size_snapshot_chk",
+      sql`(${table.selectedSizeId} is null) = (${table.selectedSizeNameSnapshot} is null)`,
+    ),
+  ],
+);
+
+export const orderItemReplacements = pgTable(
+  "order_item_replacements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
+    originalOrderItemId: uuid("original_order_item_id")
+      .notNull()
+      .references(() => orderItems.id),
+    replacementOrderItemId: uuid("replacement_order_item_id")
+      .notNull()
+      .references(() => orderItems.id),
+    originalProductId: uuid("original_product_id").notNull(),
+    replacementProductId: uuid("replacement_product_id").notNull(),
+    originalProductNameSnapshot: text(
+      "original_product_name_snapshot",
+    ).notNull(),
+    replacementProductNameSnapshot: text(
+      "replacement_product_name_snapshot",
+    ).notNull(),
+    originalQuantity: integer("original_quantity").notNull(),
+    replacementQuantity: integer("replacement_quantity").notNull(),
+    originalUnitPrice: integer("original_unit_price").notNull(),
+    replacementUnitPrice: integer("replacement_unit_price").notNull(),
+    originalLineTotal: integer("original_line_total").notNull(),
+    replacementLineTotal: integer("replacement_line_total").notNull(),
+    productsSubtotalBefore: integer("products_subtotal_before").notNull(),
+    productsSubtotalAfter: integer("products_subtotal_after").notNull(),
+    totalBefore: integer("total_before").notNull(),
+    totalAfter: integer("total_after").notNull(),
+    priceDifference: integer("price_difference").notNull(),
+    actorAccountId: uuid("actor_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    actorType: orderActorType("actor_type").notNull(),
+    source: orderActionSource("source").notNull(),
+    reason: text("reason").notNull(),
+    customerAgreedByPhone: boolean("customer_agreed_by_phone").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("order_item_replacements_original_uidx").on(
+      table.originalOrderItemId,
+    ),
+    index("order_item_replacements_order_created_idx").on(
+      table.orderId,
+      table.createdAt,
+    ),
+    check(
+      "order_item_replacements_reason_chk",
+      sql`length(btrim(${table.reason})) > 0`,
+    ),
+    check(
+      "order_item_replacements_agreed_phone_chk",
+      sql`${table.customerAgreedByPhone} = true`,
+    ),
+  ],
+);
+
+export const orderStatusHistory = pgTable(
+  "order_status_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
+    fromStatus: orderStatus("from_status"),
+    toStatus: orderStatus("to_status").notNull(),
+    enteredAt: instant("entered_at").notNull(),
+    exitedAt: instant("exited_at"),
+    durationSeconds: integer("duration_seconds"),
+    changedByAccountId: uuid("changed_by_account_id").references(
+      () => accounts.id,
+    ),
+    actorType: orderActorType("actor_type").notNull(),
+    source: orderActionSource("source").notNull(),
+    reason: text("reason"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("order_status_history_order_entered_idx").on(
+      table.orderId,
+      table.enteredAt,
+      table.id,
+    ),
+    uniqueIndex("order_status_history_one_open_uidx")
+      .on(table.orderId)
+      .where(sql`${table.exitedAt} is null`),
+    check(
+      "order_status_history_duration_chk",
+      sql`(${table.exitedAt} is null and ${table.durationSeconds} is null) or (${table.exitedAt} is not null and ${table.durationSeconds} is not null and ${table.durationSeconds} >= 0)`,
+    ),
+  ],
+);
+
+export const orderAddressSnapshots = pgTable(
+  "order_address_snapshots",
+  {
+    orderId: uuid("order_id")
+      .primaryKey()
+      .references(() => orders.id),
+    sourceAddressId: uuid("source_address_id").references(
+      () => customerAddresses.id,
+    ),
+    label: text("label").notNull(),
+    addressDetails: text("address_details").notNull(),
+    landmark: text("landmark"),
+    recipientName: text("recipient_name"),
+    recipientPhone: text("recipient_phone"),
+    latitude: doublePrecision("latitude").notNull(),
+    longitude: doublePrecision("longitude").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "order_address_snapshots_lat_chk",
+      sql`${table.latitude} between -90 and 90`,
+    ),
+    check(
+      "order_address_snapshots_lng_chk",
+      sql`${table.longitude} between -180 and 180`,
+    ),
+  ],
+);
+
+export const orderDeliveryPricingSnapshots = pgTable(
+  "order_delivery_pricing_snapshots",
+  {
+    orderId: uuid("order_id")
+      .primaryKey()
+      .references(() => orders.id),
+    pricingVersionId: uuid("pricing_version_id")
+      .notNull()
+      .references(() => cityDeliveryPricingVersions.id),
+    pricingVersionNumber: integer("pricing_version_number").notNull(),
+    routingProvider: text("routing_provider").notNull(),
+    distanceSource: text("distance_source").notNull(),
+    fallbackReason: text("fallback_reason"),
+    distanceMeters: doublePrecision("distance_meters").notNull(),
+    durationSeconds: doublePrecision("duration_seconds"),
+    deliveryFee: integer("delivery_fee").notNull(),
+    zoneId: uuid("zone_id").notNull(),
+    originLatitude: doublePrecision("origin_latitude").notNull(),
+    originLongitude: doublePrecision("origin_longitude").notNull(),
+    destinationLatitude: doublePrecision("destination_latitude").notNull(),
+    destinationLongitude: doublePrecision("destination_longitude").notNull(),
+    rawCalculation: jsonb("raw_calculation")
+      .$type<{ numerator: string; denominator: string }>()
+      .notNull(),
+    calculatedAt: instant("calculated_at").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "order_delivery_pricing_snapshots_fee_chk",
+      sql`${table.deliveryFee} >= 0`,
+    ),
+    check(
+      "order_delivery_pricing_snapshots_distance_chk",
+      sql`${table.distanceMeters} >= 0`,
+    ),
+  ],
+);
+
+export const orderCancellations = pgTable(
+  "order_cancellations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
+    previousStatus: orderStatus("previous_status").notNull(),
+    actorAccountId: uuid("actor_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    actorType: orderActorType("actor_type").notNull(),
+    source: orderActionSource("source").notNull(),
+    reason: text("reason").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("order_cancellations_order_uidx").on(table.orderId),
+    check(
+      "order_cancellations_reason_chk",
+      sql`length(btrim(${table.reason})) > 0`,
+    ),
+  ],
+);
+
+export const orderIdempotencyKeys = pgTable(
+  "order_idempotency_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    customerAccountId: uuid("customer_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    cityId: uuid("city_id")
+      .notNull()
+      .references(() => cities.id),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("order_idempotency_customer_city_key_uidx").on(
+      table.customerAccountId,
+      table.cityId,
+      table.idempotencyKey,
+    ),
+    check(
+      "order_idempotency_key_nonempty_chk",
+      sql`length(btrim(${table.idempotencyKey})) > 0`,
+    ),
+  ],
+);

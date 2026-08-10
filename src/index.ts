@@ -21,6 +21,7 @@ import { CustomerAddressService } from "./modules/customer-addresses/customer-ad
 import { DeliveryPricingService } from "./modules/delivery-pricing/delivery-pricing.service";
 import { OsrmRoutingProvider } from "./modules/delivery-pricing/osrm-routing-provider";
 import { RedisActivePricingCache } from "./modules/delivery-pricing/active-pricing-cache";
+import { OrderService } from "./modules/orders/order.service";
 
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
@@ -50,6 +51,7 @@ const customerAddressService = new CustomerAddressService(database.client);
 const routingProvider = new OsrmRoutingProvider(config.osrmBaseUrl, config.osrmProfile, config.osrmTimeoutMs, logger);
 const activePricingCache = new RedisActivePricingCache(config.redisUrl);
 const deliveryPricingService = new DeliveryPricingService(database.client, routingProvider, logger, activePricingCache, {cacheTtlSeconds:config.deliveryPricingCacheTtlSeconds,routingTimeoutMs:config.osrmTimeoutMs,routingProvider:"OSRM"});
+const orderService = new OrderService(database.client, deliveryPricingService);
 const mediaCleanup = new MediaCleanupWorker(database.client, mediaStorage, config, logger);
 mediaCleanup.start();
 
@@ -67,6 +69,7 @@ const app = createApp({
   cartService,
   customerAddressService,
   deliveryPricingService,
+  orderService,
   production: config.nodeEnv === "production",
   readinessCheck: () => database.ping(),
   redisReadinessCheck: async () => {

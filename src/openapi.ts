@@ -137,6 +137,21 @@ export const createOpenApiPlugin = () =>
       },
       { name: "Dashboard — Delivery Pricing", description: "SUPER_ADMIN immutable, versioned City delivery pricing management; City ADMIN can read only its signed City's active version." },
       { name: "Customer — Delivery Estimate", description: "Customer-authenticated routing and delivery estimates using trusted X-City-Id." },
+      {
+        name: "Customer — Orders",
+        description:
+          "Customer order create/read/cancel scoped by JWT + trusted X-City-Id. Server-authoritative prices, delivery fee, and snapshots. Initial state UNDER_STORE_REVIEW. Customer cancel only while UNDER_STORE_REVIEW.",
+      },
+      {
+        name: "Dashboard — Orders",
+        description:
+          "City-scoped order list/detail, cancel (orders.cancel), approve (orders.approve), and item replace (orders.items.replace). SUPER_ADMIN is blocked. Status history includes durationSeconds for closed states.",
+      },
+      {
+        name: "Mobile — Merchant Orders",
+        description:
+          "Authenticated Merchant Store orders: list/read, approve, and replace items during UNDER_STORE_REVIEW. No cancellation endpoint.",
+      },
     ],
     components: {
       securitySchemes: {
