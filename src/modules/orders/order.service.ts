@@ -14,9 +14,16 @@ import {
   type OrderStatus,
 } from "./order-state-machine";
 
-type ActorType = "CUSTOMER" | "MERCHANT" | "STAFF" | "SYSTEM";
-type ActionSource = "CUSTOMER_APP" | "MERCHANT_APP" | "DASHBOARD" | "SYSTEM";
+type ActorType = "CUSTOMER" | "MERCHANT" | "STAFF" | "SYSTEM" | "DRIVER";
+type ActionSource =
+  | "CUSTOMER_APP"
+  | "MERCHANT_APP"
+  | "DASHBOARD"
+  | "SYSTEM"
+  | "DRIVER_APP";
 type PaymentMethod = "CASH" | "ONLINE";
+type PaymentStatus = "UNPAID" | "AWAITING_PAYMENT" | "PAID" | "FAILED";
+type OrderItemState = "ACTIVE" | "REPLACED";
 type SelectionInput = { modifierOptionId: string; quantity?: number };
 type CreateItemInput = {
   productId: string;
@@ -59,6 +66,20 @@ const cleanReason = (value: unknown, field = "reason") => {
   if (!trimmed || trimmed.length > 1000)
     throw new AppError(422, "VALIDATION_FAILED", `Invalid ${field}`);
   return trimmed;
+};
+
+/** Non-CASH orders require verified PAID status before operational mutations. */
+const assertPaymentAllowsMutation = (order: {
+  payment_method: string;
+  payment_status: string;
+}) => {
+  if (order.payment_method === "CASH") return;
+  if (order.payment_status === "PAID") return;
+  throw new AppError(
+    409,
+    "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED",
+    "Online payment is not confirmed",
+  );
 };
 
 const hashPayload = (payload: unknown) =>
@@ -266,27 +287,27 @@ export class OrderService {
   private mapOrder(
     row: Record<string, unknown>,
     extras: Record<string, unknown> = {},
-  ): Record<string, unknown> {
+  ) {
     return {
-      id: row.id,
-      orderNumber: row.order_number,
-      cityId: row.city_id,
-      zoneId: row.zone_id,
-      storeId: row.store_id,
-      customerAccountId: row.customer_account_id,
-      status: row.status,
-      paymentMethod: row.payment_method,
-      paymentStatus: row.payment_status,
+      id: String(row.id),
+      orderNumber: String(row.order_number),
+      cityId: String(row.city_id),
+      zoneId: String(row.zone_id),
+      storeId: String(row.store_id),
+      customerAccountId: String(row.customer_account_id),
+      status: String(row.status) as OrderStatus,
+      paymentMethod: String(row.payment_method) as PaymentMethod,
+      paymentStatus: String(row.payment_status) as PaymentStatus,
       productsSubtotal: Number(row.products_subtotal),
       deliveryFee: Number(row.delivery_fee),
       total: Number(row.total),
-      currency: row.currency,
+      currency: "IQD" as const,
       version: Number(row.version),
-      statusChangedAt: dateValue(row.status_changed_at),
+      statusChangedAt: dateValue(row.status_changed_at)!,
       deliveredAt: dateValue(row.delivered_at),
       cancelledAt: dateValue(row.cancelled_at),
-      createdAt: dateValue(row.created_at),
-      updatedAt: dateValue(row.updated_at),
+      createdAt: dateValue(row.created_at)!,
+      updatedAt: dateValue(row.updated_at)!,
       ...extras,
     };
   }
@@ -301,19 +322,33 @@ export class OrderService {
       where order_id = ${orderId}
       order by created_at asc, id asc`;
     return rows.map((row) => ({
-      id: row.id,
-      productId: row.product_id,
-      selectedSizeId: row.selected_size_id,
-      productName: row.product_name_snapshot,
-      selectedSizeName: row.selected_size_name_snapshot,
+      id: String(row.id),
+      productId: String(row.product_id),
+      selectedSizeId:
+        row.selected_size_id == null ? null : String(row.selected_size_id),
+      productName: String(row.product_name_snapshot),
+      selectedSizeName:
+        row.selected_size_name_snapshot == null
+          ? null
+          : String(row.selected_size_name_snapshot),
       unitPrice: Number(row.unit_price_snapshot),
       modifiersPrice: Number(row.modifiers_price_snapshot),
       quantity: Number(row.quantity),
       lineTotal: Number(row.line_total),
-      state: row.state,
-      replacesOrderItemId: row.replaces_order_item_id,
-      modifierSelections: row.modifier_selections_snapshot,
-      createdAt: dateValue(row.created_at),
+      state: String(row.state) as OrderItemState,
+      replacesOrderItemId:
+        row.replaces_order_item_id == null
+          ? null
+          : String(row.replaces_order_item_id),
+      modifierSelections: (Array.isArray(row.modifier_selections_snapshot)
+        ? row.modifier_selections_snapshot
+        : []) as Array<{
+        modifierOptionId: string;
+        name: string;
+        quantity: number;
+        unitPrice: number;
+      }>,
+      createdAt: dateValue(row.created_at)!,
     }));
   }
 
@@ -339,6 +374,22 @@ export class OrderService {
       reason: row.reason,
       createdAt: dateValue(row.created_at),
     }));
+  }
+
+  /** Shared status transition used by order flows and driver-offer assignment. */
+  async applyStatusTransition(
+    tx: SQL,
+    order: { id: string; status: OrderStatus; version: number },
+    to: OrderStatus,
+    actor: {
+      accountId: string | null;
+      actorType: ActorType;
+      source: ActionSource;
+      reason?: string | null;
+    },
+    now: Date,
+  ) {
+    return this.transition(tx, order, to, actor, now);
   }
 
   private async transition(
@@ -415,6 +466,12 @@ export class OrderService {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid idempotencyKey");
     if (input.paymentMethod !== "CASH" && input.paymentMethod !== "ONLINE")
       throw new AppError(422, "VALIDATION_FAILED", "Invalid paymentMethod");
+    if (input.paymentMethod === "ONLINE")
+      throw new AppError(
+        409,
+        "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED",
+        "Online payment is not confirmed",
+      );
 
     const canonical = {
       storeId: input.storeId,
@@ -701,6 +758,10 @@ export class OrderService {
           ${order.id}, ${order.status}, ${customerAccountId}, 'CUSTOMER',
           'CUSTOMER_APP', ${cleaned}
         )`;
+      await tx`
+        update order_offer_rounds
+        set status = 'CANCELLED', closed_at = ${now}, updated_at = ${now}
+        where order_id = ${order.id} and status = 'OPEN'`;
     });
     return this.getForCustomer(customerAccountId, cityId, orderId);
   }
@@ -856,6 +917,10 @@ export class OrderService {
           ${order.id}, ${order.status}, ${identity.accountId}, 'STAFF',
           'DASHBOARD', ${cleaned}
         )`;
+      await tx`
+        update order_offer_rounds
+        set status = 'CANCELLED', closed_at = ${now}, updated_at = ${now}
+        where order_id = ${order.id} and status = 'OPEN'`;
     });
     return this.getForDashboard(identity, orderId);
   }
@@ -883,13 +948,16 @@ export class OrderService {
           products_subtotal: number;
           delivery_fee: number;
           total: number;
+          payment_method: string;
+          payment_status: string;
         }[]
       >`select id::text, status::text, version, store_id::text, products_subtotal,
-               delivery_fee, total
+               delivery_fee, total, payment_method::text, payment_status::text
         from orders where id = ${orderId} and city_id = ${scopedCityId} for update`;
       if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
       if (merchantStoreId && order.store_id !== merchantStoreId)
         throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+      assertPaymentAllowsMutation(order);
       if (!mayApprove(order.status))
         throw new AppError(
           409,
@@ -1011,13 +1079,16 @@ export class OrderService {
           products_subtotal: number;
           delivery_fee: number;
           total: number;
+          payment_method: string;
+          payment_status: string;
         }[]
       >`select id::text, status::text, version, store_id::text, products_subtotal,
-               delivery_fee, total
+               delivery_fee, total, payment_method::text, payment_status::text
         from orders where id = ${orderId} and city_id = ${scopedCityId} for update`;
       if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
       if (scope.kind === "MERCHANT" && order.store_id !== scope.storeId)
         throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+      assertPaymentAllowsMutation(order);
       if (!mayReplaceItems(order.status))
         throw new AppError(
           409,

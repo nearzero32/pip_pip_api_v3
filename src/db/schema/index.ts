@@ -10,3 +10,4 @@ export * from "./carts";
 export * from "./customer-addresses";
 export * from "./delivery-pricing";
 export * from "./orders";
+export * from "./driver-offers";

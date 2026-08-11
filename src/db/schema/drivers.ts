@@ -11,6 +11,7 @@ import {
   driverOperationalStatus,
   driverReviewAction,
 } from "./enums";
+import { cities } from "./geography";
 
 export const driverApplications = pgTable(
   "driver_applications",
@@ -41,6 +42,7 @@ export const driverProfiles = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     accountId: uuid("account_id").notNull().unique().references(() => accounts.id),
+    cityId: uuid("city_id").references(() => cities.id),
     approvalStatus: driverApprovalStatus("approval_status").notNull().default("APPROVED"),
     operationalStatus: driverOperationalStatus("operational_status").notNull().default("PENDING_ACTIVATION"),
     approvedApplicationId: uuid("approved_application_id").notNull().unique().references(() => driverApplications.id),
@@ -54,7 +56,12 @@ export const driverProfiles = pgTable(
   },
   (table) => [
     index("driver_profiles_operational_status_idx").on(table.operationalStatus),
+    index("driver_profiles_city_operational_idx").on(table.cityId, table.operationalStatus),
     check("driver_profiles_active_photo_chk", sql`${table.operationalStatus} <> 'ACTIVE' or ${table.driverPhotoObjectKey} is not null`),
+    check(
+      "driver_profiles_active_city_chk",
+      sql`${table.operationalStatus} <> 'ACTIVE' or ${table.cityId} is not null`,
+    ),
   ],
 );
 

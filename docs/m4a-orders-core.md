@@ -54,7 +54,14 @@ Order creation persists immutable product lines, address snapshot, and delivery-
 
 ## Payment boundary
 
-Methods: `CASH` → `UNPAID`; `ONLINE` → `AWAITING_PAYMENT`. No payment provider is integrated in M4-A. Orders are never marked `PAID` without verified confirmation. `ORDER_ONLINE_PAYMENT_NOT_CONFIRMED` is reserved for a future confirmation gate. Card data is never stored.
+Schema supports `CASH` and `ONLINE` payment methods and payment statuses (`UNPAID`, `AWAITING_PAYMENT`, `PAID`, `FAILED`).
+
+Operational creation in M4-A:
+
+- `CASH` orders are created as `UNPAID` and enter `UNDER_STORE_REVIEW`.
+- `ONLINE` creation is rejected with `ORDER_ONLINE_PAYMENT_NOT_CONFIRMED`. No order, items, snapshots, status history, or idempotency-success row is written. ONLINE remains schema-supported for a future trusted payment-provider / webhook confirmation flow; until that exists, ONLINE must not become an operational order.
+
+Approve and item-replace independently reject any non-`CASH` order whose `paymentStatus` is not `PAID` (same `ORDER_ONLINE_PAYMENT_NOT_CONFIRMED`), so unverified online rows cannot be mutated even if inserted outside the create API. Card data and payment credentials are never stored.
 
 ## Idempotency
 
@@ -62,7 +69,7 @@ Methods: `CASH` → `UNPAID`; `ONLINE` → `AWAITING_PAYMENT`. No payment provid
 
 ## Deferred (next milestones)
 
-- Online payment-provider integration and webhook confirmation
+- Online payment-provider integration, webhook confirmation, and operational ONLINE order creation
 - Refunds
 - Driver search / dispatch (`SEARCHING_DRIVER` and later transitions)
 - Driver acceptance, pickup, arrival, delivery actions

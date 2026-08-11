@@ -9,6 +9,7 @@ import type { AuthenticationContext, AuthApplication } from "../core/context";
 import type { SecurityAuditWriter } from "../audit/audit-writer";
 import { loadTrustedDashboardContext } from "../staff/dashboard-scope";
 import { loadTrustedMerchantContext } from "../merchant/merchant-scope";
+import { loadTrustedDriverContext } from "../mobile/driver/driver-scope";
 import { requireSuperAdmin as assertSuperAdmin } from "../staff/authorization";
 
 export type AuthIdentity = {
@@ -91,13 +92,17 @@ export class SessionService {
       context.applicationType === "MERCHANT_APP"
         ? await loadTrustedMerchantContext(this.client, accountId)
         : null;
+    const driver =
+      context.applicationType === "DRIVER_APP"
+        ? await loadTrustedDriverContext(this.client, accountId)
+        : null;
     const access = await this.tokens.sign({
       accountId,
       sessionId: created.sessionId,
       applicationType: context.applicationType,
       roles: dashboard?.roles ?? [],
       scopeType: dashboard?.scopeType ?? null,
-      cityId: dashboard?.cityId ?? merchant?.cityId ?? null,
+      cityId: dashboard?.cityId ?? merchant?.cityId ?? driver?.cityId ?? null,
       storeId: merchant?.storeId ?? null,
     });
     return {
@@ -170,6 +175,17 @@ export class SessionService {
         ...identity,
         cityId: merchant.cityId,
         storeId: merchant.storeId,
+      };
+    }
+    if (context.applicationType === "DRIVER_APP") {
+      const driver = await loadTrustedDriverContext(
+        this.client,
+        identity.accountId,
+      );
+      return {
+        ...identity,
+        cityId: driver.cityId,
+        storeId: null,
       };
     }
     return identity;

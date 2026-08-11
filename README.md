@@ -161,4 +161,4 @@ No schema column stores plaintext passwords, OTPs, raw access/refresh/reset toke
 
 ## Intentionally deferred
 
-MFA, TOTP application behavior, recovery codes, password reset, forgot-password, staff invitations, real SMS delivery, driver onboarding/submission/review, pricing/delivery fees, Orders, Carts, Merchants, Wallets, Notifications, object storage, v2 migration, queues, background jobs, and frontend code are not implemented. Existing M1 tables for deferred MFA/reset foundations remain unused.
+MFA, TOTP application behavior, recovery codes, password reset, forgot-password, staff invitations, real SMS delivery, driver onboarding/submission/review, wallets, notifications, v2 migration, queues, background jobs, Socket.IO in the main API, driver cancel/reoffer, GPS-based assignment, and frontend code are not implemented. Existing M1 tables for deferred MFA/reset foundations remain unused.

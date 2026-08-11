@@ -99,11 +99,13 @@ describe("PostgreSQL identity foundation", () => {
           >`select count(*)::text as count from permissions`
         )[0]?.count,
       ),
-    ).toBe(38);
+    ).toBe(43);
     const permissionCodes = await client<
       { code: string }[]
     >`select code from permissions order by code`;
     expect(permissionCodes.map((row) => row.code)).toEqual([
+      "city_driver_pricing.manage",
+      "city_driver_pricing.read",
       "main_categories.archive",
       "main_categories.create",
       "main_categories.read",
@@ -118,7 +120,10 @@ describe("PostgreSQL identity foundation", () => {
       "modifiers.create",
       "modifiers.read",
       "modifiers.update",
+      "order_offers.manage",
+      "order_offers.read",
       "orders.approve",
+      "orders.assign",
       "orders.cancel",
       "orders.items.replace",
       "orders.read",

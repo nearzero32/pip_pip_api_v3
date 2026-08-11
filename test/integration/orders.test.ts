@@ -319,19 +319,114 @@ describe("M4-A Orders Core", () => {
     expect(openCount[0]!.count).toBe(1);
   });
 
-  test("ONLINE creates AWAITING_PAYMENT and never auto-marks PAID", async () => {
-    const order = await h.orders.create(customer, city, createBody({
-      paymentMethod: "ONLINE",
-      idempotencyKey: `online-${crypto.randomUUID()}`,
-    }));
-    expect(order).toMatchObject({
-      paymentMethod: "ONLINE",
-      paymentStatus: "AWAITING_PAYMENT",
-      status: "UNDER_STORE_REVIEW",
+  test("ONLINE creation is rejected atomically with ORDER_ONLINE_PAYMENT_NOT_CONFIRMED", async () => {
+    const before = await h.client<{
+      orders: number;
+      items: number;
+      history: number;
+      addresses: number;
+      pricing: number;
+      idem: number;
+    }[]>`
+      select
+        (select count(*)::int from orders) orders,
+        (select count(*)::int from order_items) items,
+        (select count(*)::int from order_status_history) history,
+        (select count(*)::int from order_address_snapshots) addresses,
+        (select count(*)::int from order_delivery_pricing_snapshots) pricing,
+        (select count(*)::int from order_idempotency_keys) idem`;
+    const key = `online-${crypto.randomUUID()}`;
+    await expect(
+      h.orders.create(customer, city, createBody({
+        paymentMethod: "ONLINE",
+        idempotencyKey: key,
+      })),
+    ).rejects.toMatchObject({ publicCode: "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED" });
+    const http = await h.app.handle(
+      jsonRequest("/api/v1/mobile/customer/orders", {
+        token,
+        headers: { "x-city-id": city },
+        body: createBody({
+          paymentMethod: "ONLINE",
+          idempotencyKey: `http-online-${crypto.randomUUID()}`,
+        }),
+      }),
+    );
+    expect(http.status).toBe(409);
+    expect(await http.json()).toMatchObject({
+      error: { code: "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED" },
     });
-    const paid = await h.client<{ count: number }[]>`
-      select count(*)::int count from orders where id = ${order.id} and payment_status = 'PAID'`;
-    expect(paid[0]!.count).toBe(0);
+    const after = await h.client<{
+      orders: number;
+      items: number;
+      history: number;
+      addresses: number;
+      pricing: number;
+      idem: number;
+    }[]>`
+      select
+        (select count(*)::int from orders) orders,
+        (select count(*)::int from order_items) items,
+        (select count(*)::int from order_status_history) history,
+        (select count(*)::int from order_address_snapshots) addresses,
+        (select count(*)::int from order_delivery_pricing_snapshots) pricing,
+        (select count(*)::int from order_idempotency_keys) idem`;
+    expect(after[0]).toEqual(before[0]);
+    const idemRow = await h.client<{ count: number }[]>`
+      select count(*)::int count from order_idempotency_keys
+      where customer_account_id = ${customer} and city_id = ${city} and idempotency_key = ${key}`;
+    expect(idemRow[0]!.count).toBe(0);
+  });
+
+  test("fixture ONLINE AWAITING_PAYMENT order cannot be approved or replaced", async () => {
+    const [order] = await h.client<{ id: string }[]>`
+      insert into orders(
+        order_number, city_id, zone_id, store_id, customer_account_id, status,
+        payment_method, payment_status, products_subtotal, delivery_fee, total,
+        currency, version, status_changed_at
+      ) values (
+        ${`PP-ONLINE-${crypto.randomUUID().slice(0, 8)}`}, ${city}, ${zoneId}, ${store},
+        ${customer}, 'UNDER_STORE_REVIEW', 'ONLINE', 'AWAITING_PAYMENT',
+        1000, 1000, 2000, 'IQD', 1, now()
+      ) returning id::text`;
+    const [item] = await h.client<{ id: string }[]>`
+      insert into order_items(
+        order_id, product_id, product_name_snapshot, unit_price_snapshot,
+        modifiers_price_snapshot, quantity, line_total, state
+      ) values (
+        ${order!.id}, ${product}, 'منتج', 1000, 0, 1, 1000, 'ACTIVE'
+      ) returning id::text`;
+    await h.client`
+      insert into order_status_history(
+        order_id, from_status, to_status, entered_at, changed_by_account_id,
+        actor_type, source
+      ) values (
+        ${order!.id}, null, 'UNDER_STORE_REVIEW', now(), ${customer},
+        'CUSTOMER', 'CUSTOMER_APP'
+      )`;
+    await expect(
+      h.orders.approve(adminIdentity, order!.id, { kind: "DASHBOARD" }),
+    ).rejects.toMatchObject({ publicCode: "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED" });
+    await expect(
+      h.orders.replaceItem(
+        adminIdentity,
+        order!.id,
+        item!.id,
+        {
+          productId: productCheap,
+          quantity: 1,
+          reason: "يجب ألا يُسمح",
+          customerAgreedByPhone: true,
+        },
+        { kind: "DASHBOARD" },
+      ),
+    ).rejects.toMatchObject({ publicCode: "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED" });
+    const status = await h.client<{ status: string; version: number }[]>`
+      select status::text, version from orders where id = ${order!.id}`;
+    expect(status[0]).toMatchObject({ status: "UNDER_STORE_REVIEW", version: 1 });
+    const replacements = await h.client<{ count: number }[]>`
+      select count(*)::int count from order_item_replacements where order_id = ${order!.id}`;
+    expect(replacements[0]!.count).toBe(0);
   });
 
   test("product prices and delivery fee ignore client-supplied money fields", async () => {
@@ -622,6 +717,80 @@ describe("M4-A Orders Core", () => {
     ).rejects.toMatchObject({ publicCode: "ORDER_ITEM_UNAVAILABLE" });
   });
 
+  test("concurrent replacements against the same item produce one success", async () => {
+    const order = await h.orders.create(customer, city, createBody({
+      items: [{ productId: product, quantity: 1 }],
+      idempotencyKey: `conc-rep-${crypto.randomUUID()}`,
+    }));
+    const itemId = order.items![0]!.id as string;
+    const feeBefore = order.deliveryFee;
+    const [pricingBefore] = await h.client<
+      { delivery_fee: number; distance_meters: number; pricing_version_id: string }[]
+    >`select delivery_fee, distance_meters, pricing_version_id::text
+      from order_delivery_pricing_snapshots where order_id = ${order.id}`;
+
+    const results = await Promise.allSettled([
+      h.orders.replaceItem(
+        merchantIdentity,
+        order.id,
+        itemId,
+        {
+          productId: productExpensive,
+          quantity: 1,
+          reason: "concurrent A",
+          customerAgreedByPhone: true,
+        },
+        { kind: "MERCHANT", storeId: store },
+      ),
+      h.orders.replaceItem(
+        adminIdentity,
+        order.id,
+        itemId,
+        {
+          productId: productCheap,
+          quantity: 2,
+          reason: "concurrent B",
+          customerAgreedByPhone: true,
+        },
+        { kind: "DASHBOARD" },
+      ),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const rejectedCode = (rejected[0] as PromiseRejectedResult).reason
+      ?.publicCode as string;
+    expect([
+      "ORDER_ITEM_ALREADY_REPLACED",
+      "ORDER_INVALID_STATE",
+    ]).toContain(rejectedCode);
+
+    const winner = (fulfilled[0] as PromiseFulfilledResult<any>).value;
+    const active = (winner.items as Array<{ state: string; lineTotal: number }>).filter(
+      (i) => i.state === "ACTIVE",
+    );
+    expect(active).toHaveLength(1);
+    expect(winner.productsSubtotal).toBe(active[0]!.lineTotal);
+    expect(winner.deliveryFee).toBe(feeBefore);
+    expect(winner.total).toBe(winner.productsSubtotal + feeBefore);
+
+    const replacementItems = await h.client<{ count: number }[]>`
+      select count(*)::int count from order_items
+      where order_id = ${order.id} and replaces_order_item_id = ${itemId}`;
+    expect(replacementItems[0]!.count).toBe(1);
+    const audits = await h.client<{ count: number }[]>`
+      select count(*)::int count from order_item_replacements
+      where order_id = ${order.id} and original_order_item_id = ${itemId}`;
+    expect(audits[0]!.count).toBe(1);
+
+    const [pricingAfter] = await h.client<
+      { delivery_fee: number; distance_meters: number; pricing_version_id: string }[]
+    >`select delivery_fee, distance_meters, pricing_version_id::text
+      from order_delivery_pricing_snapshots where order_id = ${order.id}`;
+    expect(pricingAfter).toEqual(pricingBefore);
+  });
+
   test("replacement after approval fails; unauthorized employee fails", async () => {
     const order = await h.orders.create(customer, city, createBody({
       idempotencyKey: `rep-appr-${crypto.randomUUID()}`,
@@ -747,5 +916,14 @@ describe("M4-A Orders Core", () => {
       doc.paths["/api/v1/mobile/customer/orders/{orderId}/cancel"],
     ).toBeTruthy();
     expect(doc.paths["/api/v1/dashboard/orders/{orderId}/approve"]).toBeTruthy();
+    const createContract = JSON.stringify(
+      doc.paths["/api/v1/mobile/customer/orders"],
+    );
+    expect(createContract).toContain("orderNumber");
+    expect(createContract).toContain("productsSubtotal");
+    expect(createContract).not.toContain('"t.Any"');
+    expect(createContract).not.toContain("statusHistory");
+    expect(createContract).not.toContain("actorAccountId");
+    expect(createContract).not.toContain("rawCalculation");
   });
 });

@@ -58,6 +58,7 @@ export const orders = pgTable(
   },
   (table) => [
     uniqueIndex("orders_order_number_uidx").on(table.orderNumber),
+    uniqueIndex("orders_id_city_uidx").on(table.id, table.cityId),
     foreignKey({
       name: "orders_store_city_fk",
       columns: [table.storeId, table.cityId],

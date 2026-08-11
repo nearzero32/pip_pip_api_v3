@@ -152,6 +152,21 @@ export const createOpenApiPlugin = () =>
         description:
           "Authenticated Merchant Store orders: list/read, approve, and replace items during UNDER_STORE_REVIEW. No cancellation endpoint.",
       },
+      {
+        name: "Dashboard — Driver Pricing",
+        description:
+          "SUPER_ADMIN city driver fee base/stages/rounding upsert. One row per city with monotonic version.",
+      },
+      {
+        name: "Dashboard — Order Offers",
+        description:
+          "City-scoped offer rounds (open/stop/reopen/list), manual driver assignment (orders.assign), and assignment candidates. SUPER_ADMIN is blocked from city-operational offer routes.",
+      },
+      {
+        name: "Mobile — Driver Offers",
+        description:
+          "Driver spin/claim for open offer rounds and runtime availability. JWT city is trusted. Spin returns fee cards only; claim returns execution payload.",
+      },
     ],
     components: {
       securitySchemes: {

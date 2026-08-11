@@ -10,6 +10,7 @@ import { errorResponse, standardErrors } from "../auth/http/shared";
 import { requireTrustedMerchantStore } from "../auth/merchant/merchant-access";
 import {
   authIdentity,
+  dateSchema,
   pageQuery,
   paginated,
   requestIdOf,
@@ -58,6 +59,75 @@ const createBody = t.Object(
   { additionalProperties: false },
 );
 
+const orderStatus = t.Union([
+  t.Literal("UNDER_STORE_REVIEW"),
+  t.Literal("APPROVED_BY_STORE"),
+  t.Literal("SEARCHING_DRIVER"),
+  t.Literal("DRIVER_ASSIGNED"),
+  t.Literal("READY_FOR_PICKUP"),
+  t.Literal("ACCEPTED_BY_DRIVER"),
+  t.Literal("PICKED_UP"),
+  t.Literal("ARRIVED_AT_CUSTOMER"),
+  t.Literal("DELIVERED"),
+  t.Literal("CANCELLED"),
+]);
+
+const customerOrderItem = t.Object({
+  id: uuid,
+  productId: uuid,
+  selectedSizeId: t.Nullable(uuid),
+  productName: t.String(),
+  selectedSizeName: t.Nullable(t.String()),
+  unitPrice: t.Integer({ exclusiveMinimum: 0 }),
+  modifiersPrice: t.Integer({ minimum: 0 }),
+  quantity: t.Integer({ minimum: 1, maximum: 99 }),
+  lineTotal: t.Integer({ exclusiveMinimum: 0 }),
+  state: t.Union([t.Literal("ACTIVE"), t.Literal("REPLACED")]),
+  replacesOrderItemId: t.Nullable(uuid),
+  modifierSelections: t.Array(
+    t.Object({
+      modifierOptionId: uuid,
+      name: t.String(),
+      quantity: t.Integer({ minimum: 1 }),
+      unitPrice: t.Integer({ minimum: 0 }),
+    }),
+  ),
+  createdAt: dateSchema,
+});
+
+const customerOrderFields = {
+  id: uuid,
+  orderNumber: t.String(),
+  cityId: uuid,
+  zoneId: uuid,
+  storeId: uuid,
+  customerAccountId: uuid,
+  status: orderStatus,
+  paymentMethod: t.Union([t.Literal("CASH"), t.Literal("ONLINE")]),
+  paymentStatus: t.Union([
+    t.Literal("UNPAID"),
+    t.Literal("AWAITING_PAYMENT"),
+    t.Literal("PAID"),
+    t.Literal("FAILED"),
+  ]),
+  productsSubtotal: t.Integer({ minimum: 0 }),
+  deliveryFee: t.Integer({ minimum: 0 }),
+  total: t.Integer({ minimum: 0 }),
+  currency: t.Literal("IQD"),
+  version: t.Integer({ minimum: 1 }),
+  statusChangedAt: dateSchema,
+  deliveredAt: t.Nullable(dateSchema),
+  cancelledAt: t.Nullable(dateSchema),
+  createdAt: dateSchema,
+  updatedAt: dateSchema,
+};
+
+const customerOrderSummary = t.Object(customerOrderFields);
+const customerOrderDetail = t.Object({
+  ...customerOrderFields,
+  items: t.Array(customerOrderItem),
+});
+
 const replaceBody = t.Object(
   {
     productId: uuid,
@@ -90,16 +160,16 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
         return service.create(identity.accountId, city.id, {
           ...body,
           requestId: requestIdOf(set),
-        });
+        }) as any;
       },
       {
         body: createBody,
-        response: { 200: t.Any(), ...errors },
+        response: { 200: customerOrderDetail, ...errors },
         detail: {
           tags: ["Customer — Orders"],
           summary: "Create order",
           description:
-            "Creates a City-scoped order in UNDER_STORE_REVIEW with immutable product, address, and delivery-pricing snapshots. Prices and delivery fee are server-authoritative. Requires idempotencyKey. ONLINE orders are created as AWAITING_PAYMENT until a future verified payment confirmation exists.",
+            "Creates a City-scoped CASH order in UNDER_STORE_REVIEW with immutable product, address, and delivery-pricing snapshots. Prices and delivery fee are server-authoritative. Requires idempotencyKey. paymentMethod=ONLINE is rejected with ORDER_ONLINE_PAYMENT_NOT_CONFIRMED until a trusted payment confirmation flow exists; the schema retains ONLINE for that future integration.",
           security: [{ bearerAuth: [] }],
           parameters: [cityParameter],
         },
@@ -120,11 +190,11 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           city.id,
           query.page,
           query.limit,
-        );
+        ) as any;
       },
       {
         query: t.Object(pageQuery, { additionalProperties: false }),
-        response: { 200: paginated(t.Any()), ...errors },
+        response: { 200: paginated(customerOrderSummary), ...errors },
         detail: {
           tags: ["Customer — Orders"],
           summary: "List my orders",
@@ -147,11 +217,11 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           identity.accountId,
           city.id,
           params.orderId,
-        );
+        ) as any;
       },
       {
         params: t.Object({ orderId: uuid }),
-        response: { 200: t.Any(), ...errors },
+        response: { 200: customerOrderDetail, ...errors },
         detail: {
           tags: ["Customer — Orders"],
           summary: "Get my order",
@@ -175,12 +245,12 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           city.id,
           params.orderId,
           body.reason,
-        );
+        ) as any;
       },
       {
         params: t.Object({ orderId: uuid }),
         body: cancelBody,
-        response: { 200: t.Any(), ...errors },
+        response: { 200: customerOrderDetail, ...errors },
         detail: {
           tags: ["Customer — Orders"],
           summary: "Cancel my order",

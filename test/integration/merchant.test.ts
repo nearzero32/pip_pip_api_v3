@@ -223,13 +223,14 @@ describe("Merchant accounts and auth", () => {
     await harness.client`
       insert into driver_profiles(
         account_id, approved_application_id, operational_status,
-        driver_photo_object_key, access_code_hash
+        driver_photo_object_key, access_code_hash, city_id
       ) values (
         ${sharedAccount!.account_id},
         ${application!.id},
         'ACTIVE',
         'photo',
-        ${await hasher.hash("123456")}
+        ${await hasher.hash("123456")},
+        ${cityA}
       )`;
   }, 120000);
 

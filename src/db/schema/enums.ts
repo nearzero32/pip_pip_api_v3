@@ -129,10 +129,12 @@ export const orderActorType = pgEnum("order_actor_type", [
   "MERCHANT",
   "STAFF",
   "SYSTEM",
+  "DRIVER",
 ]);
 export const orderActionSource = pgEnum("order_action_source", [
   "CUSTOMER_APP",
   "MERCHANT_APP",
   "DASHBOARD",
   "SYSTEM",
+  "DRIVER_APP",
 ]);

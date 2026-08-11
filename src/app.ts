@@ -31,6 +31,9 @@ import type { DeliveryPricingService } from "./modules/delivery-pricing/delivery
 import { deliveryPricingRoutes } from "./modules/delivery-pricing/delivery-pricing.routes";
 import type { OrderService } from "./modules/orders/order.service";
 import { orderRoutes } from "./modules/orders/order.routes";
+import type { CityDriverPricingService } from "./modules/driver-offers/city-driver-pricing.service";
+import type { OfferService } from "./modules/driver-offers/offer.service";
+import { driverOfferRoutes } from "./modules/driver-offers/driver-offer.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -48,6 +51,8 @@ export interface AppDependencies extends HealthDependencies {
   customerAddressService?: CustomerAddressService;
   deliveryPricingService?: DeliveryPricingService;
   orderService?: OrderService;
+  cityDriverPricingService?: CityDriverPricingService;
+  offerService?: OfferService;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -135,6 +140,17 @@ export function createApp(dependencies: AppDependencies) {
     .use(
       dependencies.authModule && dependencies.orderService
         ? orderRoutes(dependencies.authModule, dependencies.orderService)
+        : new Elysia(),
+    )
+    .use(
+      dependencies.authModule &&
+        dependencies.cityDriverPricingService &&
+        dependencies.offerService
+        ? driverOfferRoutes(
+            dependencies.authModule,
+            dependencies.cityDriverPricingService,
+            dependencies.offerService,
+          )
         : new Elysia(),
     )
     .use(

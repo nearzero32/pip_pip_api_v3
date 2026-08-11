@@ -25,6 +25,12 @@ import { DeliveryPricingService } from "../../src/modules/delivery-pricing/deliv
 import { FakeRoutingProvider } from "../../src/modules/delivery-pricing/routing-provider";
 import { FakeActivePricingCache } from "../../src/modules/delivery-pricing/active-pricing-cache";
 import { OrderService } from "../../src/modules/orders/order.service";
+import { CityDriverPricingService } from "../../src/modules/driver-offers/city-driver-pricing.service";
+import {
+  FakeDriverRuntimeStore,
+} from "../../src/modules/driver-offers/driver-runtime";
+import { OfferService } from "../../src/modules/driver-offers/offer.service";
+import { DEFAULT_OFFER_LIMITS } from "../../src/modules/driver-offers/offer-limits";
 import { StoreService } from "../../src/modules/stores/store.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
@@ -66,6 +72,16 @@ export const integrationConfig: AppConfig = {
   osrmProfile: "driving",
   osrmTimeoutMs: 1000,
   deliveryPricingCacheTtlSeconds: 21600,
+  driverOfferSpinLimit: DEFAULT_OFFER_LIMITS.spinLimit,
+  driverOfferSpinWindowSeconds: DEFAULT_OFFER_LIMITS.spinWindowSeconds,
+  driverOfferClaimLimit: DEFAULT_OFFER_LIMITS.claimLimit,
+  driverOfferClaimWindowSeconds: DEFAULT_OFFER_LIMITS.claimWindowSeconds,
+  driverRuntimeMutationLimit: DEFAULT_OFFER_LIMITS.runtimeMutationLimit,
+  driverRuntimeMutationWindowSeconds:
+    DEFAULT_OFFER_LIMITS.runtimeMutationWindowSeconds,
+  dashboardManualAssignLimit: DEFAULT_OFFER_LIMITS.dashboardManualAssignLimit,
+  dashboardManualAssignWindowSeconds:
+    DEFAULT_OFFER_LIMITS.dashboardManualAssignWindowSeconds,
 };
 
 export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";
@@ -151,6 +167,9 @@ export type IntegrationHarness = {
   addresses: CustomerAddressService;
   deliveryPricing: DeliveryPricingService;
   orders: OrderService;
+  cityDriverPricing: CityDriverPricingService;
+  offers: OfferService;
+  driverRuntime: FakeDriverRuntimeStore;
   routingProvider: FakeRoutingProvider;
   activePricingCache: FakeActivePricingCache;
   app: ReturnType<typeof createApp>;
@@ -190,9 +209,10 @@ export async function createIntegrationHarness(options?: {
     },
   };
   const delivery = new TestOtpDelivery();
+  const rateLimiterForAuth = new InMemoryRateLimiter(() => clock.value);
   const auth = createAuthModule(
     client,
-    new InMemoryRateLimiter(() => clock.value),
+    rateLimiterForAuth,
     delivery,
     { ...integrationConfig, databaseUrl: url.toString() },
   );
@@ -226,6 +246,18 @@ export async function createIntegrationHarness(options?: {
   const activePricingCache = new FakeActivePricingCache();
   const deliveryPricing = new DeliveryPricingService(client,routingProvider,silentLogger,activePricingCache,{cacheTtlSeconds:21600,routingTimeoutMs:1000,routingProvider:"OSRM"});
   const orders = new OrderService(client, deliveryPricing);
+  const rateLimiter = new InMemoryRateLimiter(() => clock.value);
+  const driverRuntime = new FakeDriverRuntimeStore();
+  const cityDriverPricing = new CityDriverPricingService(client);
+  const offers = new OfferService(
+    client,
+    rateLimiter,
+    driverRuntime,
+    orders,
+    silentLogger,
+    "test",
+    DEFAULT_OFFER_LIMITS,
+  );
   const app = createApp({
     logger: silentLogger,
     production: false,
@@ -243,6 +275,8 @@ export async function createIntegrationHarness(options?: {
     customerAddressService: addresses,
     deliveryPricingService: deliveryPricing,
     orderService: orders,
+    cityDriverPricingService: cityDriverPricing,
+    offerService: offers,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];
@@ -266,12 +300,16 @@ export async function createIntegrationHarness(options?: {
     addresses,
     deliveryPricing,
     orders,
+    cityDriverPricing,
+    offers,
+    driverRuntime,
     routingProvider,
     activePricingCache,
     app,
     clock,
     close: async () => {
       await mediaCleanup.stop();
+      await driverRuntime.close();
       await raw.close();
       await admin.unsafe(`drop database if exists "${dbName}" with(force)`);
       await admin.close();
@@ -334,7 +372,12 @@ export async function createDriverAccount(
   phone: string,
   code: string,
   status: "ACTIVE" | "SUSPENDED" = "ACTIVE",
+  cityId?: string,
 ) {
+  let resolvedCityId = cityId ?? null;
+  if (status === "ACTIVE" && !resolvedCityId) {
+    resolvedCityId = await createActiveCity(client);
+  }
   const [account] = await client<
     { id: string }[]
   >`insert into accounts default values returning id`;
@@ -350,7 +393,7 @@ export async function createDriverAccount(
     timeCost: 2,
     parallelism: 1,
   });
-  await client`insert into driver_profiles(account_id,approved_application_id,operational_status,driver_photo_object_key,access_code_hash)values(${account!.id},${application!.id},${status},'photo',${await hasher.hash(code)})`;
+  await client`insert into driver_profiles(account_id,approved_application_id,operational_status,driver_photo_object_key,access_code_hash,city_id)values(${account!.id},${application!.id},${status},'photo',${await hasher.hash(code)},${resolvedCityId})`;
   return account!.id;
 }
 

@@ -42,6 +42,14 @@ export interface AppConfig extends DatabaseConfig, MediaConfig {
   osrmProfile: "driving";
   osrmTimeoutMs: number;
   deliveryPricingCacheTtlSeconds: number;
+  driverOfferSpinLimit: number;
+  driverOfferSpinWindowSeconds: number;
+  driverOfferClaimLimit: number;
+  driverOfferClaimWindowSeconds: number;
+  driverRuntimeMutationLimit: number;
+  driverRuntimeMutationWindowSeconds: number;
+  dashboardManualAssignLimit: number;
+  dashboardManualAssignWindowSeconds: number;
 }
 
 export class ConfigurationError extends Error {
@@ -57,8 +65,30 @@ function required(env: Record<string, string | undefined>, name: string): string
   return value;
 }
 
-function integer(env: Record<string, string | undefined>, name: string, minimum: number, maximum: number): number {
+function integer(
+  env: Record<string, string | undefined>,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number {
   const raw = required(env, name);
+  if (!/^\d+$/.test(raw)) throw new ConfigurationError(`${name} must be an integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new ConfigurationError(`${name} must be between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
+function integerWithDefault(
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const raw = env[name]?.trim();
+  if (!raw) return fallback;
   if (!/^\d+$/.test(raw)) throw new ConfigurationError(`${name} must be an integer`);
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
@@ -164,6 +194,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     osrmProfile: (()=>{const value=required(env,"OSRM_PROFILE");if(value!=="driving")throw new ConfigurationError("OSRM_PROFILE must be driving");return "driving" as const;})(),
     osrmTimeoutMs: integer(env, "OSRM_TIMEOUT_MS", 100, 30_000),
     deliveryPricingCacheTtlSeconds: integer(env,"DELIVERY_PRICING_CACHE_TTL_SECONDS",3600,86_400),
+    driverOfferSpinLimit: integerWithDefault(env, "DRIVER_OFFER_SPIN_LIMIT", 30, 1, 10_000),
+    driverOfferSpinWindowSeconds: integerWithDefault(env, "DRIVER_OFFER_SPIN_WINDOW", 60, 1, 86_400),
+    driverOfferClaimLimit: integerWithDefault(env, "DRIVER_OFFER_CLAIM_LIMIT", 20, 1, 10_000),
+    driverOfferClaimWindowSeconds: integerWithDefault(env, "DRIVER_OFFER_CLAIM_WINDOW", 60, 1, 86_400),
+    driverRuntimeMutationLimit: integerWithDefault(env, "DRIVER_RUNTIME_MUTATION_LIMIT", 20, 1, 10_000),
+    driverRuntimeMutationWindowSeconds: integerWithDefault(env, "DRIVER_RUNTIME_MUTATION_WINDOW", 60, 1, 86_400),
+    dashboardManualAssignLimit: integerWithDefault(env, "DASHBOARD_MANUAL_ASSIGN_LIMIT", 30, 1, 10_000),
+    dashboardManualAssignWindowSeconds: integerWithDefault(env, "DASHBOARD_MANUAL_ASSIGN_WINDOW", 60, 1, 86_400),
     ...loadMediaConfig(env),
   };
 }

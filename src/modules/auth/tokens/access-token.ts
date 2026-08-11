@@ -98,6 +98,13 @@ const parseMerchantScope = (payload: Record<string, unknown>) => {
   return { cityId: payload.cityId as string, storeId: payload.storeId as string };
 };
 
+const parseDriverScope = (payload: Record<string, unknown>) => {
+  if (!isUuid(payload.cityId)) {
+    throw new Error("INVALID_TOKEN");
+  }
+  return { cityId: payload.cityId as string };
+};
+
 export class Ed25519AccessTokenService {
   private privateKey: Promise<CryptoKey>;
   private publicKey: Promise<CryptoKey>;
@@ -149,6 +156,9 @@ export class Ed25519AccessTokenService {
         storeId: input.storeId ?? null,
       };
       parseMerchantScope(scopePayload);
+    } else if (input.applicationType === "DRIVER_APP") {
+      scopePayload = { cityId: input.cityId ?? null };
+      parseDriverScope(scopePayload);
     }
     const header = encodeBase64Url(
       JSON.stringify({ alg: "EdDSA", typ: "JWT", kid: this.config.keyId }),
@@ -252,6 +262,20 @@ export class Ed25519AccessTokenService {
         scopeType: null,
         cityId: scope.cityId,
         storeId: scope.storeId,
+        tokenId: p.jti,
+        expiresAt: p.exp,
+      };
+    }
+    if (expectedApplication === "DRIVER_APP") {
+      const scope = parseDriverScope(p);
+      return {
+        accountId: p.sub,
+        sessionId: p.sid,
+        applicationType: expectedApplication,
+        roles: [],
+        scopeType: null,
+        cityId: scope.cityId,
+        storeId: null,
         tokenId: p.jti,
         expiresAt: p.exp,
       };
