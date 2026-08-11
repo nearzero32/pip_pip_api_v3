@@ -6,6 +6,11 @@ import type { AuthIdentity } from "../auth/sessions/session-service";
 import { requireSuperAdmin } from "../auth/staff/authorization";
 import { dateValue } from "../geography/shared";
 import { validatePricingStages } from "./driver-fee";
+import {
+  abortOfferIdempotency,
+  beginOfferIdempotency,
+  completeOfferIdempotency,
+} from "./offer-idempotency";
 
 export type CityDriverPricingInput = {
   pricingBase: number;
@@ -24,6 +29,12 @@ export type CityDriverPricingRow = CityDriverPricingInput & {
 
 const hashPayload = (payload: unknown) =>
   createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+
+const requireIdempotencyKey = (idempotencyKey: string | null | undefined) => {
+  if (typeof idempotencyKey !== "string" || !idempotencyKey.trim())
+    throw new AppError(422, "VALIDATION_FAILED", "Idempotency-Key is required");
+  return idempotencyKey.trim();
+};
 
 const mapRow = (row: Record<string, unknown>): CityDriverPricingRow => ({
   id: String(row.id),
@@ -91,7 +102,8 @@ export class CityDriverPricingService {
       pricingStages,
     };
     const requestHash = hashPayload(canonical);
-    const key = idempotencyKey?.trim() || null;
+    const key = requireIdempotencyKey(idempotencyKey);
+    const scope = "v1:city_driver_pricing.put";
 
     return this.client.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtextextended(${`city-driver-pricing:${cityId}`}, 0))`;
@@ -101,72 +113,69 @@ export class CityDriverPricingService {
       if (!city || city.status === "ARCHIVED")
         throw new AppError(404, "CITY_NOT_FOUND", "City not found");
 
-      if (key) {
-        const [existing] = await tx<
-          { request_hash: string; response_payload: Record<string, unknown> }[]
-        >`select request_hash, response_payload
-          from offer_idempotency_keys
-          where scope = 'city_driver_pricing.put'
-            and actor_account_id = ${identity.accountId}
-            and city_id = ${cityId}
-            and idempotency_key = ${key}
-          for update`;
-        if (existing) {
-          if (existing.request_hash !== requestHash)
-            throw new AppError(
-              409,
-              "OFFER_IDEMPOTENCY_CONFLICT",
-              "Idempotency key was reused with a different payload",
-            );
-          return existing.response_payload as unknown as CityDriverPricingRow;
-        }
-      }
+      const gate = await beginOfferIdempotency(tx, {
+        scope,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey: key,
+        requestHash,
+      });
+      if (gate.kind === "replay")
+        return gate.payload as unknown as CityDriverPricingRow;
 
-      const [current] = await tx<{ version: number }[]>`
-        select version from city_driver_pricing where city_id = ${cityId} for update`;
-      const nextVersion = (current?.version ?? 0) + 1;
+      try {
+        const [current] = await tx<{ version: number }[]>`
+          select version from city_driver_pricing where city_id = ${cityId} for update`;
+        const nextVersion = (current?.version ?? 0) + 1;
 
-      const rows = await tx<Record<string, unknown>[]>`
-        insert into city_driver_pricing (
-          city_id, version, pricing_base, rounding_unit, pricing_stages,
-          updated_by_account_id
-        ) values (
-          ${cityId}, ${nextVersion}, ${input.pricingBase}, ${input.roundingUnit},
-          ${JSON.stringify(pricingStages)}::jsonb, ${identity.accountId}
-        )
-        on conflict (city_id) do update set
-          version = excluded.version,
-          pricing_base = excluded.pricing_base,
-          rounding_unit = excluded.rounding_unit,
-          pricing_stages = excluded.pricing_stages,
-          updated_by_account_id = excluded.updated_by_account_id,
-          updated_at = now()
-        returning id::text, city_id::text, version, pricing_base, rounding_unit,
-                  pricing_stages, updated_by_account_id::text, created_at, updated_at`;
-      const row = mapRow(rows[0]!);
-
-      await tx`
-        insert into audit_logs (
-          event_type, actor_account_id, actor_session_id, target_type, target_id,
-          outcome, request_correlation_id, redacted_metadata
-        ) values (
-          'CITY_DRIVER_PRICING_UPSERTED', ${identity.accountId}, ${identity.sessionId || null},
-          'CITY_DRIVER_PRICING', ${row.id}, 'SUCCESS', ${requestId},
-          ${JSON.stringify({ cityId, version: row.version })}::jsonb
-        )`;
-
-      if (key) {
-        await tx`
-          insert into offer_idempotency_keys (
-            scope, actor_account_id, city_id, idempotency_key, request_hash,
-            response_payload
+        const rows = await tx<Record<string, unknown>[]>`
+          insert into city_driver_pricing (
+            city_id, version, pricing_base, rounding_unit, pricing_stages,
+            updated_by_account_id
           ) values (
-            'city_driver_pricing.put', ${identity.accountId}, ${cityId}, ${key},
-            ${requestHash}, ${JSON.stringify(row)}::jsonb
-          )`;
-      }
+            ${cityId}, ${nextVersion}, ${input.pricingBase}, ${input.roundingUnit},
+            ${pricingStages}, ${identity.accountId}
+          )
+          on conflict (city_id) do update set
+            version = excluded.version,
+            pricing_base = excluded.pricing_base,
+            rounding_unit = excluded.rounding_unit,
+            pricing_stages = excluded.pricing_stages,
+            updated_by_account_id = excluded.updated_by_account_id,
+            updated_at = now()
+          returning id::text, city_id::text, version, pricing_base, rounding_unit,
+                    pricing_stages, updated_by_account_id::text, created_at, updated_at`;
+        const row = mapRow(rows[0]!);
 
-      return row;
+        await tx`
+          insert into audit_logs (
+            event_type, actor_account_id, actor_session_id, target_type, target_id,
+            outcome, request_correlation_id, redacted_metadata
+          ) values (
+            'CITY_DRIVER_PRICING_UPSERTED', ${identity.accountId}, ${identity.sessionId || null},
+            'CITY_DRIVER_PRICING', ${row.id}, 'SUCCESS', ${requestId},
+            ${JSON.stringify({ cityId, version: row.version })}::jsonb
+          )`;
+
+        await completeOfferIdempotency(tx, {
+          scope,
+          actorAccountId: identity.accountId,
+          cityId,
+          idempotencyKey: key,
+          httpStatus: 200,
+          payload: row as unknown as Record<string, unknown>,
+        });
+
+        return row;
+      } catch (error) {
+        await abortOfferIdempotency(tx, {
+          scope,
+          actorAccountId: identity.accountId,
+          cityId,
+          idempotencyKey: key,
+        });
+        throw error;
+      }
     });
   }
 }

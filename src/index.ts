@@ -55,9 +55,6 @@ const customerAddressService = new CustomerAddressService(database.client);
 const routingProvider = new OsrmRoutingProvider(config.osrmBaseUrl, config.osrmProfile, config.osrmTimeoutMs, logger);
 const activePricingCache = new RedisActivePricingCache(config.redisUrl);
 const deliveryPricingService = new DeliveryPricingService(database.client, routingProvider, logger, activePricingCache, {cacheTtlSeconds:config.deliveryPricingCacheTtlSeconds,routingTimeoutMs:config.osrmTimeoutMs,routingProvider:"OSRM"});
-const orderService = new OrderService(database.client, deliveryPricingService);
-const driverRuntimeStore = new DriverRuntimeStore(config.redisUrl, config.nodeEnv, logger);
-const cityDriverPricingService = new CityDriverPricingService(database.client);
 const offerLimits = loadOfferLimits({
   DRIVER_OFFER_SPIN_LIMIT: String(config.driverOfferSpinLimit),
   DRIVER_OFFER_SPIN_WINDOW: String(config.driverOfferSpinWindowSeconds),
@@ -67,7 +64,33 @@ const offerLimits = loadOfferLimits({
   DRIVER_RUNTIME_MUTATION_WINDOW: String(config.driverRuntimeMutationWindowSeconds),
   DASHBOARD_MANUAL_ASSIGN_LIMIT: String(config.dashboardManualAssignLimit),
   DASHBOARD_MANUAL_ASSIGN_WINDOW: String(config.dashboardManualAssignWindowSeconds),
+  DRIVER_RUNTIME_HYDRATE_LOCK_TTL_SECONDS: String(config.driverRuntimeHydrateLockTtlSeconds),
+  DRIVER_RUNTIME_HYDRATE_WAIT_MS: String(config.driverRuntimeHydrateWaitMs),
+  DRIVER_RUNTIME_HYDRATE_POLL_MS: String(config.driverRuntimeHydratePollMs),
+  DRIVER_LOCATION_FRESH_SECONDS: String(config.driverLocationFreshSeconds),
+  DRIVER_OFFER_SPIN_AGE_BUCKET_MS: String(config.driverOfferSpinAgeBucketMs),
+  DRIVER_OFFER_SPIN_ROTATION_WINDOW_MS: String(config.driverOfferSpinRotationWindowMs),
 });
+const driverRuntimeStore = new DriverRuntimeStore(
+  config.redisUrl,
+  config.nodeEnv,
+  logger,
+  {
+    hydration: {
+      lockTtlSeconds: offerLimits.hydrateLockTtlSeconds,
+      waitMs: offerLimits.hydrateWaitMs,
+      pollMs: offerLimits.hydratePollMs,
+    },
+    locationFreshSeconds: offerLimits.locationFreshSeconds,
+  },
+);
+const orderService = new OrderService(
+  database.client,
+  deliveryPricingService,
+  driverRuntimeStore,
+  logger,
+);
+const cityDriverPricingService = new CityDriverPricingService(database.client);
 const offerService = new OfferService(
   database.client,
   rateLimiter,
@@ -97,6 +120,7 @@ const app = createApp({
   orderService,
   cityDriverPricingService,
   offerService,
+  driverRuntime: driverRuntimeStore,
   production: config.nodeEnv === "production",
   readinessCheck: () => database.ping(),
   redisReadinessCheck: async () => {

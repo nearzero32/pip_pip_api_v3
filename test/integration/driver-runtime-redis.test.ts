@@ -5,6 +5,7 @@ import {
 } from "../../src/modules/driver-offers/driver-runtime";
 import {
   cityOpenOffersKey,
+  driverRuntimeHydrateLockKey,
   driverRuntimeKey,
   redisAppPrefix,
 } from "../../src/modules/driver-offers/redis-keys";
@@ -63,7 +64,7 @@ describe("driver runtime redis", () => {
         driverId: missDriver,
         cityId,
         eligibilityStatus: "ELIGIBLE",
-        workStatus: "AVAILABLE",
+        workStatus: "OFFLINE",
         activeOrderCount: 0,
         eligibilityVersion: 1,
         updatedAt: new Date().toISOString(),
@@ -74,9 +75,64 @@ describe("driver runtime redis", () => {
       return first;
     });
     expect(first.driverId).toBe(missDriver);
+    expect(first.workStatus).toBe("OFFLINE");
     expect(second.driverId).toBe(missDriver);
     expect(hydrations).toBe(1);
     await store.invalidateRuntime(missDriver);
+  });
+
+  test("concurrent cache miss does not stampede hydration", async () => {
+    const missDriver = crypto.randomUUID();
+    let hydrations = 0;
+    const hydrate = async () => {
+      hydrations++;
+      await Bun.sleep(80);
+      return {
+        driverId: missDriver,
+        cityId,
+        eligibilityStatus: "ELIGIBLE" as const,
+        workStatus: "OFFLINE" as const,
+        activeOrderCount: 0,
+        eligibilityVersion: 1,
+        updatedAt: new Date().toISOString(),
+      };
+    };
+    const barrier = Promise.resolve();
+    await barrier;
+    const results = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        store.getOrHydrateRuntime(missDriver, hydrate),
+      ),
+    );
+    expect(results.every((r) => r.workStatus === "OFFLINE")).toBe(true);
+    expect(hydrations).toBe(1);
+    await store.invalidateRuntime(missDriver);
+  });
+
+  test("lock expiry allows a fresh hydrate attempt", async () => {
+    const missDriver = crypto.randomUUID();
+    const short = new DriverRuntimeStore(redisUrl!, "test", silentLogger, {
+      hydration: { lockTtlSeconds: 1, waitMs: 1_500, pollMs: 50 },
+    });
+    const lockKey = driverRuntimeHydrateLockKey("test", missDriver);
+    await short.client.send("SET", [lockKey, "stale-owner", "EX", "1"]);
+    let hydrations = 0;
+    const state = await short.getOrHydrateRuntime(missDriver, async () => {
+      hydrations++;
+      return {
+        driverId: missDriver,
+        cityId,
+        eligibilityStatus: "ELIGIBLE",
+        workStatus: "OFFLINE",
+        activeOrderCount: 0,
+        eligibilityVersion: 1,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    expect(state.workStatus).toBe("OFFLINE");
+    expect(hydrations).toBe(1);
+    await short.invalidateRuntime(missDriver);
+    await short.close();
   });
 
   test("rebuild city open offers index", async () => {

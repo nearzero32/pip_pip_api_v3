@@ -8,6 +8,12 @@ export type OfferLimitsConfig = {
   runtimeMutationWindowSeconds: number;
   dashboardManualAssignLimit: number;
   dashboardManualAssignWindowSeconds: number;
+  spinAgeBucketMs: number;
+  spinRotationWindowMs: number;
+  hydrateLockTtlSeconds: number;
+  hydrateWaitMs: number;
+  hydratePollMs: number;
+  locationFreshSeconds: number;
 };
 
 export const DEFAULT_OFFER_LIMITS: OfferLimitsConfig = {
@@ -20,6 +26,12 @@ export const DEFAULT_OFFER_LIMITS: OfferLimitsConfig = {
   runtimeMutationWindowSeconds: 60,
   dashboardManualAssignLimit: 30,
   dashboardManualAssignWindowSeconds: 60,
+  spinAgeBucketMs: 60_000,
+  spinRotationWindowMs: 15_000,
+  hydrateLockTtlSeconds: 8,
+  hydrateWaitMs: 2_000,
+  hydratePollMs: 50,
+  locationFreshSeconds: 120,
 };
 
 const parseIntDefault = (
@@ -97,6 +109,48 @@ export function loadOfferLimits(
       env,
       "DASHBOARD_MANUAL_ASSIGN_WINDOW",
       DEFAULT_OFFER_LIMITS.dashboardManualAssignWindowSeconds,
+      1,
+      86_400,
+    ),
+    spinAgeBucketMs: parseIntDefault(
+      env,
+      "DRIVER_OFFER_SPIN_AGE_BUCKET_MS",
+      DEFAULT_OFFER_LIMITS.spinAgeBucketMs,
+      1_000,
+      3_600_000,
+    ),
+    spinRotationWindowMs: parseIntDefault(
+      env,
+      "DRIVER_OFFER_SPIN_ROTATION_WINDOW_MS",
+      DEFAULT_OFFER_LIMITS.spinRotationWindowMs,
+      1_000,
+      3_600_000,
+    ),
+    hydrateLockTtlSeconds: parseIntDefault(
+      env,
+      "DRIVER_RUNTIME_HYDRATE_LOCK_TTL_SECONDS",
+      DEFAULT_OFFER_LIMITS.hydrateLockTtlSeconds,
+      1,
+      60,
+    ),
+    hydrateWaitMs: parseIntDefault(
+      env,
+      "DRIVER_RUNTIME_HYDRATE_WAIT_MS",
+      DEFAULT_OFFER_LIMITS.hydrateWaitMs,
+      50,
+      30_000,
+    ),
+    hydratePollMs: parseIntDefault(
+      env,
+      "DRIVER_RUNTIME_HYDRATE_POLL_MS",
+      DEFAULT_OFFER_LIMITS.hydratePollMs,
+      10,
+      5_000,
+    ),
+    locationFreshSeconds: parseIntDefault(
+      env,
+      "DRIVER_LOCATION_FRESH_SECONDS",
+      DEFAULT_OFFER_LIMITS.locationFreshSeconds,
       1,
       86_400,
     ),

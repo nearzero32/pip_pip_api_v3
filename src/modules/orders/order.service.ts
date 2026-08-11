@@ -4,7 +4,12 @@ import { AppError } from "../../errors/app-error";
 import type { AuthIdentity } from "../auth/sessions/session-service";
 import { requireCityPermission } from "../auth/staff/authorization";
 import type { DeliveryPricingService } from "../delivery-pricing/delivery-pricing.service";
+import type {
+  DriverRuntimeStoreLike,
+  DriverWorkStatus,
+} from "../driver-offers/driver-runtime";
 import { dateValue, pageOf } from "../geography/shared";
+import type { Logger } from "../../observability/logger";
 import {
   assertTransition,
   customerMayCancel,
@@ -13,6 +18,14 @@ import {
   mayReplaceItems,
   type OrderStatus,
 } from "./order-state-machine";
+
+export type OrderCancelSideEffect = {
+  cityId: string;
+  orderId: string;
+  closedOfferIds: string[];
+  driverId: string | null;
+  remainingActiveOrders: number;
+};
 
 type ActorType = "CUSTOMER" | "MERCHANT" | "STAFF" | "SYSTEM" | "DRIVER";
 type ActionSource =
@@ -92,7 +105,11 @@ const parseSelections = (raw: unknown): SelectionInput[] => {
   const seen = new Set<string>();
   return raw.map((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value))
-      throw new AppError(422, "VALIDATION_FAILED", "Invalid modifier selection");
+      throw new AppError(
+        422,
+        "VALIDATION_FAILED",
+        "Invalid modifier selection",
+      );
     const row = value as Record<string, unknown>;
     if (
       typeof row.modifierOptionId !== "string" ||
@@ -115,7 +132,100 @@ export class OrderService {
   constructor(
     private client: SQL,
     private deliveryPricing: DeliveryPricingService,
+    private runtime: DriverRuntimeStoreLike | null = null,
+    private logger: Logger | null = null,
   ) {}
+
+  /**
+   * Close open offer rounds and active assignment for a cancelled order.
+   * Lock order (already held) → assignment → driver profile. Returns Redis side-effects.
+   */
+  private async closeAssignmentAndOffersOnCancel(
+    tx: SQL,
+    order: { id: string; cityId: string },
+    now: Date,
+  ): Promise<OrderCancelSideEffect> {
+    const closedOffers = await tx<{ id: string }[]>`
+      update order_offer_rounds
+      set status = 'CANCELLED', closed_at = ${now}, updated_at = ${now}
+      where order_id = ${order.id} and status = 'OPEN'
+      returning id::text`;
+
+    const [assignment] = await tx<
+      { id: string; driver_id: string }[]
+    >`select id::text, driver_id::text
+      from order_driver_assignments
+      where order_id = ${order.id}
+        and completed_at is null
+        and cancelled_at is null
+      for update`;
+
+    let driverId: string | null = null;
+    let remainingActiveOrders = 0;
+    if (assignment) {
+      driverId = assignment.driver_id;
+      await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-assign:${driverId}`}, 0))`;
+      await tx`
+        select account_id from driver_profiles
+        where account_id = ${driverId} for update`;
+      await tx`
+        update order_driver_assignments
+        set cancelled_at = ${now}, updated_at = ${now}
+        where id = ${assignment.id}
+          and completed_at is null
+          and cancelled_at is null`;
+      await tx`
+        update orders set driver_account_id = null, updated_at = ${now}
+        where id = ${order.id}`;
+      const [count] = await tx<{ count: number }[]>`
+        select count(*)::int as count from order_driver_assignments
+        where driver_id = ${driverId}
+          and completed_at is null and cancelled_at is null`;
+      remainingActiveOrders = count?.count ?? 0;
+    }
+
+    return {
+      cityId: order.cityId,
+      orderId: order.id,
+      closedOfferIds: closedOffers.map((row) => row.id),
+      driverId,
+      remainingActiveOrders,
+    };
+  }
+
+  private async applyCancelRuntime(effect: OrderCancelSideEffect) {
+    if (!this.runtime) return;
+    for (const offerId of effect.closedOfferIds) {
+      await this.runtime.removeOpenOffer(effect.cityId, offerId);
+    }
+    if (!effect.driverId) return;
+    try {
+      const current = await this.runtime.getRuntime(effect.driverId);
+      let workStatus: DriverWorkStatus;
+      if (effect.remainingActiveOrders > 0) workStatus = "BUSY";
+      else if (!current || current.workStatus === "OFFLINE")
+        workStatus = "OFFLINE";
+      else workStatus = "AVAILABLE";
+
+      if (current) {
+        await this.runtime.setRuntime({
+          ...current,
+          activeOrderCount: effect.remainingActiveOrders,
+          workStatus,
+          updatedAt: new Date().toISOString(),
+        });
+      } else {
+        await this.runtime.invalidateRuntime(effect.driverId);
+      }
+    } catch (error) {
+      this.logger?.error({
+        event: "driver_runtime_cancel_update_failed",
+        driver_id: effect.driverId,
+        error_name: error instanceof Error ? error.name : "UnknownError",
+      });
+      await this.runtime.invalidateRuntime(effect.driverId);
+    }
+  }
 
   private async assertActiveCustomer(tx: SQL, accountId: string) {
     const [row] = await tx<{ id: string }[]>`
@@ -179,7 +289,11 @@ export class OrderService {
         and (p.category_id is null or (sc.status = 'ACTIVE' and sc.archived_at is null))
       for share of p`;
     if (!product || !product.is_available)
-      throw new AppError(404, "ORDER_ITEM_UNAVAILABLE", "Order item is unavailable");
+      throw new AppError(
+        404,
+        "ORDER_ITEM_UNAVAILABLE",
+        "Order item is unavailable",
+      );
 
     let selectedSizeId: string | null = null;
     let selectedSizeName: string | null = null;
@@ -187,7 +301,11 @@ export class OrderService {
     const wantsSize = item.sizeId != null && item.sizeId !== undefined;
     if (product.base_price == null) {
       if (!wantsSize || typeof item.sizeId !== "string")
-        throw new AppError(422, "PRODUCT_SIZE_REQUIRED", "Product size is required");
+        throw new AppError(
+          422,
+          "PRODUCT_SIZE_REQUIRED",
+          "Product size is required",
+        );
       const [size] = await tx<{ id: string; name: string; price: number }[]>`
         select id::text, name, price
         from product_sizes
@@ -199,7 +317,11 @@ export class OrderService {
           and is_available = true
         for share`;
       if (!size)
-        throw new AppError(404, "PRODUCT_SIZE_NOT_FOUND", "Product size not found");
+        throw new AppError(
+          404,
+          "PRODUCT_SIZE_NOT_FOUND",
+          "Product size not found",
+        );
       selectedSizeId = size.id;
       selectedSizeName = size.name;
       unitPrice = size.price;
@@ -411,7 +533,11 @@ export class OrderService {
       where order_id = ${order.id} and exited_at is null
       for update`;
     if (!open)
-      throw new AppError(500, "INTERNAL_ERROR", "Order history is inconsistent");
+      throw new AppError(
+        500,
+        "INTERNAL_ERROR",
+        "Order history is inconsistent",
+      );
     const durationSeconds = Math.max(
       0,
       Math.floor((now.getTime() - new Date(open.entered_at).getTime()) / 1000),
@@ -461,8 +587,15 @@ export class OrderService {
     },
   ) {
     if (!Array.isArray(input.items) || input.items.length === 0)
-      throw new AppError(422, "ORDER_EMPTY", "Order must contain at least one item");
-    if (typeof input.idempotencyKey !== "string" || !input.idempotencyKey.trim())
+      throw new AppError(
+        422,
+        "ORDER_EMPTY",
+        "Order must contain at least one item",
+      );
+    if (
+      typeof input.idempotencyKey !== "string" ||
+      !input.idempotencyKey.trim()
+    )
       throw new AppError(422, "VALIDATION_FAILED", "Invalid idempotencyKey");
     if (input.paymentMethod !== "CASH" && input.paymentMethod !== "ONLINE")
       throw new AppError(422, "VALIDATION_FAILED", "Invalid paymentMethod");
@@ -486,20 +619,22 @@ export class OrderService {
             modifierOptionId: s.modifierOptionId,
             quantity: s.quantity ?? 1,
           }))
-          .sort((a, b) =>
-            a.modifierOptionId.localeCompare(b.modifierOptionId),
-          ),
+          .sort((a, b) => a.modifierOptionId.localeCompare(b.modifierOptionId)),
       })),
     };
     const requestHash = hashPayload(canonical);
     const idempotencyKey = input.idempotencyKey.trim();
 
     // Delivery quote outside the write lock — fail before order writes.
-    const quote = await this.deliveryPricing.estimate(customerAccountId, cityId, {
-      storeId: input.storeId,
-      addressId: input.addressId,
-      ...(input.requestId ? { requestId: input.requestId } : {}),
-    });
+    const quote = await this.deliveryPricing.estimate(
+      customerAccountId,
+      cityId,
+      {
+        storeId: input.storeId,
+        addressId: input.addressId,
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+      },
+    );
     if (!quote.publicEstimate.deliveryAvailable || !quote.snapshot)
       throw new AppError(
         409,
@@ -532,13 +667,20 @@ export class OrderService {
             "ORDER_IDEMPOTENCY_CONFLICT",
             "Idempotency key was reused with a different payload",
           );
-        return this.getForCustomer(customerAccountId, cityId, existing.order_id);
+        return this.getForCustomer(
+          customerAccountId,
+          cityId,
+          existing.order_id,
+        );
       }
 
       const lines: ValidatedLine[] = [];
       for (const item of input.items)
         lines.push(await this.validateLine(tx, cityId, input.storeId, item));
-      const productsSubtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+      const productsSubtotal = lines.reduce(
+        (sum, line) => sum + line.lineTotal,
+        0,
+      );
       const deliveryFee = deliverySnapshot.finalDeliveryFee;
       const total = productsSubtotal + deliveryFee;
       const paymentStatus =
@@ -721,11 +863,11 @@ export class OrderService {
     reason: unknown,
   ) {
     const cleaned = cleanReason(reason);
-    await this.client.begin(async (tx) => {
+    const effect = await this.client.begin(async (tx) => {
       await this.assertActiveCustomer(tx, customerAccountId);
       const [order] = await tx<
-        { id: string; status: OrderStatus; version: number }[]
-      >`select id::text, status::text, version
+        { id: string; status: OrderStatus; version: number; city_id: string }[]
+      >`select id::text, status::text, version, city_id::text
         from orders
         where id = ${orderId}
           and customer_account_id = ${customerAccountId}
@@ -758,11 +900,13 @@ export class OrderService {
           ${order.id}, ${order.status}, ${customerAccountId}, 'CUSTOMER',
           'CUSTOMER_APP', ${cleaned}
         )`;
-      await tx`
-        update order_offer_rounds
-        set status = 'CANCELLED', closed_at = ${now}, updated_at = ${now}
-        where order_id = ${order.id} and status = 'OPEN'`;
+      return this.closeAssignmentAndOffersOnCancel(
+        tx,
+        { id: order.id, cityId: order.city_id },
+        now,
+      );
     });
+    await this.applyCancelRuntime(effect);
     return this.getForCustomer(customerAccountId, cityId, orderId);
   }
 
@@ -885,10 +1029,10 @@ export class OrderService {
       "orders.cancel",
     );
     const cleaned = cleanReason(reason);
-    await this.client.begin(async (tx) => {
+    const effect = await this.client.begin(async (tx) => {
       const [order] = await tx<
-        { id: string; status: OrderStatus; version: number }[]
-      >`select id::text, status::text, version
+        { id: string; status: OrderStatus; version: number; city_id: string }[]
+      >`select id::text, status::text, version, city_id::text
         from orders where id = ${orderId} and city_id = ${cityId} for update`;
       if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
       if (!dashboardMayCancel(order.status))
@@ -918,10 +1062,21 @@ export class OrderService {
           'DASHBOARD', ${cleaned}
         )`;
       await tx`
-        update order_offer_rounds
-        set status = 'CANCELLED', closed_at = ${now}, updated_at = ${now}
-        where order_id = ${order.id} and status = 'OPEN'`;
+        insert into audit_logs (
+          event_type, actor_account_id, actor_session_id, target_type, target_id,
+          outcome, request_correlation_id, redacted_metadata
+        ) values (
+          'ORDER_CANCELLED', ${identity.accountId}, ${identity.sessionId || null},
+          'ORDER', ${order.id}, 'SUCCESS', null,
+          ${JSON.stringify({ cityId, previousStatus: order.status })}::jsonb
+        )`;
+      return this.closeAssignmentAndOffersOnCancel(
+        tx,
+        { id: order.id, cityId: order.city_id },
+        now,
+      );
     });
+    await this.applyCancelRuntime(effect);
     return this.getForDashboard(identity, orderId);
   }
 
@@ -934,7 +1089,8 @@ export class OrderService {
       scope.kind === "DASHBOARD"
         ? await requireCityPermission(this.client, identity, "orders.approve")
         : identity.cityId;
-    if (!cityId) throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
+    if (!cityId)
+      throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
     const scopedCityId = cityId;
     const merchantStoreId = scope.kind === "MERCHANT" ? scope.storeId : null;
 
@@ -968,7 +1124,11 @@ export class OrderService {
         select count(*)::int count from order_items
         where order_id = ${order.id} and state = 'ACTIVE'`;
       if (!activeCount || activeCount.count < 1)
-        throw new AppError(422, "ORDER_EMPTY", "Order must contain at least one item");
+        throw new AppError(
+          422,
+          "ORDER_EMPTY",
+          "Order must contain at least one item",
+        );
       const [sum] = await tx<{ subtotal: number }[]>`
         select coalesce(sum(line_total),0)::int subtotal from order_items
         where order_id = ${order.id} and state = 'ACTIVE'`;
@@ -995,7 +1155,8 @@ export class OrderService {
         now,
       );
     });
-    if (scope.kind === "DASHBOARD") return this.getForDashboard(identity, orderId);
+    if (scope.kind === "DASHBOARD")
+      return this.getForDashboard(identity, orderId);
     return this.getForStore(scope.storeId, scopedCityId, orderId);
   }
 
@@ -1059,7 +1220,8 @@ export class OrderService {
             "orders.items.replace",
           )
         : identity.cityId;
-    if (!cityId) throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
+    if (!cityId)
+      throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
     const scopedCityId = cityId;
     const reason = cleanReason(input.reason);
     if (input.customerAgreedByPhone !== true)
@@ -1119,14 +1281,19 @@ export class OrderService {
           "Order item was already replaced",
         );
 
-      const replacement = await this.validateLine(tx, scopedCityId, order.store_id, {
-        productId: input.productId,
-        quantity: input.quantity,
-        ...(input.sizeId !== undefined ? { sizeId: input.sizeId } : {}),
-        ...(input.modifierSelections !== undefined
-          ? { modifierSelections: input.modifierSelections }
-          : {}),
-      });
+      const replacement = await this.validateLine(
+        tx,
+        scopedCityId,
+        order.store_id,
+        {
+          productId: input.productId,
+          quantity: input.quantity,
+          ...(input.sizeId !== undefined ? { sizeId: input.sizeId } : {}),
+          ...(input.modifierSelections !== undefined
+            ? { modifierSelections: input.modifierSelections }
+            : {}),
+        },
+      );
 
       await tx`
         update order_items set state = 'REPLACED' where id = ${original.id}`;
@@ -1184,7 +1351,8 @@ export class OrderService {
           ${reason}, true
         )`;
     });
-    if (scope.kind === "DASHBOARD") return this.getForDashboard(identity, orderId);
+    if (scope.kind === "DASHBOARD")
+      return this.getForDashboard(identity, orderId);
     return this.getForStore(scope.storeId, scopedCityId, orderId);
   }
 }

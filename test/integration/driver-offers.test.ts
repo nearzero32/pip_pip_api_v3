@@ -59,7 +59,16 @@ describe("M4-B Driver Offers", () => {
 
   const approveAndOpen = async (orderId: string) => {
     await h.orders.approve(adminIdentity, orderId, { kind: "DASHBOARD" });
-    return h.offers.openRound(adminIdentity, orderId, "req", crypto.randomUUID());
+    return h.offers.openRound(
+      adminIdentity,
+      orderId,
+      "req",
+      crypto.randomUUID(),
+    );
+  };
+
+  const goOnline = async (driverId: string, cityId: string) => {
+    await h.offers.setAvailability(driverIdentity(driverId, cityId), "AVAILABLE");
   };
 
   const createApprovedSearchingOrder = async () => {
@@ -72,6 +81,18 @@ describe("M4-B Driver Offers", () => {
     });
     const round = await approveAndOpen(order.id);
     return { order, round };
+  };
+
+  const createOnlineDriver = async (cityId = city) => {
+    const driverId = await createDriverAccount(
+      h.client,
+      `+96477${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
+      "123456",
+      "ACTIVE",
+      cityId,
+    );
+    await goOnline(driverId, cityId);
+    return driverId;
   };
 
   beforeAll(async () => {
@@ -174,16 +195,9 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("spin returns at most 5 city offers with fee only", async () => {
-    const driverId = await createDriverAccount(
-      h.client,
-      `+9647704${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
-    const rounds = [];
+    const driverId = await createOnlineDriver();
     for (let i = 0; i < 6; i++) {
-      rounds.push(await createApprovedSearchingOrder());
+      await createApprovedSearchingOrder();
       await Bun.sleep(5);
     }
     const cards = await h.offers.spin(driverIdentity(driverId, city));
@@ -195,13 +209,7 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("BUSY driver cannot spin; successful claim returns orderTotal and paymentMethod", async () => {
-    const driverId = await createDriverAccount(
-      h.client,
-      `+9647705${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
+    const driverId = await createOnlineDriver();
     const { round } = await createApprovedSearchingOrder();
     const claimed = await h.offers.claim(
       driverIdentity(driverId, city),
@@ -220,20 +228,8 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("two drivers race one offer — exactly one winner", async () => {
-    const d1 = await createDriverAccount(
-      h.client,
-      `+9647706${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
-    const d2 = await createDriverAccount(
-      h.client,
-      `+9647707${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
+    const d1 = await createOnlineDriver();
+    const d2 = await createOnlineDriver();
     const { round } = await createApprovedSearchingOrder();
     const results = await Promise.allSettled([
       h.offers.claim(driverIdentity(d1, city), round.id, crypto.randomUUID(), "r1"),
@@ -253,13 +249,7 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("one driver cannot self-claim two active orders", async () => {
-    const driverId = await createDriverAccount(
-      h.client,
-      `+9647708${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
+    const driverId = await createOnlineDriver();
     const a = await createApprovedSearchingOrder();
     const b = await createApprovedSearchingOrder();
     const results = await Promise.allSettled([
@@ -275,13 +265,7 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("manual second assignment allowed; third rejected; SUPER_ADMIN blocked", async () => {
-    const driverId = await createDriverAccount(
-      h.client,
-      `+9647709${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
+    const driverId = await createOnlineDriver();
     const first = await createApprovedSearchingOrder();
     await h.offers.claim(
       driverIdentity(driverId, city),
@@ -322,20 +306,8 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("claim vs manual assignment — exactly one winner", async () => {
-    const driverId = await createDriverAccount(
-      h.client,
-      `+9647710${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
-    const otherDriver = await createDriverAccount(
-      h.client,
-      `+9647711${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
+    const driverId = await createOnlineDriver();
+    const otherDriver = await createOnlineDriver();
     const { order, round } = await createApprovedSearchingOrder();
     const results = await Promise.allSettled([
       h.offers.claim(
@@ -361,20 +333,8 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("cross-city claim is hidden as not found; pricing snapshot survives city price change", async () => {
-    const localDriver = await createDriverAccount(
-      h.client,
-      `+9647712${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
-    const foreignDriver = await createDriverAccount(
-      h.client,
-      `+9647713${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      otherCity,
-    );
+    const localDriver = await createOnlineDriver();
+    const foreignDriver = await createOnlineDriver(otherCity);
     const { round } = await createApprovedSearchingOrder();
     await expect(
       h.offers.claim(
@@ -403,16 +363,17 @@ describe("M4-B Driver Offers", () => {
       "snap",
     );
     expect(claimed.offeredDriverFee).toBe(1000);
+    await h.cityDriverPricing.put(
+      superIdentity,
+      city,
+      driverPricingInput,
+      "pricing-restore",
+      crypto.randomUUID(),
+    );
   });
 
   test("idempotent claim retry does not duplicate assignment", async () => {
-    const driverId = await createDriverAccount(
-      h.client,
-      `+9647714${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
+    const driverId = await createOnlineDriver();
     const { round } = await createApprovedSearchingOrder();
     const key = crypto.randomUUID();
     const first = await h.offers.claim(
@@ -435,15 +396,15 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("stale redis open offer cannot be claimed after stop", async () => {
-    const driverId = await createDriverAccount(
-      h.client,
-      `+9647715${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
-      "123456",
-      "ACTIVE",
-      city,
-    );
+    const driverId = await createOnlineDriver();
     const { order, round } = await createApprovedSearchingOrder();
-    await h.offers.stopRound(adminIdentity, order.id, "PAUSE", "stop", crypto.randomUUID());
+    await h.offers.stopRound(
+      adminIdentity,
+      order.id,
+      "PAUSE",
+      "stop",
+      crypto.randomUUID(),
+    );
     await h.driverRuntime.publishOpenOffer({
       offerId: round.id,
       orderId: order.id,
@@ -455,8 +416,6 @@ describe("M4-B Driver Offers", () => {
       pricingVersionSnapshot: 1,
     });
     const cards = await h.offers.spin(driverIdentity(driverId, city));
-    // spin may surface stale redis then PG reconciliation should drop closed ones from effective list,
-    // or claim must fail safely.
     const stale = cards.find((c) => c.offerId === round.id);
     if (stale) {
       await expect(
@@ -468,5 +427,225 @@ describe("M4-B Driver Offers", () => {
         ),
       ).rejects.toMatchObject({ publicCode: "OFFER_NOT_OPEN" });
     }
+  });
+
+  test("cancel closes assignment and frees capacity; second task keeps BUSY", async () => {
+    const driverId = await createOnlineDriver();
+    const first = await createApprovedSearchingOrder();
+    await h.offers.claim(
+      driverIdentity(driverId, city),
+      first.round.id,
+      crypto.randomUUID(),
+      "c1",
+    );
+    const second = await createApprovedSearchingOrder();
+    await h.offers.assignDriver(
+      adminIdentity,
+      second.order.id,
+      { driverId, reason: "PEAK" },
+      crypto.randomUUID(),
+      "c2",
+    );
+    await h.orders.cancelByDashboard(adminIdentity, first.order.id, "cancel one");
+    const [active] = await h.client<{ count: number }[]>`
+      select count(*)::int as count from order_driver_assignments
+      where driver_id = ${driverId} and completed_at is null and cancelled_at is null`;
+    expect(active!.count).toBe(1);
+    const runtime = await h.driverRuntime.getRuntime(driverId);
+    expect(runtime?.workStatus).toBe("BUSY");
+    expect(runtime?.activeOrderCount).toBe(1);
+
+    await h.orders.cancelByDashboard(adminIdentity, second.order.id, "cancel two");
+    const [active2] = await h.client<{ count: number }[]>`
+      select count(*)::int as count from order_driver_assignments
+      where driver_id = ${driverId} and completed_at is null and cancelled_at is null`;
+    expect(active2!.count).toBe(0);
+  });
+
+  test("cancel last task does not promote OFFLINE to AVAILABLE", async () => {
+    const driverId = await createOnlineDriver();
+    await h.offers.setAvailability(driverIdentity(driverId, city), "OFFLINE");
+    // Force BUSY via manual assign after going offline still allows dashboard assign
+    const order = await createApprovedSearchingOrder();
+    // reopen path: order already searching — assign
+    await h.offers.assignDriver(
+      adminIdentity,
+      order.order.id,
+      { driverId, reason: "PEAK" },
+      crypto.randomUUID(),
+      "off1",
+    );
+    await h.driverRuntime.setRuntime({
+      driverId,
+      cityId: city,
+      eligibilityStatus: "ELIGIBLE",
+      workStatus: "OFFLINE",
+      activeOrderCount: 1,
+      eligibilityVersion: 1,
+      updatedAt: new Date().toISOString(),
+    });
+    await h.orders.cancelByDashboard(adminIdentity, order.order.id, "done");
+    const runtime = await h.driverRuntime.getRuntime(driverId);
+    expect(runtime?.workStatus).toBe("OFFLINE");
+    expect(runtime?.activeOrderCount).toBe(0);
+  });
+
+  test("cache miss hydrate stays OFFLINE not AVAILABLE", async () => {
+    const driverId = await createOnlineDriver();
+    await h.offers.setAvailability(driverIdentity(driverId, city), "OFFLINE");
+    await h.driverRuntime.invalidateRuntime(driverId);
+    const hydrated = await h.driverRuntime.getOrHydrateRuntime(driverId, async () => {
+      const { hydrateDriverRuntimeFromPostgres } = await import(
+        "../../src/modules/driver-offers/driver-runtime"
+      );
+      return (await hydrateDriverRuntimeFromPostgres(h.client, driverId))!;
+    });
+    expect(hydrated.workStatus).toBe("OFFLINE");
+    await expect(
+      h.offers.spin(driverIdentity(driverId, city)),
+    ).rejects.toMatchObject({ publicCode: "DRIVER_NOT_AVAILABLE" });
+  });
+
+  test("manual assign without round stores historical pricing snapshot", async () => {
+    const driverId = await createOnlineDriver();
+    const order = await h.orders.create(customer, city, {
+      storeId: store,
+      addressId,
+      paymentMethod: "CASH",
+      items: [{ productId: product, quantity: 1 }],
+      idempotencyKey: crypto.randomUUID(),
+    });
+    await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
+    // Transition to SEARCHING without leaving an open round: open then stop then assign
+    await h.offers.openRound(adminIdentity, order.id, "o", crypto.randomUUID());
+    await h.offers.stopRound(adminIdentity, order.id, "pause", "s", crypto.randomUUID());
+    // Need SEARCHING_DRIVER still — stop doesn't change order status
+    const assigned = await h.offers.assignDriver(
+      adminIdentity,
+      order.id,
+      { driverId, reason: "DIRECT" },
+      crypto.randomUUID(),
+      "direct",
+    );
+    expect(assigned.offerRoundId).toBeNull();
+    const [row] = await h.client<Record<string, unknown>[]>`
+      select pricing_base_snapshot, pricing_version_snapshot, pricing_stages_snapshot,
+             offer_round_id, driver_fee
+      from order_driver_assignments where id = ${assigned.assignmentId}`;
+    expect(row!.offer_round_id).toBeNull();
+    expect(Number(row!.pricing_base_snapshot)).toBeGreaterThan(0);
+    expect(Number(row!.pricing_version_snapshot)).toBeGreaterThan(0);
+    const feeBefore = Number(row!.driver_fee);
+    await h.cityDriverPricing.put(
+      superIdentity,
+      city,
+      {
+        pricingBase: 9000,
+        roundingUnit: 250,
+        pricingStages: [{ afterSeconds: 0, increasePercentage: 0 }],
+      },
+      "p3",
+      crypto.randomUUID(),
+    );
+    const [again] = await h.client<{ driver_fee: number; pricing_base_snapshot: number }[]>`
+      select driver_fee, pricing_base_snapshot from order_driver_assignments
+      where id = ${assigned.assignmentId}`;
+    expect(Number(again!.driver_fee)).toBe(feeBefore);
+    expect(Number(again!.pricing_base_snapshot)).not.toBe(9000);
+  });
+
+  test("idempotency key conflict and concurrent duplicate claims", async () => {
+    const driverId = await createOnlineDriver();
+    const { round } = await createApprovedSearchingOrder();
+    const key = crypto.randomUUID();
+    const results = await Promise.allSettled([
+      h.offers.claim(driverIdentity(driverId, city), round.id, key, "par1"),
+      h.offers.claim(driverIdentity(driverId, city), round.id, key, "par2"),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+    const [count] = await h.client<{ count: number }[]>`
+      select count(*)::int as count from order_driver_assignments
+      where offer_round_id = ${round.id} and cancelled_at is null`;
+    expect(count!.count).toBe(1);
+
+    const other = await createApprovedSearchingOrder();
+    await expect(
+      h.offers.claim(
+        driverIdentity(driverId, city),
+        other.round.id,
+        key,
+        "diff",
+      ),
+    ).rejects.toMatchObject({ publicCode: "IDEMPOTENCY_KEY_REUSED" });
+  });
+
+  test("candidates read model batches and includes assignment summaries", async () => {
+    const driverId = await createOnlineDriver();
+    const first = await createApprovedSearchingOrder();
+    await h.offers.claim(
+      driverIdentity(driverId, city),
+      first.round.id,
+      crypto.randomUUID(),
+      "cand1",
+    );
+    const second = await createApprovedSearchingOrder();
+    await h.offers.assignDriver(
+      adminIdentity,
+      second.order.id,
+      { driverId, reason: "PEAK" },
+      crypto.randomUUID(),
+      "cand2",
+    );
+    const listed = await h.offers.listDriverCandidates(adminIdentity, 1, 50);
+    const row = listed.data.find((d) => d.driverId === driverId);
+    expect(row).toBeTruthy();
+    expect(row!.currentOrderSummary?.assignmentSequence).toBe(1);
+    expect(row!.nextOrderSummary?.assignmentSequence).toBe(2);
+    expect(row!.driverName).toBeTruthy();
+    expect(row!.lastLocation).toBeNull();
+    expect(row!.lastLocationAt).toBeNull();
+    expect(row!.locationFreshness).toBe("MISSING");
+    expect(["FRESH", "STALE", "MISSING"]).toContain(row!.locationFreshness);
+  });
+
+  test("DB rejects incomplete assignment pricing snapshot without round", async () => {
+    const driverId = await createDriverAccount(
+      h.client,
+      `+96477${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
+      "123456",
+      "ACTIVE",
+      city,
+    );
+    const { order } = await createApprovedSearchingOrder();
+    let rejected = false;
+    try {
+      await h.client`
+        insert into order_driver_assignments (
+          order_id, driver_id, city_id, offer_round_id, assignment_source,
+          assignment_sequence, driver_fee
+        ) values (
+          ${order.id}, ${driverId}, ${city}, null, 'DASHBOARD_MANUAL', 1, 1000
+        )`;
+    } catch (error) {
+      rejected = String(error).includes(
+        "order_driver_assignments_pricing_source_chk",
+      );
+    }
+    expect(rejected).toBe(true);
+  });
+
+  test("DB rejects invalid OPEN round with closedAt set", async () => {
+    const { round } = await createApprovedSearchingOrder();
+    let rejected = false;
+    try {
+      await h.client`
+        update order_offer_rounds
+        set closed_at = now()
+        where id = ${round.id} and status = 'OPEN'`;
+    } catch (error) {
+      rejected = String(error).includes("order_offer_rounds_status_fields_chk");
+    }
+    expect(rejected).toBe(true);
   });
 });

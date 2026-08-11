@@ -13,6 +13,7 @@ import {
 
 export type DriverEligibilityStatus = "ELIGIBLE" | "INELIGIBLE";
 export type DriverWorkStatus = "AVAILABLE" | "BUSY" | "OFFLINE";
+export type LocationFreshness = "FRESH" | "STALE" | "MISSING";
 
 export type DriverRuntimeState = {
   driverId: string;
@@ -43,23 +44,49 @@ export type DriverLocationState = {
   recordedAt: string;
 };
 
-const RUNTIME_TTL_SECONDS = 86_400;
-const LOCATION_TTL_SECONDS = 120;
-const OFFER_SUMMARY_TTL_SECONDS = 86_400;
-const HYDRATE_LOCK_TTL_SECONDS = 5;
+export type HydrationLockConfig = {
+  lockTtlSeconds: number;
+  waitMs: number;
+  pollMs: number;
+};
+
+export const DEFAULT_HYDRATION_LOCK: HydrationLockConfig = {
+  lockTtlSeconds: 8,
+  waitMs: 2_000,
+  pollMs: 50,
+};
+
+export const DRIVER_RUNTIME_TTL_SECONDS = 86_400;
+export const DRIVER_LOCATION_TTL_SECONDS = 120;
+export const OFFER_SUMMARY_TTL_SECONDS = 86_400;
+
+const releaseLockScript = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0`;
 
 export class DriverRuntimeStore {
   readonly client: RedisClient;
+  private hydration: HydrationLockConfig;
+  private locationFreshSeconds: number;
 
   constructor(
     url: string,
     private environment: NodeEnvironment,
     private logger: Logger,
+    options?: {
+      hydration?: Partial<HydrationLockConfig>;
+      locationFreshSeconds?: number;
+    },
   ) {
     this.client = new RedisClient(url, {
       connectionTimeout: 3000,
       idleTimeout: 30,
     });
+    this.hydration = { ...DEFAULT_HYDRATION_LOCK, ...options?.hydration };
+    this.locationFreshSeconds =
+      options?.locationFreshSeconds ?? DRIVER_LOCATION_TTL_SECONDS;
   }
 
   async getRuntime(driverId: string): Promise<DriverRuntimeState | null> {
@@ -79,13 +106,40 @@ export class DriverRuntimeStore {
     }
   }
 
+  async mgetRuntimes(
+    driverIds: string[],
+  ): Promise<Map<string, DriverRuntimeState | null>> {
+    const out = new Map<string, DriverRuntimeState | null>();
+    if (driverIds.length === 0) return out;
+    try {
+      const keys = driverIds.map((id) =>
+        driverRuntimeKey(this.environment, id),
+      );
+      const values = (await this.client.send("MGET", keys)) as (string | null)[];
+      for (let i = 0; i < driverIds.length; i++) {
+        const raw = values[i];
+        out.set(
+          driverIds[i]!,
+          raw ? (JSON.parse(raw) as DriverRuntimeState) : null,
+        );
+      }
+    } catch (error) {
+      this.logger.warn({
+        event: "driver_runtime_mget_failed",
+        error_name: error instanceof Error ? error.name : "UnknownError",
+      });
+      for (const id of driverIds) out.set(id, null);
+    }
+    return out;
+  }
+
   async setRuntime(state: DriverRuntimeState): Promise<void> {
     try {
       await this.client.send("SET", [
         driverRuntimeKey(this.environment, state.driverId),
         JSON.stringify(state),
         "EX",
-        String(RUNTIME_TTL_SECONDS),
+        String(DRIVER_RUNTIME_TTL_SECONDS),
       ]);
     } catch (error) {
       this.logger.error({
@@ -110,8 +164,9 @@ export class DriverRuntimeStore {
   }
 
   /**
-   * Hydrate once under a short Redis lock to avoid cache stampede.
-   * PostgreSQL remains the source of truth for claim eligibility.
+   * Hydrate under a Redis lock with owner token + Lua release.
+   * Waiters poll cache until wait budget expires; they do not stampede PG.
+   * Conservative hydrate defaults workStatus to OFFLINE when no active orders.
    */
   async getOrHydrateRuntime(
     driverId: string,
@@ -119,35 +174,68 @@ export class DriverRuntimeStore {
   ): Promise<DriverRuntimeState> {
     const cached = await this.getRuntime(driverId);
     if (cached) return cached;
+
     const lockKey = driverRuntimeHydrateLockKey(this.environment, driverId);
+    const owner = crypto.randomUUID();
     let acquired = false;
     try {
       const result = await this.client.send("SET", [
         lockKey,
-        "1",
+        owner,
         "NX",
         "EX",
-        String(HYDRATE_LOCK_TTL_SECONDS),
+        String(this.hydration.lockTtlSeconds),
       ]);
       acquired = result === "OK";
     } catch {
-      acquired = false;
+      // Redis down — fall back to single PG hydrate without caching guarantee.
+      return hydrate();
     }
+
     if (!acquired) {
-      await Bun.sleep(25);
-      const again = await this.getRuntime(driverId);
-      if (again) return again;
-    }
-    const state = await hydrate();
-    await this.setRuntime(state);
-    if (acquired) {
+      const deadline = Date.now() + this.hydration.waitMs;
+      while (Date.now() < deadline) {
+        await Bun.sleep(this.hydration.pollMs);
+        const again = await this.getRuntime(driverId);
+        if (again) return again;
+      }
+      // Lock expired without cache: try to become owner once.
       try {
-        await this.client.del(lockKey);
+        const retry = await this.client.send("SET", [
+          lockKey,
+          owner,
+          "NX",
+          "EX",
+          String(this.hydration.lockTtlSeconds),
+        ]);
+        acquired = retry === "OK";
       } catch {
-        /* ignore */
+        return hydrate();
+      }
+      if (!acquired) {
+        const last = await this.getRuntime(driverId);
+        if (last) return last;
+        // Safe fallback: hydrate once; PG remains source of truth for claim.
+        return hydrate();
       }
     }
-    return state;
+
+    try {
+      const state = await hydrate();
+      await this.setRuntime(state);
+      return state;
+    } finally {
+      try {
+        await this.client.send("EVAL", [
+          releaseLockScript,
+          "1",
+          lockKey,
+          owner,
+        ]);
+      } catch {
+        /* TTL will clear */
+      }
+    }
   }
 
   async publishOpenOffer(summary: OpenOfferSummary): Promise<void> {
@@ -191,10 +279,7 @@ export class DriverRuntimeStore {
     }
   }
 
-  async listOpenOfferIds(
-    cityId: string,
-    limit: number,
-  ): Promise<string[]> {
+  async listOpenOfferIds(cityId: string, limit: number): Promise<string[]> {
     try {
       const ids = (await this.client.send("ZRANGE", [
         cityOpenOffersKey(this.environment, cityId),
@@ -231,9 +316,7 @@ export class DriverRuntimeStore {
     const key = cityOpenOffersKey(this.environment, cityId);
     try {
       await this.client.del(key);
-      for (const offer of offers) {
-        await this.publishOpenOffer(offer);
-      }
+      for (const offer of offers) await this.publishOpenOffer(offer);
     } catch (error) {
       this.logger.error({
         event: "open_offer_index_rebuild_failed",
@@ -243,20 +326,47 @@ export class DriverRuntimeStore {
     }
   }
 
-  /** Contract for a separate realtime service — API never invents locations. */
   async getLocation(driverId: string): Promise<DriverLocationState | null> {
     try {
       const raw = await this.client.get(
         driverLocationKey(this.environment, driverId),
       );
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as DriverLocationState;
-      const ageMs = Date.now() - new Date(parsed.recordedAt).getTime();
-      if (ageMs > LOCATION_TTL_SECONDS * 1000) return null;
-      return parsed;
+      return JSON.parse(raw) as DriverLocationState;
     } catch {
       return null;
     }
+  }
+
+  async mgetLocations(
+    driverIds: string[],
+  ): Promise<Map<string, DriverLocationState | null>> {
+    const out = new Map<string, DriverLocationState | null>();
+    if (driverIds.length === 0) return out;
+    try {
+      const keys = driverIds.map((id) =>
+        driverLocationKey(this.environment, id),
+      );
+      const values = (await this.client.send("MGET", keys)) as (string | null)[];
+      for (let i = 0; i < driverIds.length; i++) {
+        const raw = values[i];
+        out.set(
+          driverIds[i]!,
+          raw ? (JSON.parse(raw) as DriverLocationState) : null,
+        );
+      }
+    } catch {
+      for (const id of driverIds) out.set(id, null);
+    }
+    return out;
+  }
+
+  locationFreshness(recordedAt: string | null | undefined): LocationFreshness {
+    if (!recordedAt) return "MISSING";
+    const ageMs = Date.now() - new Date(recordedAt).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0) return "MISSING";
+    if (ageMs <= this.locationFreshSeconds * 1000) return "FRESH";
+    return "STALE";
   }
 
   async close(): Promise<void> {
@@ -264,6 +374,10 @@ export class DriverRuntimeStore {
   }
 }
 
+/**
+ * Build runtime from PostgreSQL.
+ * Active assignments → BUSY. Otherwise OFFLINE (never invent AVAILABLE).
+ */
 export async function hydrateDriverRuntimeFromPostgres(
   client: SQL,
   driverId: string,
@@ -298,7 +412,7 @@ export async function hydrateDriverRuntimeFromPostgres(
     row.operational_status === "ACTIVE";
   const activeOrderCount = Number(row.active_count);
   const workStatus: DriverWorkStatus =
-    activeOrderCount > 0 ? "BUSY" : "AVAILABLE";
+    activeOrderCount > 0 ? "BUSY" : "OFFLINE";
   return {
     driverId,
     cityId: row.city_id,
@@ -310,18 +424,23 @@ export async function hydrateDriverRuntimeFromPostgres(
   };
 }
 
-export const DRIVER_RUNTIME_TTL_SECONDS = RUNTIME_TTL_SECONDS;
-export const DRIVER_LOCATION_TTL_SECONDS = LOCATION_TTL_SECONDS;
-
 /** In-memory runtime store for integration tests (no Redis). */
 export class FakeDriverRuntimeStore {
   private runtimes = new Map<string, DriverRuntimeState>();
   private summaries = new Map<string, OpenOfferSummary>();
   private cityOffers = new Map<string, Map<string, number>>();
   private locations = new Map<string, DriverLocationState>();
+  hydrateCalls = 0;
+  locationFreshSeconds = DRIVER_LOCATION_TTL_SECONDS;
 
   async getRuntime(driverId: string): Promise<DriverRuntimeState | null> {
     return this.runtimes.get(driverId) ?? null;
+  }
+
+  async mgetRuntimes(driverIds: string[]) {
+    const out = new Map<string, DriverRuntimeState | null>();
+    for (const id of driverIds) out.set(id, this.runtimes.get(id) ?? null);
+    return out;
   }
 
   async setRuntime(state: DriverRuntimeState): Promise<void> {
@@ -338,6 +457,7 @@ export class FakeDriverRuntimeStore {
   ): Promise<DriverRuntimeState> {
     const cached = await this.getRuntime(driverId);
     if (cached) return cached;
+    this.hydrateCalls++;
     const state = await hydrate();
     await this.setRuntime(state);
     return state;
@@ -381,7 +501,20 @@ export class FakeDriverRuntimeStore {
     return this.locations.get(driverId) ?? null;
   }
 
-  /** Test helper — never used by production API paths. */
+  async mgetLocations(driverIds: string[]) {
+    const out = new Map<string, DriverLocationState | null>();
+    for (const id of driverIds) out.set(id, this.locations.get(id) ?? null);
+    return out;
+  }
+
+  locationFreshness(recordedAt: string | null | undefined): LocationFreshness {
+    if (!recordedAt) return "MISSING";
+    const ageMs = Date.now() - new Date(recordedAt).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0) return "MISSING";
+    if (ageMs <= this.locationFreshSeconds * 1000) return "FRESH";
+    return "STALE";
+  }
+
   setLocationForTest(location: DriverLocationState): void {
     this.locations.set(location.driverId, location);
   }

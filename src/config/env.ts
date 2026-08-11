@@ -50,6 +50,12 @@ export interface AppConfig extends DatabaseConfig, MediaConfig {
   driverRuntimeMutationWindowSeconds: number;
   dashboardManualAssignLimit: number;
   dashboardManualAssignWindowSeconds: number;
+  driverRuntimeHydrateLockTtlSeconds: number;
+  driverRuntimeHydrateWaitMs: number;
+  driverRuntimeHydratePollMs: number;
+  driverLocationFreshSeconds: number;
+  driverOfferSpinAgeBucketMs: number;
+  driverOfferSpinRotationWindowMs: number;
 }
 
 export class ConfigurationError extends Error {
@@ -202,6 +208,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     driverRuntimeMutationWindowSeconds: integerWithDefault(env, "DRIVER_RUNTIME_MUTATION_WINDOW", 60, 1, 86_400),
     dashboardManualAssignLimit: integerWithDefault(env, "DASHBOARD_MANUAL_ASSIGN_LIMIT", 30, 1, 10_000),
     dashboardManualAssignWindowSeconds: integerWithDefault(env, "DASHBOARD_MANUAL_ASSIGN_WINDOW", 60, 1, 86_400),
+    driverRuntimeHydrateLockTtlSeconds: integerWithDefault(env, "DRIVER_RUNTIME_HYDRATE_LOCK_TTL_SECONDS", 8, 1, 60),
+    driverRuntimeHydrateWaitMs: integerWithDefault(env, "DRIVER_RUNTIME_HYDRATE_WAIT_MS", 2_000, 50, 30_000),
+    driverRuntimeHydratePollMs: integerWithDefault(env, "DRIVER_RUNTIME_HYDRATE_POLL_MS", 50, 10, 5_000),
+    driverLocationFreshSeconds: integerWithDefault(env, "DRIVER_LOCATION_FRESH_SECONDS", 120, 1, 86_400),
+    driverOfferSpinAgeBucketMs: integerWithDefault(env, "DRIVER_OFFER_SPIN_AGE_BUCKET_MS", 60_000, 1_000, 3_600_000),
+    driverOfferSpinRotationWindowMs: integerWithDefault(env, "DRIVER_OFFER_SPIN_ROTATION_WINDOW_MS", 15_000, 1_000, 3_600_000),
     ...loadMediaConfig(env),
   };
 }

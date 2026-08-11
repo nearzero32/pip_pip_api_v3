@@ -33,6 +33,7 @@ import type { OrderService } from "./modules/orders/order.service";
 import { orderRoutes } from "./modules/orders/order.routes";
 import type { CityDriverPricingService } from "./modules/driver-offers/city-driver-pricing.service";
 import type { OfferService } from "./modules/driver-offers/offer.service";
+import type { DriverRuntimeStoreLike } from "./modules/driver-offers/driver-runtime";
 import { driverOfferRoutes } from "./modules/driver-offers/driver-offer.routes";
 
 export interface AppDependencies extends HealthDependencies {
@@ -53,6 +54,7 @@ export interface AppDependencies extends HealthDependencies {
   orderService?: OrderService;
   cityDriverPricingService?: CityDriverPricingService;
   offerService?: OfferService;
+  driverRuntime?: DriverRuntimeStoreLike;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -168,7 +170,15 @@ export function createApp(dependencies: AppDependencies) {
     )
     .use(
       dependencies.authModule
-        ? authRoutes(dependencies.authModule)
+        ? authRoutes(
+            dependencies.authModule,
+            dependencies.driverRuntime
+              ? {
+                  invalidateDriverRuntime: (driverId: string) =>
+                    dependencies.driverRuntime!.invalidateRuntime(driverId),
+                }
+              : {},
+          )
         : new Elysia(),
     )
     .use(

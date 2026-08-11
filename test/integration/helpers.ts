@@ -82,6 +82,12 @@ export const integrationConfig: AppConfig = {
   dashboardManualAssignLimit: DEFAULT_OFFER_LIMITS.dashboardManualAssignLimit,
   dashboardManualAssignWindowSeconds:
     DEFAULT_OFFER_LIMITS.dashboardManualAssignWindowSeconds,
+  driverRuntimeHydrateLockTtlSeconds: DEFAULT_OFFER_LIMITS.hydrateLockTtlSeconds,
+  driverRuntimeHydrateWaitMs: DEFAULT_OFFER_LIMITS.hydrateWaitMs,
+  driverRuntimeHydratePollMs: DEFAULT_OFFER_LIMITS.hydratePollMs,
+  driverLocationFreshSeconds: DEFAULT_OFFER_LIMITS.locationFreshSeconds,
+  driverOfferSpinAgeBucketMs: DEFAULT_OFFER_LIMITS.spinAgeBucketMs,
+  driverOfferSpinRotationWindowMs: DEFAULT_OFFER_LIMITS.spinRotationWindowMs,
 };
 
 export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";
@@ -245,9 +251,9 @@ export async function createIntegrationHarness(options?: {
   const routingProvider = new FakeRoutingProvider({ distanceMeters: 1000, durationSeconds: 120 });
   const activePricingCache = new FakeActivePricingCache();
   const deliveryPricing = new DeliveryPricingService(client,routingProvider,silentLogger,activePricingCache,{cacheTtlSeconds:21600,routingTimeoutMs:1000,routingProvider:"OSRM"});
-  const orders = new OrderService(client, deliveryPricing);
   const rateLimiter = new InMemoryRateLimiter(() => clock.value);
   const driverRuntime = new FakeDriverRuntimeStore();
+  const orders = new OrderService(client, deliveryPricing, driverRuntime, silentLogger);
   const cityDriverPricing = new CityDriverPricingService(client);
   const offers = new OfferService(
     client,
@@ -277,6 +283,7 @@ export async function createIntegrationHarness(options?: {
     orderService: orders,
     cityDriverPricingService: cityDriverPricing,
     offerService: offers,
+    driverRuntime,
   });
   const result: IntegrationHarness & {
     trackedQueries?: string[];

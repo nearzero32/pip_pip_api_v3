@@ -8,7 +8,7 @@ import type { RateLimiter } from "../auth/rate-limit/rate-limiter";
 import { requireTrustedDriverCity } from "../auth/mobile/driver/driver-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
 import { requireCityPermission } from "../auth/staff/authorization";
-import { dateValue } from "../geography/shared";
+import { dateValue, pageOf } from "../geography/shared";
 import type { OrderService } from "../orders/order.service";
 import type { OrderStatus } from "../orders/order-state-machine";
 import { computeOfferedDriverFee } from "./driver-fee";
@@ -17,10 +17,17 @@ import {
   type DriverRuntimeState,
   type DriverRuntimeStoreLike,
   type DriverWorkStatus,
+  type LocationFreshness,
   type OpenOfferSummary,
 } from "./driver-runtime";
+import {
+  abortOfferIdempotency,
+  beginOfferIdempotency,
+  completeOfferIdempotency,
+} from "./offer-idempotency";
 import type { OfferLimitsConfig } from "./offer-limits";
 import { rateLimitNamespacedKey } from "./redis-keys";
+import { rankOffersForSpin } from "./spin-rank";
 
 type OfferRoundStatus =
   | "OPEN"
@@ -88,6 +95,30 @@ type ManualAssignResult = {
   offerRoundId: string | null;
 };
 
+export type DriverOrderSummary = {
+  orderId: string;
+  orderNumber: string;
+  status: string;
+  assignmentSequence: number;
+};
+
+export type DriverCandidateRow = {
+  driverId: string;
+  driverName: string;
+  cityId: string;
+  eligibilityStatus: "ELIGIBLE" | "INELIGIBLE";
+  workStatus: DriverWorkStatus;
+  activeOrderCount: number;
+  lastLocation: {
+    latitude: number;
+    longitude: number;
+  } | null;
+  lastLocationAt: string | null;
+  locationFreshness: LocationFreshness;
+  currentOrderSummary: DriverOrderSummary | null;
+  nextOrderSummary: DriverOrderSummary | null;
+};
+
 const parseStages = (value: unknown): DriverPricingStage[] => {
   let parsed: unknown = value;
   if (typeof parsed === "string") {
@@ -103,11 +134,10 @@ const parseStages = (value: unknown): DriverPricingStage[] => {
 const hashPayload = (payload: unknown) =>
   createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 
-const rotationScore = (driverId: string, offerId: string, bucket: number) => {
-  const digest = createHash("sha256")
-    .update(`${driverId}:${offerId}:${bucket}`)
-    .digest();
-  return digest.readUInt32BE(0);
+const requireIdempotencyKey = (idempotencyKey: string | null | undefined) => {
+  if (typeof idempotencyKey !== "string" || !idempotencyKey.trim())
+    throw new AppError(422, "VALIDATION_FAILED", "Idempotency-Key is required");
+  return idempotencyKey.trim();
 };
 
 const mapRound = (row: Record<string, unknown>): OfferRoundRow => ({
@@ -163,56 +193,6 @@ export class OfferService {
         "Too many requests",
         result.retryAfterSeconds,
       );
-  }
-
-  private async readIdempotency(
-    tx: SQL,
-    scope: string,
-    actorAccountId: string,
-    cityId: string,
-    idempotencyKey: string,
-    requestHash: string,
-  ): Promise<Record<string, unknown> | null> {
-    const [existing] = await tx<
-      { request_hash: string; response_payload: Record<string, unknown> }[]
-    >`select request_hash, response_payload
-      from offer_idempotency_keys
-      where scope = ${scope}
-        and actor_account_id = ${actorAccountId}
-        and city_id = ${cityId}
-        and idempotency_key = ${idempotencyKey}
-      for update`;
-    if (!existing) return null;
-    if (existing.request_hash !== requestHash)
-      throw new AppError(
-        409,
-        "OFFER_IDEMPOTENCY_CONFLICT",
-        "Idempotency key was reused with a different payload",
-      );
-    const payload = existing.response_payload as unknown;
-    if (typeof payload === "string") {
-      return JSON.parse(payload) as Record<string, unknown>;
-    }
-    return payload as Record<string, unknown>;
-  }
-
-  private async storeIdempotency(
-    tx: SQL,
-    scope: string,
-    actorAccountId: string,
-    cityId: string,
-    idempotencyKey: string,
-    requestHash: string,
-    responsePayload: Record<string, unknown>,
-  ) {
-    await tx`
-      insert into offer_idempotency_keys (
-        scope, actor_account_id, city_id, idempotency_key, request_hash,
-        response_payload
-      ) values (
-        ${scope}, ${actorAccountId}, ${cityId}, ${idempotencyKey},
-        ${requestHash}, ${JSON.stringify(responsePayload)}::jsonb
-      )`;
   }
 
   private async audit(
@@ -280,117 +260,126 @@ export class OfferService {
       identity,
       "order_offers.manage",
     );
-    const key = idempotencyKey?.trim() || null;
+    const key = requireIdempotencyKey(idempotencyKey);
+    const scope = "v1:offer_rounds.open";
     const requestHash = hashPayload({ orderId, action: "open" });
 
     const committed = await this.client.begin(async (tx) => {
-      if (key) {
-        const cached = await this.readIdempotency(
-          tx,
-          "offer_rounds.open",
-          identity.accountId,
-          cityId,
-          key,
-          requestHash,
-        );
-        if (cached) return { round: cached as unknown as OfferRoundRow, published: false };
-      }
+      const gate = await beginOfferIdempotency(tx, {
+        scope,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey: key,
+        requestHash,
+      });
+      if (gate.kind === "replay")
+        return {
+          round: gate.payload as unknown as OfferRoundRow,
+          published: false,
+        };
 
-      const [order] = await tx<
-        {
-          id: string;
-          status: OrderStatus;
-          version: number;
-          city_id: string;
-        }[]
-      >`select id::text, status::text, version, city_id::text
-        from orders where id = ${orderId} and city_id = ${cityId} for update`;
-      if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
-
-      if (order.status === "APPROVED_BY_STORE") {
-        await this.orders.applyStatusTransition(
-          tx,
-          order,
-          "SEARCHING_DRIVER",
+      try {
+        const [order] = await tx<
           {
-            accountId: identity.accountId,
-            actorType: "STAFF",
-            source: "DASHBOARD",
-            reason: "Offer round opened",
-          },
-          new Date(),
-        );
-        order.status = "SEARCHING_DRIVER";
-        order.version += 1;
-      } else if (order.status !== "SEARCHING_DRIVER") {
-        throw new AppError(
-          409,
-          "ORDER_INVALID_STATE",
-          "Order is not eligible for an offer round",
-        );
-      }
+            id: string;
+            status: OrderStatus;
+            version: number;
+            city_id: string;
+          }[]
+        >`select id::text, status::text, version, city_id::text
+          from orders where id = ${orderId} and city_id = ${cityId} for update`;
+        if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
 
-      const [open] = await tx<{ id: string }[]>`
-        select id::text from order_offer_rounds
-        where order_id = ${orderId} and status = 'OPEN' for update`;
-      if (open)
-        throw new AppError(
-          409,
-          "OFFER_ROUND_ALREADY_OPEN",
-          "An open offer round already exists",
-        );
+        if (order.status === "APPROVED_BY_STORE") {
+          await this.orders.applyStatusTransition(
+            tx,
+            order,
+            "SEARCHING_DRIVER",
+            {
+              accountId: identity.accountId,
+              actorType: "STAFF",
+              source: "DASHBOARD",
+              reason: "Offer round opened",
+            },
+            new Date(),
+          );
+          order.status = "SEARCHING_DRIVER";
+          order.version += 1;
+        } else if (order.status !== "SEARCHING_DRIVER") {
+          throw new AppError(
+            409,
+            "ORDER_INVALID_STATE",
+            "Order is not eligible for an offer round",
+          );
+        }
 
-      const [activeAssignment] = await tx<{ id: string }[]>`
-        select id::text from order_driver_assignments
-        where order_id = ${orderId}
-          and completed_at is null and cancelled_at is null
-        for update`;
-      if (activeAssignment)
-        throw new AppError(
-          409,
-          "ORDER_ALREADY_ASSIGNED",
-          "Order already has an active driver assignment",
-        );
+        const [open] = await tx<{ id: string }[]>`
+          select id::text from order_offer_rounds
+          where order_id = ${orderId} and status = 'OPEN' for update`;
+        if (open)
+          throw new AppError(
+            409,
+            "OFFER_ROUND_ALREADY_OPEN",
+            "An open offer round already exists",
+          );
 
-      const pricing = await this.loadCityPricing(tx, cityId);
-      const [inserted] = await tx<Record<string, unknown>[]>`
-        insert into order_offer_rounds (
-          order_id, city_id, status, pricing_base_snapshot, rounding_unit_snapshot,
-          pricing_stages_snapshot, pricing_version_snapshot, created_by_account_id
-        ) values (
-          ${orderId}, ${cityId}, 'OPEN', ${pricing.pricing_base},
-          ${pricing.rounding_unit}, ${JSON.stringify(pricing.pricing_stages)}::jsonb,
-          ${pricing.version}, ${identity.accountId}
-        )
-        returning id::text, order_id::text, city_id::text, status::text, opened_at, closed_at,
-          stopped_at, stop_reason, pricing_base_snapshot, rounding_unit_snapshot,
-          pricing_stages_snapshot, pricing_version_snapshot, final_driver_fee,
-          claimed_by_driver_id::text, created_by_account_id::text, created_at, updated_at`;
-      const round = mapRound(inserted!);
+        const [activeAssignment] = await tx<{ id: string }[]>`
+          select id::text from order_driver_assignments
+          where order_id = ${orderId}
+            and completed_at is null and cancelled_at is null
+          for update`;
+        if (activeAssignment)
+          throw new AppError(
+            409,
+            "ORDER_ALREADY_ASSIGNED",
+            "Order already has an active driver assignment",
+          );
 
-      await this.audit(
-        tx,
-        "OFFER_ROUND_OPENED",
-        identity,
-        "ORDER_OFFER_ROUND",
-        round.id,
-        requestId,
-        { orderId, cityId },
-      );
+        const pricing = await this.loadCityPricing(tx, cityId);
+        const [inserted] = await tx<Record<string, unknown>[]>`
+          insert into order_offer_rounds (
+            order_id, city_id, status, pricing_base_snapshot, rounding_unit_snapshot,
+            pricing_stages_snapshot, pricing_version_snapshot, created_by_account_id
+          ) values (
+            ${orderId}, ${cityId}, 'OPEN', ${pricing.pricing_base},
+            ${pricing.rounding_unit}, ${pricing.pricing_stages},
+            ${pricing.version}, ${identity.accountId}
+          )
+          returning id::text, order_id::text, city_id::text, status::text, opened_at, closed_at,
+            stopped_at, stop_reason, pricing_base_snapshot, rounding_unit_snapshot,
+            pricing_stages_snapshot, pricing_version_snapshot, final_driver_fee,
+            claimed_by_driver_id::text, created_by_account_id::text, created_at, updated_at`;
+        const round = mapRound(inserted!);
 
-      if (key) {
-        await this.storeIdempotency(
+        await this.audit(
           tx,
-          "offer_rounds.open",
-          identity.accountId,
-          cityId,
-          key,
-          requestHash,
-          round as unknown as Record<string, unknown>,
+          "OFFER_ROUND_OPENED",
+          identity,
+          "ORDER_OFFER_ROUND",
+          round.id,
+          requestId,
+          { orderId, cityId },
         );
-      }
 
-      return { round, published: true };
+        await completeOfferIdempotency(tx, {
+          scope,
+          actorAccountId: identity.accountId,
+          cityId,
+          idempotencyKey: key,
+          httpStatus: 200,
+          payload: round as unknown as Record<string, unknown>,
+        });
+
+        return { round, published: true };
+      } catch (error) {
+        await abortOfferIdempotency(tx, {
+          scope,
+          actorAccountId: identity.accountId,
+          cityId,
+          idempotencyKey: key,
+        });
+        throw error;
+      }
     });
 
     if (committed.published)
@@ -410,73 +399,85 @@ export class OfferService {
       identity,
       "order_offers.manage",
     );
-    const cleaned =
-      typeof reason === "string" ? reason.trim() : "";
+    const cleaned = typeof reason === "string" ? reason.trim() : "";
     if (!cleaned || cleaned.length > 1000)
       throw new AppError(422, "VALIDATION_FAILED", "Invalid reason");
-    const key = idempotencyKey?.trim() || null;
-    const requestHash = hashPayload({ orderId, reason: cleaned, action: "stop" });
+    const key = requireIdempotencyKey(idempotencyKey);
+    const scope = "v1:offer_rounds.stop";
+    const requestHash = hashPayload({
+      orderId,
+      reason: cleaned,
+      action: "stop",
+    });
 
     const committed = await this.client.begin(async (tx) => {
-      if (key) {
-        const cached = await this.readIdempotency(
+      const gate = await beginOfferIdempotency(tx, {
+        scope,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey: key,
+        requestHash,
+      });
+      if (gate.kind === "replay")
+        return {
+          round: gate.payload as unknown as OfferRoundRow,
+          offerId: null as string | null,
+        };
+
+      try {
+        const [order] = await tx<{ id: string }[]>`
+          select id::text from orders where id = ${orderId} and city_id = ${cityId} for update`;
+        if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+
+        const openRows = (await tx.unsafe(
+          `select ${ROUND_SELECT} from order_offer_rounds
+           where order_id = $1 and city_id = $2 and status = 'OPEN' for update`,
+          [orderId, cityId],
+        )) as Record<string, unknown>[];
+        const open = openRows[0];
+        if (!open)
+          throw new AppError(404, "OFFER_NOT_OPEN", "No open offer round found");
+
+        const now = new Date();
+        const updated = (await tx.unsafe(
+          `update order_offer_rounds
+           set status = 'STOPPED', closed_at = $1, stopped_at = $1, stop_reason = $2,
+               updated_at = $1
+           where id = $3
+           returning ${ROUND_SELECT}`,
+          [now, cleaned, open.id],
+        )) as Record<string, unknown>[];
+        const round = mapRound(updated[0]!);
+
+        await this.audit(
           tx,
-          "offer_rounds.stop",
-          identity.accountId,
-          cityId,
-          key,
-          requestHash,
+          "OFFER_ROUND_STOPPED",
+          identity,
+          "ORDER_OFFER_ROUND",
+          round.id,
+          requestId,
+          { orderId, cityId, reason: cleaned },
         );
-        if (cached) return { round: cached as unknown as OfferRoundRow, offerId: null as string | null };
-      }
 
-      const [order] = await tx<{ id: string }[]>`
-        select id::text from orders where id = ${orderId} and city_id = ${cityId} for update`;
-      if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
-
-      const openRows = (await tx.unsafe(
-        `select ${ROUND_SELECT} from order_offer_rounds
-         where order_id = $1 and city_id = $2 and status = 'OPEN' for update`,
-        [orderId, cityId],
-      )) as Record<string, unknown>[];
-      const open = openRows[0];
-      if (!open)
-        throw new AppError(404, "OFFER_NOT_OPEN", "No open offer round found");
-
-      const now = new Date();
-      const updated = (await tx.unsafe(
-        `update order_offer_rounds
-         set status = 'STOPPED', closed_at = $1, stopped_at = $1, stop_reason = $2,
-             updated_at = $1
-         where id = $3
-         returning ${ROUND_SELECT}`,
-        [now, cleaned, open.id],
-      )) as Record<string, unknown>[];
-      const round = mapRound(updated[0]!);
-
-      await this.audit(
-        tx,
-        "OFFER_ROUND_STOPPED",
-        identity,
-        "ORDER_OFFER_ROUND",
-        round.id,
-        requestId,
-        { orderId, cityId, reason: cleaned },
-      );
-
-      if (key) {
-        await this.storeIdempotency(
-          tx,
-          "offer_rounds.stop",
-          identity.accountId,
+        await completeOfferIdempotency(tx, {
+          scope,
+          actorAccountId: identity.accountId,
           cityId,
-          key,
-          requestHash,
-          round as unknown as Record<string, unknown>,
-        );
-      }
+          idempotencyKey: key,
+          httpStatus: 200,
+          payload: round as unknown as Record<string, unknown>,
+        });
 
-      return { round, offerId: round.id };
+        return { round, offerId: round.id };
+      } catch (error) {
+        await abortOfferIdempotency(tx, {
+          scope,
+          actorAccountId: identity.accountId,
+          cityId,
+          idempotencyKey: key,
+        });
+        throw error;
+      }
     });
 
     if (committed.offerId)
@@ -496,6 +497,7 @@ export class OfferService {
       identity,
       "order_offers.manage",
     );
+    const key = requireIdempotencyKey(idempotencyKey);
     const [open] = await this.client<{ id: string }[]>`
       select id::text from order_offer_rounds
       where order_id = ${orderId} and city_id = ${cityId} and status = 'OPEN'`;
@@ -505,15 +507,10 @@ export class OfferService {
         orderId,
         reason || "Reopened",
         requestId,
-        idempotencyKey ? `${idempotencyKey}:stop` : null,
+        `${key}:stop`,
       );
     }
-    return this.openRound(
-      identity,
-      orderId,
-      requestId,
-      idempotencyKey ? `${idempotencyKey}:open` : null,
-    );
+    return this.openRound(identity, orderId, requestId, `${key}:open`);
   }
 
   async listRounds(identity: AuthIdentity, orderId: string) {
@@ -651,18 +648,13 @@ export class OfferService {
 
     const summaries = await this.loadOpenSummariesForCity(cityId);
     const now = new Date();
-    const bucket = Math.floor(now.getTime() / 15_000);
-    const ranked = [...summaries].sort((a, b) => {
-      const age =
-        new Date(a.openedAt).getTime() - new Date(b.openedAt).getTime();
-      if (age !== 0) return age;
-      return (
-        rotationScore(driverId, a.offerId, bucket) -
-        rotationScore(driverId, b.offerId, bucket)
-      );
+    const ranked = rankOffersForSpin(summaries, driverId, now, {
+      maxOffers: this.limits.maxOffersPerSpin,
+      ageBucketMs: this.limits.spinAgeBucketMs,
+      rotationWindowMs: this.limits.spinRotationWindowMs,
     });
 
-    return ranked.slice(0, this.limits.maxOffersPerSpin).map((summary) => {
+    return ranked.map((summary) => {
       const { offeredDriverFee } = computeOfferedDriverFee({
         pricingBase: summary.pricingBaseSnapshot,
         roundingUnit: summary.roundingUnitSnapshot,
@@ -767,185 +759,204 @@ export class OfferService {
     requestId: string | null = null,
   ) {
     const { driverId, cityId } = requireTrustedDriverCity(driverIdentity);
-    if (typeof idempotencyKey !== "string" || !idempotencyKey.trim())
-      throw new AppError(422, "VALIDATION_FAILED", "Idempotency-Key is required");
-    const key = idempotencyKey.trim();
+    const key = requireIdempotencyKey(idempotencyKey);
     await this.consumeLimit(
       "driver.offer.claim",
       driverId,
       this.limits.claimLimit,
       this.limits.claimWindowSeconds,
     );
+    const scope = "v1:offer.claim";
     const requestHash = hashPayload({ offerId, action: "claim" });
 
     const committed = await this.client.begin(async (tx) => {
-      const cached = await this.readIdempotency(
-        tx,
-        "offer.claim",
-        driverId,
+      const gate = await beginOfferIdempotency(tx, {
+        scope,
+        actorAccountId: driverId,
         cityId,
-        key,
+        idempotencyKey: key,
         requestHash,
-      );
-      if (cached) return { payload: cached as unknown as ClaimPayload, offerCityId: null as string | null, offerId: null as string | null };
-
-      await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-claim:${driverId}`}, 0))`;
-
-      const [driver] = await tx<
-        {
-          account_status: string;
-          approval_status: string;
-          operational_status: string;
-          city_id: string | null;
-        }[]
-      >`select a.status::text as account_status,
-               dp.approval_status::text as approval_status,
-               dp.operational_status::text as operational_status,
-               dp.city_id::text as city_id
-        from driver_profiles dp
-        join accounts a on a.id = dp.account_id
-        where dp.account_id = ${driverId}
-        for update of dp`;
-      if (
-        !driver ||
-        driver.account_status !== "ACTIVE" ||
-        driver.approval_status !== "APPROVED" ||
-        driver.operational_status !== "ACTIVE"
-      ) {
-        throw new AppError(403, "DRIVER_NOT_ELIGIBLE", "Driver is not eligible");
-      }
-      if (!driver.city_id || driver.city_id !== cityId)
-        throw new AppError(404, "CITY_MISMATCH", "Driver city mismatch");
-
-      const [activeCount] = await tx<{ count: number }[]>`
-        select count(*)::int as count from order_driver_assignments
-        where driver_id = ${driverId}
-          and completed_at is null and cancelled_at is null`;
-      if ((activeCount?.count ?? 0) !== 0)
-        throw new AppError(
-          409,
-          "DRIVER_ACTIVE_ORDER_EXISTS",
-          "Driver already has an active order",
-        );
-
-      const offerRows = (await tx.unsafe(
-        `select o.id::text as order_id, o.status::text as order_status, o.version as order_version,
-                o.city_id::text as order_city_id, o.driver_account_id::text as driver_account_id,
-                r.id::text as offer_id, r.status::text as offer_status, r.opened_at,
-                r.pricing_base_snapshot, r.rounding_unit_snapshot, r.pricing_stages_snapshot,
-                r.city_id::text as offer_city_id
-         from order_offer_rounds r
-         join orders o on o.id = r.order_id
-         where r.id = $1
-         for update of o, r`,
-        [offerId],
-      )) as Record<string, unknown>[];
-      const locked = offerRows[0];
-      if (!locked)
-        throw new AppError(404, "OFFER_NOT_FOUND", "Offer not found");
-      if (String(locked.offer_city_id) !== cityId)
-        throw new AppError(404, "OFFER_NOT_FOUND", "Offer not found");
-      if (String(locked.offer_status) !== "OPEN")
-        throw new AppError(409, "OFFER_NOT_OPEN", "Offer is not open");
-      if (String(locked.order_status) !== "SEARCHING_DRIVER")
-        throw new AppError(
-          409,
-          "ORDER_INVALID_STATE",
-          "Order is not searching for a driver",
-        );
-
-      const [orderAssignment] = await tx<{ id: string }[]>`
-        select id::text from order_driver_assignments
-        where order_id = ${String(locked.order_id)}
-          and completed_at is null and cancelled_at is null
-        for update`;
-      if (orderAssignment || locked.driver_account_id)
-        throw new AppError(
-          409,
-          "ORDER_ALREADY_ASSIGNED",
-          "Order already has an active driver assignment",
-        );
-
-      const now = new Date();
-      const { offeredDriverFee } = computeOfferedDriverFee({
-        pricingBase: Number(locked.pricing_base_snapshot),
-        roundingUnit: Number(locked.rounding_unit_snapshot),
-        pricingStages: parseStages(locked.pricing_stages_snapshot),
-        openedAt: new Date(locked.opened_at as Date | string),
-        now,
       });
+      if (gate.kind === "replay")
+        return {
+          payload: gate.payload as unknown as ClaimPayload,
+          offerCityId: null as string | null,
+          offerId: null as string | null,
+        };
 
-      await tx`
-        insert into order_driver_assignments (
-          order_id, driver_id, city_id, offer_round_id, assignment_source,
-          assignment_sequence, assigned_by_account_id, driver_fee, assigned_at
-        ) values (
-          ${String(locked.order_id)}, ${driverId}, ${cityId}, ${offerId},
-          'DRIVER_CLAIM', 1, ${driverId}, ${offeredDriverFee}, ${now}
-        )`;
+      try {
+        await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-claim:${driverId}`}, 0))`;
 
-      await tx`
-        update orders set driver_account_id = ${driverId}, updated_at = ${now}
-        where id = ${String(locked.order_id)}`;
+        const [driver] = await tx<
+          {
+            account_status: string;
+            approval_status: string;
+            operational_status: string;
+            city_id: string | null;
+          }[]
+        >`select a.status::text as account_status,
+                 dp.approval_status::text as approval_status,
+                 dp.operational_status::text as operational_status,
+                 dp.city_id::text as city_id
+          from driver_profiles dp
+          join accounts a on a.id = dp.account_id
+          where dp.account_id = ${driverId}
+          for update of dp`;
+        if (
+          !driver ||
+          driver.account_status !== "ACTIVE" ||
+          driver.approval_status !== "APPROVED" ||
+          driver.operational_status !== "ACTIVE"
+        ) {
+          throw new AppError(
+            403,
+            "DRIVER_NOT_ELIGIBLE",
+            "Driver is not eligible",
+          );
+        }
+        if (!driver.city_id || driver.city_id !== cityId)
+          throw new AppError(404, "CITY_MISMATCH", "Driver city mismatch");
 
-      await this.orders.applyStatusTransition(
-        tx,
-        {
-          id: String(locked.order_id),
-          status: String(locked.order_status) as OrderStatus,
-          version: Number(locked.order_version),
-        },
-        "DRIVER_ASSIGNED",
-        {
-          accountId: driverId,
-          actorType: "DRIVER",
-          source: "DRIVER_APP",
-          reason: "Driver claimed offer",
-        },
-        now,
-      );
+        const [activeCount] = await tx<{ count: number }[]>`
+          select count(*)::int as count from order_driver_assignments
+          where driver_id = ${driverId}
+            and completed_at is null and cancelled_at is null`;
+        if ((activeCount?.count ?? 0) !== 0)
+          throw new AppError(
+            409,
+            "DRIVER_ACTIVE_ORDER_EXISTS",
+            "Driver already has an active order",
+          );
 
-      await tx`
-        update order_offer_rounds
-        set status = 'CLAIMED', closed_at = ${now}, final_driver_fee = ${offeredDriverFee},
-            claimed_by_driver_id = ${driverId}, updated_at = ${now}
-        where id = ${offerId}`;
+        const offerRows = (await tx.unsafe(
+          `select o.id::text as order_id, o.status::text as order_status, o.version as order_version,
+                  o.city_id::text as order_city_id, o.driver_account_id::text as driver_account_id,
+                  r.id::text as offer_id, r.status::text as offer_status, r.opened_at,
+                  r.pricing_base_snapshot, r.rounding_unit_snapshot, r.pricing_stages_snapshot,
+                  r.city_id::text as offer_city_id
+           from order_offer_rounds r
+           join orders o on o.id = r.order_id
+           where r.id = $1
+           for update of o, r`,
+          [offerId],
+        )) as Record<string, unknown>[];
+        const locked = offerRows[0];
+        if (!locked)
+          throw new AppError(404, "OFFER_NOT_FOUND", "Offer not found");
+        if (String(locked.offer_city_id) !== cityId)
+          throw new AppError(404, "OFFER_NOT_FOUND", "Offer not found");
+        if (String(locked.offer_status) !== "OPEN")
+          throw new AppError(409, "OFFER_NOT_OPEN", "Offer is not open");
+        if (String(locked.order_status) !== "SEARCHING_DRIVER")
+          throw new AppError(
+            409,
+            "ORDER_INVALID_STATE",
+            "Order is not searching for a driver",
+          );
 
-      const payload = await this.loadClaimPayload(
-        tx,
-        String(locked.order_id),
-        offeredDriverFee,
-      );
+        const [orderAssignment] = await tx<{ id: string }[]>`
+          select id::text from order_driver_assignments
+          where order_id = ${String(locked.order_id)}
+            and completed_at is null and cancelled_at is null
+          for update`;
+        if (orderAssignment || locked.driver_account_id)
+          throw new AppError(
+            409,
+            "ORDER_ALREADY_ASSIGNED",
+            "Order already has an active driver assignment",
+          );
 
-      await this.audit(
-        tx,
-        "OFFER_CLAIMED",
-        driverIdentity,
-        "ORDER_OFFER_ROUND",
-        offerId,
-        requestId,
-        { orderId: payload.orderId, driverId, offeredDriverFee },
-      );
+        const now = new Date();
+        const { offeredDriverFee } = computeOfferedDriverFee({
+          pricingBase: Number(locked.pricing_base_snapshot),
+          roundingUnit: Number(locked.rounding_unit_snapshot),
+          pricingStages: parseStages(locked.pricing_stages_snapshot),
+          openedAt: new Date(locked.opened_at as Date | string),
+          now,
+        });
 
-      await this.storeIdempotency(
-        tx,
-        "offer.claim",
-        driverId,
-        cityId,
-        key,
-        requestHash,
-        payload as unknown as Record<string, unknown>,
-      );
+        await tx`
+          insert into order_driver_assignments (
+            order_id, driver_id, city_id, offer_round_id, assignment_source,
+            assignment_sequence, assigned_by_account_id, driver_fee, assigned_at
+          ) values (
+            ${String(locked.order_id)}, ${driverId}, ${cityId}, ${offerId},
+            'DRIVER_CLAIM', 1, ${driverId}, ${offeredDriverFee}, ${now}
+          )`;
 
-      return {
-        payload,
-        offerCityId: cityId,
-        offerId,
-      };
+        await tx`
+          update orders set driver_account_id = ${driverId}, updated_at = ${now}
+          where id = ${String(locked.order_id)}`;
+
+        await this.orders.applyStatusTransition(
+          tx,
+          {
+            id: String(locked.order_id),
+            status: String(locked.order_status) as OrderStatus,
+            version: Number(locked.order_version),
+          },
+          "DRIVER_ASSIGNED",
+          {
+            accountId: driverId,
+            actorType: "DRIVER",
+            source: "DRIVER_APP",
+            reason: "Driver claimed offer",
+          },
+          now,
+        );
+
+        await tx`
+          update order_offer_rounds
+          set status = 'CLAIMED', closed_at = ${now}, final_driver_fee = ${offeredDriverFee},
+              claimed_by_driver_id = ${driverId}, updated_at = ${now}
+          where id = ${offerId}`;
+
+        const payload = await this.loadClaimPayload(
+          tx,
+          String(locked.order_id),
+          offeredDriverFee,
+        );
+
+        await this.audit(
+          tx,
+          "OFFER_CLAIMED",
+          driverIdentity,
+          "ORDER_OFFER_ROUND",
+          offerId,
+          requestId,
+          { orderId: payload.orderId, driverId, offeredDriverFee },
+        );
+
+        await completeOfferIdempotency(tx, {
+          scope,
+          actorAccountId: driverId,
+          cityId,
+          idempotencyKey: key,
+          httpStatus: 200,
+          payload: payload as unknown as Record<string, unknown>,
+        });
+
+        return {
+          payload,
+          offerCityId: cityId,
+          offerId,
+        };
+      } catch (error) {
+        await abortOfferIdempotency(tx, {
+          scope,
+          actorAccountId: driverId,
+          cityId,
+          idempotencyKey: key,
+        });
+        throw error;
+      }
     });
 
     if (committed.offerId && committed.offerCityId) {
-      await this.runtime.removeOpenOffer(committed.offerCityId, committed.offerId);
+      await this.runtime.removeOpenOffer(
+        committed.offerCityId,
+        committed.offerId,
+      );
       const runtimeState: DriverRuntimeState = {
         driverId,
         cityId,
@@ -987,7 +998,8 @@ export class OfferService {
         : String(input.reason).trim() || null;
     if (reason && reason.length > 1000)
       throw new AppError(422, "VALIDATION_FAILED", "Invalid reason");
-    const key = idempotencyKey?.trim() || null;
+    const key = requireIdempotencyKey(idempotencyKey);
+    const scope = "v1:orders.assign_driver";
     const requestHash = hashPayload({
       orderId,
       driverId: input.driverId,
@@ -996,95 +1008,193 @@ export class OfferService {
     });
 
     const committed = await this.client.begin(async (tx) => {
-      if (key) {
-        const cached = await this.readIdempotency(
-          tx,
-          "orders.assign_driver",
-          identity.accountId,
-          cityId,
-          key,
-          requestHash,
-        );
-        if (cached)
-          return {
-            result: cached as unknown as ManualAssignResult,
-            removeOfferId: null as string | null,
-            driverId: input.driverId,
-            activeCount: 0,
-          };
-      }
+      const gate = await beginOfferIdempotency(tx, {
+        scope,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey: key,
+        requestHash,
+      });
+      if (gate.kind === "replay")
+        return {
+          result: gate.payload as unknown as ManualAssignResult,
+          removeOfferId: null as string | null,
+          driverId: input.driverId,
+          activeCount: 0,
+          applyRuntime: false,
+        };
 
-      await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-assign:${input.driverId}`}, 0))`;
+      try {
+        await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-assign:${input.driverId}`}, 0))`;
 
-      const [driver] = await tx<
-        {
-          account_status: string;
-          approval_status: string;
-          operational_status: string;
-          city_id: string | null;
-        }[]
-      >`select a.status::text as account_status,
-               dp.approval_status::text as approval_status,
-               dp.operational_status::text as operational_status,
-               dp.city_id::text as city_id
-        from driver_profiles dp
-        join accounts a on a.id = dp.account_id
-        where dp.account_id = ${input.driverId}
-        for update of dp`;
-      if (
-        !driver ||
-        driver.account_status !== "ACTIVE" ||
-        driver.approval_status !== "APPROVED" ||
-        driver.operational_status !== "ACTIVE"
-      ) {
-        throw new AppError(403, "DRIVER_NOT_ELIGIBLE", "Driver is not eligible");
-      }
-      if (!driver.city_id || driver.city_id !== cityId)
-        throw new AppError(404, "CITY_MISMATCH", "Driver city mismatch");
+        const [driver] = await tx<
+          {
+            account_status: string;
+            approval_status: string;
+            operational_status: string;
+            city_id: string | null;
+          }[]
+        >`select a.status::text as account_status,
+                 dp.approval_status::text as approval_status,
+                 dp.operational_status::text as operational_status,
+                 dp.city_id::text as city_id
+          from driver_profiles dp
+          join accounts a on a.id = dp.account_id
+          where dp.account_id = ${input.driverId}
+          for update of dp`;
+        if (
+          !driver ||
+          driver.account_status !== "ACTIVE" ||
+          driver.approval_status !== "APPROVED" ||
+          driver.operational_status !== "ACTIVE"
+        ) {
+          throw new AppError(
+            403,
+            "DRIVER_NOT_ELIGIBLE",
+            "Driver is not eligible",
+          );
+        }
+        if (!driver.city_id || driver.city_id !== cityId)
+          throw new AppError(404, "CITY_MISMATCH", "Driver city mismatch");
 
-      const [activeCountRow] = await tx<{ count: number }[]>`
-        select count(*)::int as count from order_driver_assignments
-        where driver_id = ${input.driverId}
-          and completed_at is null and cancelled_at is null`;
-      const activeCount = activeCountRow?.count ?? 0;
-      if (activeCount >= 2)
-        throw new AppError(
-          409,
-          "DRIVER_ASSIGNMENT_CAPACITY_REACHED",
-          "Driver assignment capacity reached",
-        );
+        const [activeCountRow] = await tx<{ count: number }[]>`
+          select count(*)::int as count from order_driver_assignments
+          where driver_id = ${input.driverId}
+            and completed_at is null and cancelled_at is null`;
+        const activeCount = activeCountRow?.count ?? 0;
+        if (activeCount >= 2)
+          throw new AppError(
+            409,
+            "DRIVER_ASSIGNMENT_CAPACITY_REACHED",
+            "Driver assignment capacity reached",
+          );
 
-      const [order] = await tx<
-        {
-          id: string;
-          status: OrderStatus;
-          version: number;
-          driver_account_id: string | null;
-        }[]
-      >`select id::text, status::text, version, driver_account_id::text
-        from orders where id = ${orderId} and city_id = ${cityId} for update`;
-      if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+        const [order] = await tx<
+          {
+            id: string;
+            status: OrderStatus;
+            version: number;
+            driver_account_id: string | null;
+          }[]
+        >`select id::text, status::text, version, driver_account_id::text
+          from orders where id = ${orderId} and city_id = ${cityId} for update`;
+        if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
 
-      const [orderAssignment] = await tx<{ id: string }[]>`
-        select id::text from order_driver_assignments
-        where order_id = ${orderId}
-          and completed_at is null and cancelled_at is null
-        for update`;
-      if (orderAssignment)
-        throw new AppError(
-          409,
-          "ORDER_ALREADY_ASSIGNED",
-          "Order already has an active driver assignment",
-        );
+        const [orderAssignment] = await tx<{ id: string }[]>`
+          select id::text from order_driver_assignments
+          where order_id = ${orderId}
+            and completed_at is null and cancelled_at is null
+          for update`;
+        if (orderAssignment)
+          throw new AppError(
+            409,
+            "ORDER_ALREADY_ASSIGNED",
+            "Order already has an active driver assignment",
+          );
 
-      const now = new Date();
-      let orderStatus = order.status;
-      let orderVersion = order.version;
-      if (orderStatus === "APPROVED_BY_STORE") {
+        const now = new Date();
+        let orderStatus = order.status;
+        let orderVersion = order.version;
+        if (orderStatus === "APPROVED_BY_STORE") {
+          await this.orders.applyStatusTransition(
+            tx,
+            { id: order.id, status: orderStatus, version: orderVersion },
+            "SEARCHING_DRIVER",
+            {
+              accountId: identity.accountId,
+              actorType: "STAFF",
+              source: "DASHBOARD",
+              reason: reason ?? "Manual driver assignment",
+            },
+            now,
+          );
+          orderStatus = "SEARCHING_DRIVER";
+          orderVersion += 1;
+        }
+        if (orderStatus !== "SEARCHING_DRIVER")
+          throw new AppError(
+            409,
+            "ORDER_INVALID_STATE",
+            "Order is not eligible for driver assignment",
+          );
+
+        const openRows = (await tx.unsafe(
+          `select ${ROUND_SELECT} from order_offer_rounds
+           where order_id = $1 and status = 'OPEN' for update`,
+          [orderId],
+        )) as Record<string, unknown>[];
+        const openRound = openRows[0] ? mapRound(openRows[0]) : null;
+
+        let driverFee: number;
+        let offerRoundId: string | null = null;
+        let pricingBaseSnapshot: number | null = null;
+        let roundingUnitSnapshot: number | null = null;
+        let pricingStagesSnapshot: DriverPricingStage[] | null = null;
+        let pricingVersionSnapshot: number | null = null;
+        let pricingStageAfterSeconds: number | null = null;
+        let pricingStageIncreasePercentage: number | null = null;
+
+        if (openRound) {
+          driverFee = computeOfferedDriverFee({
+            pricingBase: openRound.pricingBaseSnapshot,
+            roundingUnit: openRound.roundingUnitSnapshot,
+            pricingStages: openRound.pricingStagesSnapshot,
+            openedAt: new Date(openRound.openedAt),
+            now,
+          }).offeredDriverFee;
+          offerRoundId = openRound.id;
+          await tx`
+            update order_offer_rounds
+            set status = 'MANUALLY_ASSIGNED', closed_at = ${now},
+                final_driver_fee = ${driverFee}, claimed_by_driver_id = ${input.driverId},
+                updated_at = ${now}
+            where id = ${openRound.id}`;
+        } else {
+          const pricing = await this.loadCityPricing(tx, cityId);
+          const computed = computeOfferedDriverFee({
+            pricingBase: pricing.pricing_base,
+            roundingUnit: pricing.rounding_unit,
+            pricingStages: pricing.pricing_stages,
+            openedAt: now,
+            now,
+          });
+          driverFee = computed.offeredDriverFee;
+          pricingBaseSnapshot = pricing.pricing_base;
+          roundingUnitSnapshot = pricing.rounding_unit;
+          pricingStagesSnapshot = pricing.pricing_stages;
+          pricingVersionSnapshot = pricing.version;
+          pricingStageAfterSeconds = computed.stage.afterSeconds;
+          pricingStageIncreasePercentage = computed.stage.increasePercentage;
+        }
+
+        const sequence = activeCount + 1;
+        const [assignment] = await tx<{ id: string }[]>`
+          insert into order_driver_assignments (
+            order_id, driver_id, city_id, offer_round_id, assignment_source,
+            assignment_sequence, assigned_by_account_id, assignment_reason,
+            driver_fee, assigned_at,
+            pricing_base_snapshot, rounding_unit_snapshot, pricing_stages_snapshot,
+            pricing_version_snapshot, pricing_stage_after_seconds,
+            pricing_stage_increase_percentage
+          ) values (
+            ${orderId}, ${input.driverId}, ${cityId}, ${offerRoundId},
+            'DASHBOARD_MANUAL', ${sequence}, ${identity.accountId}, ${reason},
+            ${driverFee}, ${now},
+            ${pricingBaseSnapshot}, ${roundingUnitSnapshot},
+            ${pricingStagesSnapshot},
+            ${pricingVersionSnapshot}, ${pricingStageAfterSeconds},
+            ${pricingStageIncreasePercentage}
+          )
+          returning id::text`;
+
+        await tx`
+          update orders set driver_account_id = ${input.driverId}, updated_at = ${now}
+          where id = ${orderId}`;
+
         await this.orders.applyStatusTransition(
           tx,
           { id: order.id, status: orderStatus, version: orderVersion },
-          "SEARCHING_DRIVER",
+          "DRIVER_ASSIGNED",
           {
             accountId: identity.accountId,
             actorType: "STAFF",
@@ -1093,131 +1203,66 @@ export class OfferService {
           },
           now,
         );
-        orderStatus = "SEARCHING_DRIVER";
-        orderVersion += 1;
-      }
-      if (orderStatus !== "SEARCHING_DRIVER")
-        throw new AppError(
-          409,
-          "ORDER_INVALID_STATE",
-          "Order is not eligible for driver assignment",
-        );
 
-      const openRows = (await tx.unsafe(
-        `select ${ROUND_SELECT} from order_offer_rounds
-         where order_id = $1 and status = 'OPEN' for update`,
-        [orderId],
-      )) as Record<string, unknown>[];
-      const openRound = openRows[0] ? mapRound(openRows[0]) : null;
+        const result: ManualAssignResult = {
+          assignmentId: assignment!.id,
+          orderId,
+          driverId: input.driverId,
+          driverFee,
+          assignmentSequence: sequence,
+          offerRoundId,
+        };
 
-      let driverFee: number;
-      let offerRoundId: string | null = null;
-      if (openRound) {
-        driverFee = computeOfferedDriverFee({
-          pricingBase: openRound.pricingBaseSnapshot,
-          roundingUnit: openRound.roundingUnitSnapshot,
-          pricingStages: openRound.pricingStagesSnapshot,
-          openedAt: new Date(openRound.openedAt),
-          now,
-        }).offeredDriverFee;
-        offerRoundId = openRound.id;
-        await tx`
-          update order_offer_rounds
-          set status = 'MANUALLY_ASSIGNED', closed_at = ${now},
-              final_driver_fee = ${driverFee}, claimed_by_driver_id = ${input.driverId},
-              updated_at = ${now}
-          where id = ${openRound.id}`;
-      } else {
-        const pricing = await this.loadCityPricing(tx, cityId);
-        driverFee = computeOfferedDriverFee({
-          pricingBase: pricing.pricing_base,
-          roundingUnit: pricing.rounding_unit,
-          pricingStages: pricing.pricing_stages,
-          openedAt: now,
-          now,
-        }).offeredDriverFee;
-      }
-
-      const sequence = activeCount + 1;
-      const [assignment] = await tx<{ id: string }[]>`
-        insert into order_driver_assignments (
-          order_id, driver_id, city_id, offer_round_id, assignment_source,
-          assignment_sequence, assigned_by_account_id, assignment_reason,
-          driver_fee, assigned_at
-        ) values (
-          ${orderId}, ${input.driverId}, ${cityId}, ${offerRoundId},
-          'DASHBOARD_MANUAL', ${sequence}, ${identity.accountId}, ${reason},
-          ${driverFee}, ${now}
-        )
-        returning id::text`;
-
-      await tx`
-        update orders set driver_account_id = ${input.driverId}, updated_at = ${now}
-        where id = ${orderId}`;
-
-      await this.orders.applyStatusTransition(
-        tx,
-        { id: order.id, status: orderStatus, version: orderVersion },
-        "DRIVER_ASSIGNED",
-        {
-          accountId: identity.accountId,
-          actorType: "STAFF",
-          source: "DASHBOARD",
-          reason: reason ?? "Manual driver assignment",
-        },
-        now,
-      );
-
-      const result: ManualAssignResult = {
-        assignmentId: assignment!.id,
-        orderId,
-        driverId: input.driverId,
-        driverFee,
-        assignmentSequence: sequence,
-        offerRoundId,
-      };
-
-      await this.audit(
-        tx,
-        "DRIVER_MANUALLY_ASSIGNED",
-        identity,
-        "ORDER",
-        orderId,
-        requestId,
-        result,
-      );
-
-      if (key) {
-        await this.storeIdempotency(
+        await this.audit(
           tx,
-          "orders.assign_driver",
-          identity.accountId,
-          cityId,
-          key,
-          requestHash,
+          "DRIVER_MANUALLY_ASSIGNED",
+          identity,
+          "ORDER",
+          orderId,
+          requestId,
           result,
         );
+
+        await completeOfferIdempotency(tx, {
+          scope,
+          actorAccountId: identity.accountId,
+          cityId,
+          idempotencyKey: key,
+          httpStatus: 200,
+          payload: result,
+        });
+
+        return {
+          result,
+          removeOfferId: offerRoundId,
+          driverId: input.driverId,
+          activeCount: sequence,
+          applyRuntime: true,
+        };
+      } catch (error) {
+        await abortOfferIdempotency(tx, {
+          scope,
+          actorAccountId: identity.accountId,
+          cityId,
+          idempotencyKey: key,
+        });
+        throw error;
       }
-
-      return {
-        result,
-        removeOfferId: offerRoundId,
-        driverId: input.driverId,
-        activeCount: sequence,
-      };
     });
 
-    if (committed.removeOfferId)
-      await this.runtime.removeOpenOffer(cityId, committed.removeOfferId);
-    await this.runtime.setRuntime({
-      driverId: committed.driverId,
-      cityId,
-      eligibilityStatus: "ELIGIBLE",
-      workStatus: "BUSY",
-      activeOrderCount: committed.activeCount,
-      eligibilityVersion: 1,
-      updatedAt: new Date().toISOString(),
-    });
+    if (committed.applyRuntime) {
+      if (committed.removeOfferId)
+        await this.runtime.removeOpenOffer(cityId, committed.removeOfferId);
+      await this.runtime.setRuntime({
+        driverId: committed.driverId,
+        cityId,
+        eligibilityStatus: "ELIGIBLE",
+        workStatus: "BUSY",
+        activeOrderCount: committed.activeCount,
+        eligibilityVersion: 1,
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     return committed.result;
   }
@@ -1236,29 +1281,48 @@ export class OfferService {
       this.limits.runtimeMutationWindowSeconds,
     );
 
-    const runtime = await this.runtime.getOrHydrateRuntime(driverId, async () => {
+    let runtime: DriverRuntimeState;
+    if (workStatus === "AVAILABLE") {
+      await this.runtime.invalidateRuntime(driverId);
       const hydrated = await hydrateDriverRuntimeFromPostgres(
         this.client,
         driverId,
       );
       if (!hydrated)
         throw new AppError(403, "DRIVER_NOT_ELIGIBLE", "Driver is not eligible");
-      return hydrated;
-    });
+      runtime = hydrated;
+      await this.runtime.setRuntime(runtime);
+    } else {
+      runtime = await this.runtime.getOrHydrateRuntime(driverId, async () => {
+        const hydrated = await hydrateDriverRuntimeFromPostgres(
+          this.client,
+          driverId,
+        );
+        if (!hydrated)
+          throw new AppError(
+            403,
+            "DRIVER_NOT_ELIGIBLE",
+            "Driver is not eligible",
+          );
+        return hydrated;
+      });
+    }
+
     if (runtime.cityId !== cityId)
       throw new AppError(404, "CITY_MISMATCH", "Driver city mismatch");
     if (runtime.eligibilityStatus !== "ELIGIBLE")
       throw new AppError(403, "DRIVER_NOT_ELIGIBLE", "Driver is not eligible");
-    if (runtime.activeOrderCount > 0 && workStatus === "AVAILABLE")
-      throw new AppError(
-        409,
-        "DRIVER_ACTIVE_ORDER_EXISTS",
-        "Driver already has an active order",
-      );
+
+    const nextWorkStatus: DriverWorkStatus =
+      runtime.activeOrderCount > 0
+        ? "BUSY"
+        : workStatus === "AVAILABLE"
+          ? "AVAILABLE"
+          : "OFFLINE";
 
     const next: DriverRuntimeState = {
       ...runtime,
-      workStatus: runtime.activeOrderCount > 0 ? "BUSY" : workStatus,
+      workStatus: nextWorkStatus,
       updatedAt: new Date().toISOString(),
     };
     await this.runtime.setRuntime(next);
@@ -1271,51 +1335,122 @@ export class OfferService {
     };
   }
 
-  async listDriverCandidates(identity: AuthIdentity) {
+  async listDriverCandidates(
+    identity: AuthIdentity,
+    page?: number,
+    limit?: number,
+  ) {
     const cityId = await requireCityPermission(
       this.client,
       identity,
       "orders.assign",
     );
+    const p = pageOf(page, limit);
+    const offset = (p.page - 1) * p.limit;
+
+    const [countRow] = await this.client<{ total: number }[]>`
+      select count(*)::int as total
+      from driver_profiles dp
+      join accounts a on a.id = dp.account_id
+      where dp.city_id = ${cityId}
+        and dp.approval_status = 'APPROVED'
+        and dp.operational_status = 'ACTIVE'
+        and a.status = 'ACTIVE'`;
+    const total = countRow?.total ?? 0;
+
     const drivers = await this.client<
-      {
-        account_id: string;
-        approval_status: string;
-        operational_status: string;
-        account_status: string;
-      }[]
-    >`select dp.account_id::text, dp.approval_status::text, dp.operational_status::text,
-             a.status::text as account_status
+      { account_id: string; display_name: string }[]
+    >`select dp.account_id::text,
+             coalesce(
+               (
+                 select ap.phone_e164
+                 from account_phones ap
+                 where ap.account_id = dp.account_id and ap.is_primary = true
+                 limit 1
+               ),
+               'Driver'
+             ) as display_name
       from driver_profiles dp
       join accounts a on a.id = dp.account_id
       where dp.city_id = ${cityId}
         and dp.approval_status = 'APPROVED'
         and dp.operational_status = 'ACTIVE'
         and a.status = 'ACTIVE'
-      order by dp.account_id asc`;
+      order by dp.account_id asc
+      limit ${p.limit} offset ${offset}`;
 
-    const results = [];
-    for (const driver of drivers) {
-      const runtime =
-        (await this.runtime.getRuntime(driver.account_id)) ??
-        (await hydrateDriverRuntimeFromPostgres(this.client, driver.account_id));
-      const location = await this.runtime.getLocation(driver.account_id);
-      results.push({
+    const driverIds = drivers.map((d) => d.account_id);
+    const assignments =
+      driverIds.length === 0
+        ? []
+        : await this.client<
+            {
+              driver_id: string;
+              order_id: string;
+              order_number: string;
+              status: string;
+              assignment_sequence: number;
+              store_name: string | null;
+            }[]
+          >`select oda.driver_id::text, o.id::text as order_id,
+                   o.order_number::text as order_number, o.status::text,
+                   oda.assignment_sequence, s.name as store_name
+            from order_driver_assignments oda
+            join orders o on o.id = oda.order_id
+            left join stores s on s.id = o.store_id
+            where oda.driver_id in ${this.client(driverIds)}
+              and oda.completed_at is null
+              and oda.cancelled_at is null
+            order by oda.driver_id asc, oda.assignment_sequence asc`;
+
+    const [runtimes, locations] = await Promise.all([
+      this.runtime.mgetRuntimes(driverIds),
+      this.runtime.mgetLocations(driverIds),
+    ]);
+
+    const byDriver = new Map<string, DriverOrderSummary[]>();
+    for (const row of assignments) {
+      const list = byDriver.get(row.driver_id) ?? [];
+      list.push({
+        orderId: row.order_id,
+        orderNumber: row.order_number,
+        status: row.status,
+        assignmentSequence: row.assignment_sequence,
+      });
+      byDriver.set(row.driver_id, list);
+    }
+
+    const data: DriverCandidateRow[] = drivers.map((driver) => {
+      const runtime = runtimes.get(driver.account_id) ?? null;
+      const location = locations.get(driver.account_id) ?? null;
+      const ordersForDriver = byDriver.get(driver.account_id) ?? [];
+      const current =
+        ordersForDriver.find((o) => o.assignmentSequence === 1) ?? null;
+      const next =
+        ordersForDriver.find((o) => o.assignmentSequence === 2) ?? null;
+      return {
         driverId: driver.account_id,
+        driverName: driver.display_name,
         cityId,
         eligibilityStatus: runtime?.eligibilityStatus ?? "INELIGIBLE",
         workStatus: runtime?.workStatus ?? "OFFLINE",
         activeOrderCount: runtime?.activeOrderCount ?? 0,
-        location: location
+        lastLocation: location
           ? {
               latitude: location.latitude,
               longitude: location.longitude,
-              recordedAt: location.recordedAt,
             }
           : null,
-      });
-    }
-    return results;
+        lastLocationAt: location?.recordedAt ?? null,
+        locationFreshness: this.runtime.locationFreshness(
+          location?.recordedAt ?? null,
+        ),
+        currentOrderSummary: current,
+        nextOrderSummary: next,
+      };
+    });
+
+    return { data, page: p.page, limit: p.limit, total };
   }
 
   async reconcileCityOffers(cityId: string) {

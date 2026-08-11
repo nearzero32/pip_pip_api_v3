@@ -35,7 +35,6 @@ const pricingBody = t.Object(
     pricingBase: t.Integer({ exclusiveMinimum: 0 }),
     roundingUnit: t.Integer({ exclusiveMinimum: 0 }),
     pricingStages: t.Array(pricingStage, { minItems: 1 }),
-    idempotencyKey: t.Optional(t.String({ minLength: 1, maxLength: 128 })),
   },
   { additionalProperties: false },
 );
@@ -78,12 +77,35 @@ const offerRound = t.Object({
   updatedAt: dateSchema,
 });
 
+const orderSummary = t.Object({
+  orderId: uuid,
+  orderNumber: t.String(),
+  status: t.String(),
+  assignmentSequence: t.Integer({ minimum: 1, maximum: 2 }),
+});
+
 const idempotencyHeader = {
   name: "Idempotency-Key",
   in: "header",
   required: true,
   schema: { type: "string", minLength: 1, maxLength: 128 },
 } as const;
+
+const idempotencyHeaders = t.Object(
+  { "idempotency-key": t.String({ minLength: 1, maxLength: 128 }) },
+  { additionalProperties: true },
+);
+
+const idempotencyKeyOf = (request: Request) => {
+  const key = request.headers.get("idempotency-key");
+  if (!key?.trim())
+    throw new AppError(
+      422,
+      "VALIDATION_FAILED",
+      "Idempotency-Key header is required",
+    );
+  return key.trim();
+};
 
 export const driverOfferRoutes = (
   auth: AuthModule,
@@ -131,24 +153,26 @@ export const driverOfferRoutes = (
             pricingStages: body.pricingStages,
           },
           requestIdOf(set),
-          body.idempotencyKey,
+          idempotencyKeyOf(request),
         );
       },
       {
         params: t.Object({ cityId: uuid }),
         body: pricingBody,
+        headers: idempotencyHeaders,
         response: { 200: pricingResponse, ...errors },
         detail: {
           tags: ["Dashboard — Driver Pricing"],
           summary: "Upsert city driver pricing",
           description: "SUPER_ADMIN only. Upserts one row per city and bumps version.",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
     )
     .post(
       "/api/v1/dashboard/orders/:orderId/offer-rounds/open",
-      async ({ request, set, params, body }) => {
+      async ({ request, set, params }) => {
         const identity = await authIdentity(
           auth,
           request,
@@ -159,25 +183,17 @@ export const driverOfferRoutes = (
           identity,
           params.orderId,
           requestIdOf(set),
-          body?.idempotencyKey,
+          idempotencyKeyOf(request),
         );
       },
       {
         params: t.Object({ orderId: uuid }),
-        body: t.Optional(
-          t.Object(
-            {
-              idempotencyKey: t.Optional(
-                t.String({ minLength: 1, maxLength: 128 }),
-              ),
-            },
-            { additionalProperties: false },
-          ),
-        ),
+        headers: idempotencyHeaders,
         response: { 200: offerRound, ...errors },
         detail: {
           tags: ["Dashboard — Order Offers"],
           summary: "Open an order offer round",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -196,17 +212,15 @@ export const driverOfferRoutes = (
           params.orderId,
           body.reason,
           requestIdOf(set),
-          body.idempotencyKey,
+          idempotencyKeyOf(request),
         );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
-            idempotencyKey: t.Optional(
-              t.String({ minLength: 1, maxLength: 128 }),
-            ),
           },
           { additionalProperties: false },
         ),
@@ -214,6 +228,7 @@ export const driverOfferRoutes = (
         detail: {
           tags: ["Dashboard — Order Offers"],
           summary: "Stop an open offer round",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -232,17 +247,15 @@ export const driverOfferRoutes = (
           params.orderId,
           body.reason,
           requestIdOf(set),
-          body.idempotencyKey,
+          idempotencyKeyOf(request),
         );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
-            idempotencyKey: t.Optional(
-              t.String({ minLength: 1, maxLength: 128 }),
-            ),
           },
           { additionalProperties: false },
         ),
@@ -250,6 +263,7 @@ export const driverOfferRoutes = (
         detail: {
           tags: ["Dashboard — Order Offers"],
           summary: "Stop open round if any and open a new one",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -291,19 +305,17 @@ export const driverOfferRoutes = (
             driverId: body.driverId,
             ...(body.reason !== undefined ? { reason: body.reason } : {}),
           },
-          body.idempotencyKey ?? request.headers.get("idempotency-key"),
+          idempotencyKeyOf(request),
           requestIdOf(set),
         );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: t.Object(
           {
             driverId: uuid,
             reason: t.Optional(t.Nullable(t.String({ maxLength: 1000 }))),
-            idempotencyKey: t.Optional(
-              t.String({ minLength: 1, maxLength: 128 }),
-            ),
           },
           { additionalProperties: false },
         ),
@@ -321,53 +333,75 @@ export const driverOfferRoutes = (
         detail: {
           tags: ["Dashboard — Order Offers"],
           summary: "Manually assign a driver to an order",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
     )
     .get(
       "/api/v1/dashboard/drivers/assignment-candidates",
-      async ({ request, set }) => {
+      async ({ request, set, query }) => {
         const identity = await authIdentity(
           auth,
           request,
           dashboardContext,
           requestIdOf(set),
         );
-        return offers.listDriverCandidates(identity);
+        return offers.listDriverCandidates(
+          identity,
+          query.page,
+          query.limit,
+        );
       },
       {
+        query: t.Object({
+          page: t.Optional(t.Integer({ minimum: 1 })),
+          limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
+        }),
         response: {
-          200: t.Array(
-            t.Object({
-              driverId: uuid,
-              cityId: uuid,
-              eligibilityStatus: t.Union([
-                t.Literal("ELIGIBLE"),
-                t.Literal("INELIGIBLE"),
-              ]),
-              workStatus: t.Union([
-                t.Literal("AVAILABLE"),
-                t.Literal("BUSY"),
-                t.Literal("OFFLINE"),
-              ]),
-              activeOrderCount: t.Integer({ minimum: 0 }),
-              location: t.Nullable(
-                t.Object({
-                  latitude: t.Number(),
-                  longitude: t.Number(),
-                  recordedAt: dateSchema,
-                }),
-              ),
-            }),
-          ),
+          200: t.Object({
+            data: t.Array(
+              t.Object({
+                driverId: uuid,
+                driverName: t.String(),
+                cityId: uuid,
+                eligibilityStatus: t.Union([
+                  t.Literal("ELIGIBLE"),
+                  t.Literal("INELIGIBLE"),
+                ]),
+                workStatus: t.Union([
+                  t.Literal("AVAILABLE"),
+                  t.Literal("BUSY"),
+                  t.Literal("OFFLINE"),
+                ]),
+                activeOrderCount: t.Integer({ minimum: 0 }),
+                lastLocation: t.Nullable(
+                  t.Object({
+                    latitude: t.Number(),
+                    longitude: t.Number(),
+                  }),
+                ),
+                lastLocationAt: t.Nullable(dateSchema),
+                locationFreshness: t.Union([
+                  t.Literal("FRESH"),
+                  t.Literal("STALE"),
+                  t.Literal("MISSING"),
+                ]),
+                currentOrderSummary: t.Nullable(orderSummary),
+                nextOrderSummary: t.Nullable(orderSummary),
+              }),
+            ),
+            page: t.Integer({ minimum: 1 }),
+            limit: t.Integer({ minimum: 1 }),
+            total: t.Integer({ minimum: 0 }),
+          }),
           ...errors,
         },
         detail: {
           tags: ["Dashboard — Order Offers"],
           summary: "List driver assignment candidates for the signed city",
           description:
-            "Locations come only from the realtime Redis cache; missing location is null (API never invents GPS).",
+            "Locations come only from the realtime Redis cache; missing location is null (API never invents GPS). Order summaries exclude customer PII.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -409,22 +443,16 @@ export const driverOfferRoutes = (
           driverContext,
           requestIdOf(set),
         );
-        const idempotencyKey = request.headers.get("idempotency-key");
-        if (!idempotencyKey)
-          throw new AppError(
-            422,
-            "VALIDATION_FAILED",
-            "Idempotency-Key header is required",
-          );
         return offers.claim(
           identity,
           params.offerId,
-          idempotencyKey,
+          idempotencyKeyOf(request),
           requestIdOf(set),
         );
       },
       {
         params: t.Object({ offerId: uuid }),
+        headers: idempotencyHeaders,
         response: {
           200: t.Object({
             orderId: uuid,

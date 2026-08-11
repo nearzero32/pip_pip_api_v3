@@ -159,6 +159,10 @@ No schema column stores plaintext passwords, OTPs, raw access/refresh/reset toke
 - Refresh tokens contain 256 random bits and only versioned HMAC-SHA-256 verifiers are stored. Each successful refresh rotates once; reuse revokes the affected session, or all Dashboard sessions for Dashboard reuse.
 - Generated SQL migrations are the production workflow. Schema push is not used.
 
+## M4-B driver offers
+
+City driver pricing, offer rounds, spin/claim, manual peak assignment, Redis runtime, and mandatory `Idempotency-Key` on mutating offer routes are documented in [`docs/m4b-driver-offers.md`](docs/m4b-driver-offers.md). Runtime hydrate defaults to `OFFLINE` on cache miss; availability is explicit via the driver availability endpoint.
+
 ## Intentionally deferred
 
 MFA, TOTP application behavior, recovery codes, password reset, forgot-password, staff invitations, real SMS delivery, driver onboarding/submission/review, wallets, notifications, v2 migration, queues, background jobs, Socket.IO in the main API, driver cancel/reoffer, GPS-based assignment, and frontend code are not implemented. Existing M1 tables for deferred MFA/reset foundations remain unused.

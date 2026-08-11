@@ -190,6 +190,13 @@
       "when": 1786449774090,
       "tag": "0026_small_sunset_bain",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786461791707,
+      "tag": "0027_breezy_red_wolf",
+      "breakpoints": true
     }
   ]
 }

@@ -29,6 +29,11 @@ export const assignmentSource = pgEnum("assignment_source", [
   "DASHBOARD_MANUAL",
 ]);
 
+export const offerIdempotencyStatus = pgEnum("offer_idempotency_status", [
+  "IN_PROGRESS",
+  "COMPLETED",
+]);
+
 export type DriverPricingStage = {
   afterSeconds: number;
   increasePercentage: number;
@@ -58,6 +63,10 @@ export const cityDriverPricing = pgTable(
     check("city_driver_pricing_base_chk", sql`${table.pricingBase} > 0`),
     check("city_driver_pricing_rounding_chk", sql`${table.roundingUnit} > 0`),
     check("city_driver_pricing_version_chk", sql`${table.version} > 0`),
+    check(
+      "city_driver_pricing_stages_chk",
+      sql`jsonb_typeof(${table.pricingStages}) = 'array' and jsonb_array_length(${table.pricingStages}) >= 1`,
+    ),
   ],
 );
 
@@ -116,8 +125,26 @@ export const orderOfferRounds = pgTable(
       sql`${table.roundingUnitSnapshot} > 0`,
     ),
     check(
+      "order_offer_rounds_pricing_version_chk",
+      sql`${table.pricingVersionSnapshot} > 0`,
+    ),
+    check(
+      "order_offer_rounds_stages_chk",
+      sql`jsonb_typeof(${table.pricingStagesSnapshot}) = 'array' and jsonb_array_length(${table.pricingStagesSnapshot}) >= 1`,
+    ),
+    check(
       "order_offer_rounds_fee_chk",
       sql`${table.finalDriverFee} is null or ${table.finalDriverFee} > 0`,
+    ),
+    check(
+      "order_offer_rounds_status_fields_chk",
+      sql`(
+        (${table.status} = 'OPEN' and ${table.closedAt} is null and ${table.stoppedAt} is null and ${table.finalDriverFee} is null and ${table.claimedByDriverId} is null)
+        or (${table.status} = 'STOPPED' and ${table.stoppedAt} is not null and ${table.finalDriverFee} is null and ${table.claimedByDriverId} is null)
+        or (${table.status} = 'CLAIMED' and ${table.closedAt} is not null and ${table.finalDriverFee} is not null and ${table.claimedByDriverId} is not null)
+        or (${table.status} = 'MANUALLY_ASSIGNED' and ${table.closedAt} is not null and ${table.finalDriverFee} is not null and ${table.claimedByDriverId} is not null)
+        or (${table.status} = 'CANCELLED' and ${table.closedAt} is not null and ${table.finalDriverFee} is null)
+      )`,
     ),
   ],
 );
@@ -143,6 +170,16 @@ export const orderDriverAssignments = pgTable(
     ),
     assignmentReason: text("assignment_reason"),
     driverFee: integer("driver_fee").notNull(),
+    pricingBaseSnapshot: integer("pricing_base_snapshot"),
+    roundingUnitSnapshot: integer("rounding_unit_snapshot"),
+    pricingStagesSnapshot: jsonb("pricing_stages_snapshot").$type<
+      DriverPricingStage[]
+    >(),
+    pricingVersionSnapshot: integer("pricing_version_snapshot"),
+    pricingStageAfterSeconds: integer("pricing_stage_after_seconds"),
+    pricingStageIncreasePercentage: integer(
+      "pricing_stage_increase_percentage",
+    ),
     assignedAt: instant("assigned_at").notNull().defaultNow(),
     completedAt: instant("completed_at"),
     cancelledAt: instant("cancelled_at"),
@@ -154,7 +191,7 @@ export const orderDriverAssignments = pgTable(
       .on(table.orderId)
       .where(sql`${table.completedAt} is null and ${table.cancelledAt} is null`),
     index("order_driver_assignments_driver_active_idx")
-      .on(table.driverId, table.assignedAt)
+      .on(table.driverId, table.assignmentSequence, table.assignedAt)
       .where(sql`${table.completedAt} is null and ${table.cancelledAt} is null`),
     index("order_driver_assignments_city_assigned_idx").on(
       table.cityId,
@@ -174,6 +211,27 @@ export const orderDriverAssignments = pgTable(
       "order_driver_assignments_terminal_chk",
       sql`not (${table.completedAt} is not null and ${table.cancelledAt} is not null)`,
     ),
+    check(
+      "order_driver_assignments_pricing_source_chk",
+      sql`(
+        ${table.offerRoundId} is not null
+        or (
+          ${table.pricingBaseSnapshot} is not null
+          and ${table.pricingBaseSnapshot} > 0
+          and ${table.roundingUnitSnapshot} is not null
+          and ${table.roundingUnitSnapshot} > 0
+          and ${table.pricingStagesSnapshot} is not null
+          and jsonb_typeof(${table.pricingStagesSnapshot}) = 'array'
+          and jsonb_array_length(${table.pricingStagesSnapshot}) >= 1
+          and ${table.pricingVersionSnapshot} is not null
+          and ${table.pricingVersionSnapshot} > 0
+          and ${table.pricingStageAfterSeconds} is not null
+          and ${table.pricingStageAfterSeconds} >= 0
+          and ${table.pricingStageIncreasePercentage} is not null
+          and ${table.pricingStageIncreasePercentage} >= 0
+        )
+      )`,
+    ),
   ],
 );
 
@@ -190,10 +248,13 @@ export const offerIdempotencyKeys = pgTable(
       .references(() => cities.id),
     idempotencyKey: text("idempotency_key").notNull(),
     requestHash: text("request_hash").notNull(),
-    responsePayload: jsonb("response_payload")
-      .$type<Record<string, unknown>>()
-      .notNull(),
+    status: offerIdempotencyStatus("status").notNull().default("IN_PROGRESS"),
+    httpStatus: integer("http_status"),
+    responsePayload: jsonb("response_payload").$type<Record<string, unknown>>(),
     createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+    completedAt: instant("completed_at"),
+    expiresAt: instant("expires_at"),
   },
   (table) => [
     uniqueIndex("offer_idempotency_scope_actor_city_key_uidx").on(
@@ -205,6 +266,13 @@ export const offerIdempotencyKeys = pgTable(
     check(
       "offer_idempotency_key_nonempty_chk",
       sql`length(btrim(${table.idempotencyKey})) > 0`,
+    ),
+    check(
+      "offer_idempotency_status_chk",
+      sql`(
+        (${table.status} = 'IN_PROGRESS' and ${table.responsePayload} is null and ${table.httpStatus} is null and ${table.completedAt} is null)
+        or (${table.status} = 'COMPLETED' and ${table.responsePayload} is not null and ${table.httpStatus} is not null and ${table.completedAt} is not null)
+      )`,
     ),
   ],
 );
