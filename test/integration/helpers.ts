@@ -88,6 +88,17 @@ export const integrationConfig: AppConfig = {
   driverLocationFreshSeconds: DEFAULT_OFFER_LIMITS.locationFreshSeconds,
   driverOfferSpinAgeBucketMs: DEFAULT_OFFER_LIMITS.spinAgeBucketMs,
   driverOfferSpinRotationWindowMs: DEFAULT_OFFER_LIMITS.spinRotationWindowMs,
+  redisReconEnabled: true,
+  redisReconPollIntervalMs: 2_000,
+  redisReconBatchSize: 25,
+  redisReconMaxAttempts: 12,
+  redisReconRetryBaseMs: 1_000,
+  redisReconRetryMaxMs: 60_000,
+  redisReconLeaseSeconds: 90,
+  redisReconRetentionDays: 7,
+  driverRuntimeDegradedTtlMs: 2_000,
+  driverRuntimeDegradedMaxEntries: 2_000,
+  driverRuntimeHydrateAdvisoryLockTimeoutMs: 2_000,
 };
 
 export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";

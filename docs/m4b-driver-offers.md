@@ -12,19 +12,20 @@
 
 ## Migrations
 
-Apply journal through `0027_breezy_red_wolf`:
+Apply journal through `0028_demonic_whizzer`:
 
 ```bash
 bun run db:migrate
 ```
 
-`0027` adds:
+`0027` adds snapshot/idempotency constraints.  
+`0028` adds:
 
-- Assignment historical pricing snapshot columns + check when `offer_round_id` is null
-- Offer-round status/field check constraints
-- Pricing stages JSON array checks
-- Idempotency `IN_PROGRESS` / `COMPLETED` lifecycle columns
-- Active-driver assignment index includes `assignment_sequence`
+- `driver_runtime_revisions` (CAS revision per driver)
+- `redis_reconciliation_jobs` durable outbox (`DRIVER_RUNTIME` | `CITY_OPEN_OFFERS`)
+- Pending due index, unique driver-revision, unique active city-open job
+- Status/attempt/date check constraints
+- Retention: COMPLETED/DEAD rows older than `REDIS_RECON_RETENTION_DAYS` (default 7) deleted by worker
 
 ## Fee formula
 
@@ -70,8 +71,50 @@ Driver-cancel → reoffer is out of scope.
 - Drivers become `AVAILABLE` only via the availability endpoint after PG eligibility + zero active orders
 - Login does not mark `AVAILABLE`
 - Continuous GPS is Redis-only (not written to PostgreSQL)
-- Driver logout invalidates runtime cache
+- Driver logout enqueues durable runtime sync then invalidates runtime cache
 - Claim/spin/assign always re-check PostgreSQL eligibility and capacity
+
+### Hydration locks
+
+```text
+Redis healthy:
+  distributed Redis lock (SET NX + owner + Lua release)
+
+Redis unavailable:
+  process-local singleflight keyed by driverId
+  + bounded degraded in-memory cache (TTL/max entries)
+  + optional PostgreSQL advisory xact lock (lock_timeout) to reduce cross-instance stampedes
+  Not a distributed cache — each instance may still hydrate once
+```
+
+Env: `DRIVER_RUNTIME_DEGRADED_TTL_MS`, `DRIVER_RUNTIME_DEGRADED_MAX_ENTRIES`, `DRIVER_RUNTIME_HYDRATE_ADVISORY_LOCK_TIMEOUT_MS`.
+
+## Durable Redis reconciliation
+
+Post-commit Redis failures must not roll back PostgreSQL. Mutating flows enqueue outbox rows in the same TX:
+
+- bump `driver_runtime_revisions` + `DRIVER_RUNTIME` job
+- bump `city_open_offer_revisions` + coalesce `CITY_OPEN_OFFERS` job (`expected_revision` raised while PENDING/PROCESSING)
+
+After commit: try Redis immediately; on success mark jobs COMPLETED; on failure leave PENDING.
+
+Runtime Redis writes use **atomic Lua CAS** (`APPLIED` | `ALREADY_CURRENT` | `STALE_REJECTED`) — never GET→compare→SET in TypeScript.
+
+City open-offer index writes (full rebuild, publish, remove) use the same revision CAS against `city:{id}:open-offers:revision` so a late worker cannot overwrite a newer snapshot after lease transfer.
+
+Immediate post-commit completion only marks jobs still `PENDING` (never steals a worker-held `PROCESSING` row).
+
+`RedisReconciliationWorker` starts with the API (like media cleanup):
+
+- `FOR UPDATE SKIP LOCKED` claim with `locked_by` ownership token + lease reclaim for expired `PROCESSING`
+- Completion / DEAD / fail require matching `locked_by` (stale workers cannot overwrite after lease transfer)
+- CITY_OPEN_OFFERS: after rebuild, if city/`expected_revision` advanced mid-flight → requeue PENDING (lost-wakeup safe); else COMPLETED
+- bounded batch, exponential backoff, max attempts → `DEAD`
+- DRIVER_RUNTIME: derive from PG; Redis write via CAS; missing Redis + zero active → `OFFLINE` (never invent AVAILABLE)
+- No audit logs on retry
+- Graceful stop on shutdown
+
+Env: `REDIS_RECON_ENABLED`, `REDIS_RECON_POLL_INTERVAL_MS`, `REDIS_RECON_BATCH_SIZE`, `REDIS_RECON_MAX_ATTEMPTS`, `REDIS_RECON_RETRY_BASE_MS`, `REDIS_RECON_RETRY_MAX_MS`, `REDIS_RECON_LEASE_SECONDS` (default 90), `REDIS_RECON_RETENTION_DAYS`.
 
 ## Idempotency
 

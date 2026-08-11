@@ -55,6 +55,8 @@ export interface AppDependencies extends HealthDependencies {
   cityDriverPricingService?: CityDriverPricingService;
   offerService?: OfferService;
   driverRuntime?: DriverRuntimeStoreLike;
+  /** Durable outbox enqueue before clearing Redis on driver logout. */
+  scheduleDriverRuntimeSync?: (driverId: string) => Promise<void>;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -174,8 +176,16 @@ export function createApp(dependencies: AppDependencies) {
             dependencies.authModule,
             dependencies.driverRuntime
               ? {
-                  invalidateDriverRuntime: (driverId: string) =>
-                    dependencies.driverRuntime!.invalidateRuntime(driverId),
+                  invalidateDriverRuntime: async (driverId: string) => {
+                    try {
+                      await dependencies.scheduleDriverRuntimeSync?.(driverId);
+                    } catch {
+                      /* outbox failure must not block logout */
+                    }
+                    await dependencies.driverRuntime!.invalidateRuntime(
+                      driverId,
+                    );
+                  },
                 }
               : {},
           )

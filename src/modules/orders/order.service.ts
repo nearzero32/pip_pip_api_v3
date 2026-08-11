@@ -8,6 +8,12 @@ import type {
   DriverRuntimeStoreLike,
   DriverWorkStatus,
 } from "../driver-offers/driver-runtime";
+import {
+  applyRedisAfterCommit,
+  bumpDriverRuntimeRevision,
+  enqueueCityOpenOffersRecon,
+  enqueueDriverRuntimeRecon,
+} from "../driver-offers/redis-reconciliation";
 import { dateValue, pageOf } from "../geography/shared";
 import type { Logger } from "../../observability/logger";
 import {
@@ -25,6 +31,9 @@ export type OrderCancelSideEffect = {
   closedOfferIds: string[];
   driverId: string | null;
   remainingActiveOrders: number;
+  expectedRevision: number | null;
+  cityRevision: number | null;
+  jobIds: string[];
 };
 
 type ActorType = "CUSTOMER" | "MERCHANT" | "STAFF" | "SYSTEM" | "DRIVER";
@@ -162,6 +171,10 @@ export class OrderService {
 
     let driverId: string | null = null;
     let remainingActiveOrders = 0;
+    let expectedRevision: number | null = null;
+    let cityRevision: number | null = null;
+    const jobIds: string[] = [];
+
     if (assignment) {
       driverId = assignment.driver_id;
       await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-assign:${driverId}`}, 0))`;
@@ -182,6 +195,20 @@ export class OrderService {
         where driver_id = ${driverId}
           and completed_at is null and cancelled_at is null`;
       remainingActiveOrders = count?.count ?? 0;
+      expectedRevision = await bumpDriverRuntimeRevision(tx, driverId);
+      jobIds.push(
+        await enqueueDriverRuntimeRecon(tx, {
+          driverId,
+          expectedRevision,
+          cityId: order.cityId,
+        }),
+      );
+    }
+
+    if (closedOffers.length > 0 || assignment) {
+      const cityRecon = await enqueueCityOpenOffersRecon(tx, order.cityId);
+      cityRevision = cityRecon.revision;
+      jobIds.push(cityRecon.jobId);
     }
 
     return {
@@ -190,41 +217,64 @@ export class OrderService {
       closedOfferIds: closedOffers.map((row) => row.id),
       driverId,
       remainingActiveOrders,
+      expectedRevision,
+      cityRevision,
+      jobIds,
     };
   }
 
   private async applyCancelRuntime(effect: OrderCancelSideEffect) {
     if (!this.runtime) return;
-    for (const offerId of effect.closedOfferIds) {
-      await this.runtime.removeOpenOffer(effect.cityId, offerId);
+    if (
+      effect.closedOfferIds.length === 0 &&
+      !effect.driverId &&
+      effect.jobIds.length === 0
+    ) {
+      return;
     }
-    if (!effect.driverId) return;
-    try {
-      const current = await this.runtime.getRuntime(effect.driverId);
-      let workStatus: DriverWorkStatus;
-      if (effect.remainingActiveOrders > 0) workStatus = "BUSY";
-      else if (!current || current.workStatus === "OFFLINE")
-        workStatus = "OFFLINE";
-      else workStatus = "AVAILABLE";
 
-      if (current) {
-        await this.runtime.setRuntime({
-          ...current,
-          activeOrderCount: effect.remainingActiveOrders,
-          workStatus,
-          updatedAt: new Date().toISOString(),
-        });
-      } else {
-        await this.runtime.invalidateRuntime(effect.driverId);
-      }
-    } catch (error) {
-      this.logger?.error({
-        event: "driver_runtime_cancel_update_failed",
-        driver_id: effect.driverId,
-        error_name: error instanceof Error ? error.name : "UnknownError",
-      });
-      await this.runtime.invalidateRuntime(effect.driverId);
-    }
+    await applyRedisAfterCommit({
+      client: this.client,
+      jobIds: effect.jobIds,
+      ...(this.logger ? { logger: this.logger } : {}),
+      event: "driver_runtime_cancel_update_failed",
+      apply: async () => {
+        if (effect.cityRevision != null) {
+          for (const offerId of effect.closedOfferIds) {
+            await this.runtime!.removeOpenOfferWithCas(
+              effect.cityId,
+              offerId,
+              effect.cityRevision,
+            );
+          }
+        } else {
+          for (const offerId of effect.closedOfferIds) {
+            await this.runtime!.removeOpenOffer(effect.cityId, offerId);
+          }
+        }
+        if (!effect.driverId) return;
+
+        const current = await this.runtime!.getRuntime(effect.driverId);
+        let workStatus: DriverWorkStatus;
+        if (effect.remainingActiveOrders > 0) workStatus = "BUSY";
+        else if (!current || current.workStatus === "OFFLINE")
+          workStatus = "OFFLINE";
+        else workStatus = "AVAILABLE";
+
+        if (current) {
+          const revision = effect.expectedRevision ?? current.revision;
+          await this.runtime!.setRuntime({
+            ...current,
+            activeOrderCount: effect.remainingActiveOrders,
+            workStatus,
+            updatedAt: new Date().toISOString(),
+            ...(revision != null ? { revision } : {}),
+          });
+        } else {
+          await this.runtime!.invalidateRuntime(effect.driverId);
+        }
+      },
+    });
   }
 
   private async assertActiveCustomer(tx: SQL, accountId: string) {

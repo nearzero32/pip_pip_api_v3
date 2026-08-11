@@ -56,6 +56,17 @@ export interface AppConfig extends DatabaseConfig, MediaConfig {
   driverLocationFreshSeconds: number;
   driverOfferSpinAgeBucketMs: number;
   driverOfferSpinRotationWindowMs: number;
+  redisReconEnabled: boolean;
+  redisReconPollIntervalMs: number;
+  redisReconBatchSize: number;
+  redisReconMaxAttempts: number;
+  redisReconRetryBaseMs: number;
+  redisReconRetryMaxMs: number;
+  redisReconLeaseSeconds: number;
+  redisReconRetentionDays: number;
+  driverRuntimeDegradedTtlMs: number;
+  driverRuntimeDegradedMaxEntries: number;
+  driverRuntimeHydrateAdvisoryLockTimeoutMs: number;
 }
 
 export class ConfigurationError extends Error {
@@ -214,6 +225,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     driverLocationFreshSeconds: integerWithDefault(env, "DRIVER_LOCATION_FRESH_SECONDS", 120, 1, 86_400),
     driverOfferSpinAgeBucketMs: integerWithDefault(env, "DRIVER_OFFER_SPIN_AGE_BUCKET_MS", 60_000, 1_000, 3_600_000),
     driverOfferSpinRotationWindowMs: integerWithDefault(env, "DRIVER_OFFER_SPIN_ROTATION_WINDOW_MS", 15_000, 1_000, 3_600_000),
+    redisReconEnabled: (() => {
+      const raw = env.REDIS_RECON_ENABLED?.trim().toLowerCase();
+      if (!raw) return true;
+      if (raw === "0" || raw === "false" || raw === "no") return false;
+      return true;
+    })(),
+    redisReconPollIntervalMs: integerWithDefault(env, "REDIS_RECON_POLL_INTERVAL_MS", 2_000, 500, 300_000),
+    redisReconBatchSize: integerWithDefault(env, "REDIS_RECON_BATCH_SIZE", 25, 1, 500),
+    redisReconMaxAttempts: integerWithDefault(env, "REDIS_RECON_MAX_ATTEMPTS", 12, 1, 100),
+    redisReconRetryBaseMs: integerWithDefault(env, "REDIS_RECON_RETRY_BASE_MS", 1_000, 100, 60_000),
+    redisReconRetryMaxMs: integerWithDefault(env, "REDIS_RECON_RETRY_MAX_MS", 60_000, 1_000, 600_000),
+    redisReconLeaseSeconds: integerWithDefault(env, "REDIS_RECON_LEASE_SECONDS", 90, 5, 600),
+    redisReconRetentionDays: integerWithDefault(env, "REDIS_RECON_RETENTION_DAYS", 7, 1, 90),
+    driverRuntimeDegradedTtlMs: integerWithDefault(env, "DRIVER_RUNTIME_DEGRADED_TTL_MS", 2_000, 100, 60_000),
+    driverRuntimeDegradedMaxEntries: integerWithDefault(env, "DRIVER_RUNTIME_DEGRADED_MAX_ENTRIES", 2_000, 10, 100_000),
+    driverRuntimeHydrateAdvisoryLockTimeoutMs: integerWithDefault(env, "DRIVER_RUNTIME_HYDRATE_ADVISORY_LOCK_TIMEOUT_MS", 2_000, 50, 30_000),
     ...loadMediaConfig(env),
   };
 }

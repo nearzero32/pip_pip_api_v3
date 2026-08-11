@@ -161,7 +161,7 @@ No schema column stores plaintext passwords, OTPs, raw access/refresh/reset toke
 
 ## M4-B driver offers
 
-City driver pricing, offer rounds, spin/claim, manual peak assignment, Redis runtime, and mandatory `Idempotency-Key` on mutating offer routes are documented in [`docs/m4b-driver-offers.md`](docs/m4b-driver-offers.md). Runtime hydrate defaults to `OFFLINE` on cache miss; availability is explicit via the driver availability endpoint.
+City driver pricing, offer rounds, spin/claim, manual peak assignment, Redis runtime, mandatory `Idempotency-Key`, durable Redis reconciliation (`0028`), and Redis-outage hydration singleflight are documented in [`docs/m4b-driver-offers.md`](docs/m4b-driver-offers.md).
 
 ## Intentionally deferred
 

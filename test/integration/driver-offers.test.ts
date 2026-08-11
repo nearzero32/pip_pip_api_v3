@@ -475,6 +475,8 @@ describe("M4-B Driver Offers", () => {
       crypto.randomUUID(),
       "off1",
     );
+    const [revRow] = await h.client<{ revision: number }[]>`
+      select revision from driver_runtime_revisions where driver_id = ${driverId}`;
     await h.driverRuntime.setRuntime({
       driverId,
       cityId: city,
@@ -482,6 +484,7 @@ describe("M4-B Driver Offers", () => {
       workStatus: "OFFLINE",
       activeOrderCount: 1,
       eligibilityVersion: 1,
+      revision: Number(revRow!.revision),
       updatedAt: new Date().toISOString(),
     });
     await h.orders.cancelByDashboard(adminIdentity, order.order.id, "done");

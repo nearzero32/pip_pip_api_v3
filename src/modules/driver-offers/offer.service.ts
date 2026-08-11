@@ -27,6 +27,12 @@ import {
 } from "./offer-idempotency";
 import type { OfferLimitsConfig } from "./offer-limits";
 import { rateLimitNamespacedKey } from "./redis-keys";
+import {
+  applyRedisAfterCommit,
+  bumpDriverRuntimeRevision,
+  enqueueCityOpenOffersRecon,
+  enqueueDriverRuntimeRecon,
+} from "./redis-reconciliation";
 import { rankOffersForSpin } from "./spin-rank";
 
 type OfferRoundStatus =
@@ -276,6 +282,8 @@ export class OfferService {
         return {
           round: gate.payload as unknown as OfferRoundRow,
           published: false,
+          jobIds: [] as string[],
+          cityRevision: 0,
         };
 
       try {
@@ -361,6 +369,8 @@ export class OfferService {
           { orderId, cityId },
         );
 
+        const cityRecon = await enqueueCityOpenOffersRecon(tx, cityId);
+
         await completeOfferIdempotency(tx, {
           scope,
           actorAccountId: identity.accountId,
@@ -370,7 +380,12 @@ export class OfferService {
           payload: round as unknown as Record<string, unknown>,
         });
 
-        return { round, published: true };
+        return {
+          round,
+          published: true,
+          jobIds: [cityRecon.jobId] as string[],
+          cityRevision: cityRecon.revision,
+        };
       } catch (error) {
         await abortOfferIdempotency(tx, {
           scope,
@@ -382,8 +397,20 @@ export class OfferService {
       }
     });
 
-    if (committed.published)
-      await this.runtime.publishOpenOffer(this.toSummary(committed.round));
+    if (committed.published) {
+      await applyRedisAfterCommit({
+        client: this.client,
+        jobIds: committed.jobIds,
+        logger: this.logger,
+        event: "offer_open_redis_apply_failed",
+        apply: async () => {
+          await this.runtime.publishOpenOfferWithCas(
+            this.toSummary(committed.round),
+            committed.cityRevision,
+          );
+        },
+      });
+    }
     return committed.round;
   }
 
@@ -422,6 +449,8 @@ export class OfferService {
         return {
           round: gate.payload as unknown as OfferRoundRow,
           offerId: null as string | null,
+          jobIds: [] as string[],
+          cityRevision: 0,
         };
 
       try {
@@ -459,6 +488,8 @@ export class OfferService {
           { orderId, cityId, reason: cleaned },
         );
 
+        const cityRecon = await enqueueCityOpenOffersRecon(tx, cityId);
+
         await completeOfferIdempotency(tx, {
           scope,
           actorAccountId: identity.accountId,
@@ -468,7 +499,12 @@ export class OfferService {
           payload: round as unknown as Record<string, unknown>,
         });
 
-        return { round, offerId: round.id };
+        return {
+          round,
+          offerId: round.id,
+          jobIds: [cityRecon.jobId] as string[],
+          cityRevision: cityRecon.revision,
+        };
       } catch (error) {
         await abortOfferIdempotency(tx, {
           scope,
@@ -480,8 +516,21 @@ export class OfferService {
       }
     });
 
-    if (committed.offerId)
-      await this.runtime.removeOpenOffer(cityId, committed.offerId);
+    if (committed.offerId) {
+      await applyRedisAfterCommit({
+        client: this.client,
+        jobIds: committed.jobIds,
+        logger: this.logger,
+        event: "offer_stop_redis_apply_failed",
+        apply: async () => {
+          await this.runtime.removeOpenOfferWithCas(
+            cityId,
+            committed.offerId!,
+            committed.cityRevision,
+          );
+        },
+      });
+    }
     return committed.round;
   }
 
@@ -601,7 +650,13 @@ export class OfferService {
       pricingVersionSnapshot: Number(row.pricing_version_snapshot),
     }));
     if (summaries.length > 0) {
-      await this.runtime.rebuildCityOpenOffers(cityId, summaries);
+      const [rev] = await this.client<{ revision: number }[]>`
+        select revision from city_open_offer_revisions where city_id = ${cityId}`;
+      await this.runtime.rebuildCityOpenOffersWithCas(
+        cityId,
+        Number(rev?.revision ?? 0),
+        summaries,
+      );
     }
     return summaries;
   }
@@ -782,6 +837,10 @@ export class OfferService {
           payload: gate.payload as unknown as ClaimPayload,
           offerCityId: null as string | null,
           offerId: null as string | null,
+          revision: null as number | null,
+          cityRevision: null as number | null,
+          activeOrderCount: 0,
+          jobIds: [] as string[],
         };
 
       try {
@@ -875,13 +934,14 @@ export class OfferService {
           now,
         });
 
+        const assignmentSequence = 1;
         await tx`
           insert into order_driver_assignments (
             order_id, driver_id, city_id, offer_round_id, assignment_source,
             assignment_sequence, assigned_by_account_id, driver_fee, assigned_at
           ) values (
             ${String(locked.order_id)}, ${driverId}, ${cityId}, ${offerId},
-            'DRIVER_CLAIM', 1, ${driverId}, ${offeredDriverFee}, ${now}
+            'DRIVER_CLAIM', ${assignmentSequence}, ${driverId}, ${offeredDriverFee}, ${now}
           )`;
 
         await tx`
@@ -927,6 +987,14 @@ export class OfferService {
           { orderId: payload.orderId, driverId, offeredDriverFee },
         );
 
+        const revision = await bumpDriverRuntimeRevision(tx, driverId);
+        const driverJobId = await enqueueDriverRuntimeRecon(tx, {
+          driverId,
+          expectedRevision: revision,
+          cityId,
+        });
+        const cityRecon = await enqueueCityOpenOffersRecon(tx, cityId);
+
         await completeOfferIdempotency(tx, {
           scope,
           actorAccountId: driverId,
@@ -940,6 +1008,10 @@ export class OfferService {
           payload,
           offerCityId: cityId,
           offerId,
+          revision,
+          cityRevision: cityRecon.revision,
+          activeOrderCount: assignmentSequence,
+          jobIds: [driverJobId, cityRecon.jobId] as string[],
         };
       } catch (error) {
         await abortOfferIdempotency(tx, {
@@ -952,21 +1024,35 @@ export class OfferService {
       }
     });
 
-    if (committed.offerId && committed.offerCityId) {
-      await this.runtime.removeOpenOffer(
-        committed.offerCityId,
-        committed.offerId,
-      );
-      const runtimeState: DriverRuntimeState = {
-        driverId,
-        cityId,
-        eligibilityStatus: "ELIGIBLE",
-        workStatus: "BUSY",
-        activeOrderCount: 1,
-        eligibilityVersion: 1,
-        updatedAt: new Date().toISOString(),
-      };
-      await this.runtime.setRuntime(runtimeState);
+    if (
+      committed.offerId &&
+      committed.offerCityId &&
+      committed.revision != null &&
+      committed.cityRevision != null
+    ) {
+      await applyRedisAfterCommit({
+        client: this.client,
+        jobIds: committed.jobIds,
+        logger: this.logger,
+        event: "offer_claim_redis_apply_failed",
+        apply: async () => {
+          await this.runtime.removeOpenOfferWithCas(
+            committed.offerCityId!,
+            committed.offerId!,
+            committed.cityRevision!,
+          );
+          await this.runtime.setRuntime({
+            driverId,
+            cityId,
+            eligibilityStatus: "ELIGIBLE",
+            workStatus: "BUSY",
+            activeOrderCount: committed.activeOrderCount,
+            eligibilityVersion: 1,
+            revision: committed.revision!,
+            updatedAt: new Date().toISOString(),
+          });
+        },
+      });
     }
 
     return committed.payload;
@@ -1021,6 +1107,9 @@ export class OfferService {
           removeOfferId: null as string | null,
           driverId: input.driverId,
           activeCount: 0,
+          revision: null as number | null,
+          cityRevision: null as number | null,
+          jobIds: [] as string[],
           applyRuntime: false,
         };
 
@@ -1223,6 +1312,14 @@ export class OfferService {
           result,
         );
 
+        const revision = await bumpDriverRuntimeRevision(tx, input.driverId);
+        const driverJobId = await enqueueDriverRuntimeRecon(tx, {
+          driverId: input.driverId,
+          expectedRevision: revision,
+          cityId,
+        });
+        const cityRecon = await enqueueCityOpenOffersRecon(tx, cityId);
+
         await completeOfferIdempotency(tx, {
           scope,
           actorAccountId: identity.accountId,
@@ -1237,6 +1334,9 @@ export class OfferService {
           removeOfferId: offerRoundId,
           driverId: input.driverId,
           activeCount: sequence,
+          revision,
+          cityRevision: cityRecon.revision,
+          jobIds: [driverJobId, cityRecon.jobId] as string[],
           applyRuntime: true,
         };
       } catch (error) {
@@ -1250,17 +1350,30 @@ export class OfferService {
       }
     });
 
-    if (committed.applyRuntime) {
-      if (committed.removeOfferId)
-        await this.runtime.removeOpenOffer(cityId, committed.removeOfferId);
-      await this.runtime.setRuntime({
-        driverId: committed.driverId,
-        cityId,
-        eligibilityStatus: "ELIGIBLE",
-        workStatus: "BUSY",
-        activeOrderCount: committed.activeCount,
-        eligibilityVersion: 1,
-        updatedAt: new Date().toISOString(),
+    if (committed.applyRuntime && committed.revision != null) {
+      await applyRedisAfterCommit({
+        client: this.client,
+        jobIds: committed.jobIds,
+        logger: this.logger,
+        event: "offer_assign_redis_apply_failed",
+        apply: async () => {
+          if (committed.removeOfferId)
+            await this.runtime.removeOpenOfferWithCas(
+              cityId,
+              committed.removeOfferId,
+              committed.cityRevision!,
+            );
+          await this.runtime.setRuntime({
+            driverId: committed.driverId,
+            cityId,
+            eligibilityStatus: "ELIGIBLE",
+            workStatus: "BUSY",
+            activeOrderCount: committed.activeCount,
+            eligibilityVersion: 1,
+            revision: committed.revision!,
+            updatedAt: new Date().toISOString(),
+          });
+        },
       });
     }
 
@@ -1283,7 +1396,6 @@ export class OfferService {
 
     let runtime: DriverRuntimeState;
     if (workStatus === "AVAILABLE") {
-      await this.runtime.invalidateRuntime(driverId);
       const hydrated = await hydrateDriverRuntimeFromPostgres(
         this.client,
         driverId,
@@ -1291,7 +1403,6 @@ export class OfferService {
       if (!hydrated)
         throw new AppError(403, "DRIVER_NOT_ELIGIBLE", "Driver is not eligible");
       runtime = hydrated;
-      await this.runtime.setRuntime(runtime);
     } else {
       runtime = await this.runtime.getOrHydrateRuntime(driverId, async () => {
         const hydrated = await hydrateDriverRuntimeFromPostgres(
@@ -1320,12 +1431,36 @@ export class OfferService {
           ? "AVAILABLE"
           : "OFFLINE";
 
+    const { revision, jobId } = await this.client.begin(async (tx) => {
+      const revision = await bumpDriverRuntimeRevision(tx, driverId);
+      const jobId = await enqueueDriverRuntimeRecon(tx, {
+        driverId,
+        expectedRevision: revision,
+        cityId,
+      });
+      return { revision, jobId };
+    });
+
     const next: DriverRuntimeState = {
       ...runtime,
       workStatus: nextWorkStatus,
+      revision,
       updatedAt: new Date().toISOString(),
     };
-    await this.runtime.setRuntime(next);
+
+    await applyRedisAfterCommit({
+      client: this.client,
+      jobIds: [jobId],
+      logger: this.logger,
+      event: "driver_availability_redis_apply_failed",
+      apply: async () => {
+        if (workStatus === "AVAILABLE") {
+          await this.runtime.invalidateRuntime(driverId);
+        }
+        await this.runtime.setRuntime(next);
+      },
+    });
+
     return {
       driverId,
       cityId,
@@ -1453,7 +1588,7 @@ export class OfferService {
     return { data, page: p.page, limit: p.limit, total };
   }
 
-  async reconcileCityOffers(cityId: string) {
+  async reconcileCityOffers(cityId: string, revision: number) {
     const rows = await this.client<
       {
         id: string;
@@ -1481,12 +1616,18 @@ export class OfferService {
       pricingStagesSnapshot: parseStages(row.pricing_stages_snapshot),
       pricingVersionSnapshot: Number(row.pricing_version_snapshot),
     }));
-    await this.runtime.rebuildCityOpenOffers(cityId, offers);
+    const cas = await this.runtime.rebuildCityOpenOffersWithCas(
+      cityId,
+      revision,
+      offers,
+    );
     this.logger.info({
       event: "city_open_offers_reconciled",
       city_id: cityId,
       offer_count: offers.length,
+      revision,
+      cas,
     });
-    return { cityId, offerCount: offers.length };
+    return { cityId, offerCount: offers.length, revision, cas };
   }
 }

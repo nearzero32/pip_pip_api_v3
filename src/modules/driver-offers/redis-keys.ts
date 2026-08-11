@@ -20,6 +20,11 @@ export const cityOpenOffersKey = (
   cityId: string,
 ) => `${redisAppPrefix(environment)}:city:${cityId}:open-offers`;
 
+export const cityOpenOffersRevisionKey = (
+  environment: RedisNamespaceEnv,
+  cityId: string,
+) => `${redisAppPrefix(environment)}:city:${cityId}:open-offers:revision`;
+
 export const offerSummaryKey = (
   environment: RedisNamespaceEnv,
   offerId: string,

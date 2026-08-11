@@ -276,3 +276,92 @@ export const offerIdempotencyKeys = pgTable(
     ),
   ],
 );
+
+export const redisReconciliationJobType = pgEnum("redis_reconciliation_job_type", [
+  "DRIVER_RUNTIME",
+  "CITY_OPEN_OFFERS",
+]);
+
+export const redisReconciliationJobStatus = pgEnum(
+  "redis_reconciliation_job_status",
+  ["PENDING", "PROCESSING", "COMPLETED", "DEAD"],
+);
+
+/** Monotonic per-driver revision for Redis runtime CAS / stale job suppression. */
+export const driverRuntimeRevisions = pgTable("driver_runtime_revisions", {
+  driverId: uuid("driver_id")
+    .primaryKey()
+    .references(() => accounts.id),
+  revision: integer("revision").notNull().default(0),
+  updatedAt: instant("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * Monotonic per-city revision for CITY_OPEN_OFFERS coalescing / lost-wakeup prevention.
+ * Enqueue always bumps; workers must not COMPLETE while target_revision advances mid-flight.
+ */
+export const cityOpenOfferRevisions = pgTable("city_open_offer_revisions", {
+  cityId: uuid("city_id")
+    .primaryKey()
+    .references(() => cities.id),
+  revision: integer("revision").notNull().default(0),
+  updatedAt: instant("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * Durable Redis reconciliation outbox for M4-B post-commit failures.
+ * Retention: COMPLETED/DEAD rows older than REDIS_RECON_RETENTION_DAYS may be deleted by the worker.
+ */
+export const redisReconciliationJobs = pgTable(
+  "redis_reconciliation_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobType: redisReconciliationJobType("job_type").notNull(),
+    resourceId: uuid("resource_id").notNull(),
+    cityId: uuid("city_id").references(() => cities.id),
+    expectedRevision: integer("expected_revision"),
+    status: redisReconciliationJobStatus("status").notNull().default("PENDING"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: instant("next_attempt_at").notNull().defaultNow(),
+    lastError: text("last_error"),
+    lockedAt: instant("locked_at"),
+    lockedBy: text("locked_by"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+    completedAt: instant("completed_at"),
+  },
+  (table) => [
+    index("redis_recon_jobs_due_idx")
+      .on(table.status, table.nextAttemptAt)
+      .where(sql`${table.status} in ('PENDING', 'PROCESSING')`),
+    index("redis_recon_jobs_expired_lease_idx")
+      .on(table.status, table.lockedAt)
+      .where(sql`${table.status} = 'PROCESSING'`),
+    uniqueIndex("redis_recon_jobs_driver_revision_uidx")
+      .on(table.jobType, table.resourceId, table.expectedRevision)
+      .where(sql`${table.jobType} = 'DRIVER_RUNTIME'`),
+    uniqueIndex("redis_recon_jobs_city_open_active_uidx")
+      .on(table.jobType, table.resourceId)
+      .where(
+        sql`${table.jobType} = 'CITY_OPEN_OFFERS' and ${table.status} in ('PENDING', 'PROCESSING')`,
+      ),
+    check(
+      "redis_recon_jobs_attempt_chk",
+      sql`${table.attemptCount} >= 0`,
+    ),
+    check(
+      "redis_recon_jobs_driver_rev_chk",
+      sql`(
+        (${table.jobType} = 'DRIVER_RUNTIME' and ${table.expectedRevision} is not null and ${table.expectedRevision} > 0)
+        or (${table.jobType} = 'CITY_OPEN_OFFERS' and ${table.expectedRevision} is not null and ${table.expectedRevision} > 0 and ${table.cityId} is not null)
+      )`,
+    ),
+    check(
+      "redis_recon_jobs_status_dates_chk",
+      sql`(
+        (${table.status} in ('PENDING', 'PROCESSING') and ${table.completedAt} is null)
+        or (${table.status} in ('COMPLETED', 'DEAD') and ${table.completedAt} is not null)
+      )`,
+    ),
+  ],
+);
