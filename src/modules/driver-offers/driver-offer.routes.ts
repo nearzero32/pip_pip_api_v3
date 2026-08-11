@@ -498,49 +498,4 @@ export const driverOfferRoutes = (
           security: [{ bearerAuth: [] }],
         },
       },
-    )
-    .post(
-      "/api/v1/mobile/driver/runtime/availability",
-      async ({ request, set, body }) => {
-        const identity = await authIdentity(
-          auth,
-          request,
-          driverContext,
-          requestIdOf(set),
-        );
-        return offers.setAvailability(identity, body.workStatus);
-      },
-      {
-        body: t.Object(
-          {
-            workStatus: t.Union([
-              t.Literal("AVAILABLE"),
-              t.Literal("OFFLINE"),
-            ]),
-          },
-          { additionalProperties: false },
-        ),
-        response: {
-          200: t.Object({
-            driverId: uuid,
-            cityId: uuid,
-            workStatus: t.Union([
-              t.Literal("AVAILABLE"),
-              t.Literal("BUSY"),
-              t.Literal("OFFLINE"),
-            ]),
-            eligibilityStatus: t.Union([
-              t.Literal("ELIGIBLE"),
-              t.Literal("INELIGIBLE"),
-            ]),
-            activeOrderCount: t.Integer({ minimum: 0 }),
-          }),
-          ...errors,
-        },
-        detail: {
-          tags: ["Mobile — Driver Offers"],
-          summary: "Set driver availability work status",
-          security: [{ bearerAuth: [] }],
-        },
-      },
     );

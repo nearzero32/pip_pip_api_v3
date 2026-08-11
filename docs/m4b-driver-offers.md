@@ -68,11 +68,14 @@ Driver-cancel → reoffer is out of scope.
 - PostgreSQL is truth for assignments, eligibility, account, profile
 - Redis holds momentary work status + GPS
 - Hydrate from PG: `activeOrderCount > 0` → `BUSY`, else **`OFFLINE`** (never invent `AVAILABLE`)
-- Drivers become `AVAILABLE` only via the availability endpoint after PG eligibility + zero active orders
+- There is **no** HTTP endpoint to set `AVAILABLE` / `OFFLINE` in this phase
+- Spin/claim do **not** require runtime `AVAILABLE`; eligible drivers may fetch and claim while `OFFLINE` or with a missing Redis key
+- Active assignment (PostgreSQL) blocks spin and claim
 - Login does not mark `AVAILABLE`
 - Continuous GPS is Redis-only (not written to PostgreSQL)
 - Driver logout enqueues durable runtime sync then invalidates runtime cache
 - Claim/spin/assign always re-check PostgreSQL eligibility and capacity
+- Real ONLINE/OFFLINE presence via Socket heartbeat/TTL is out of scope for this phase
 
 ### Hydration locks
 
@@ -190,7 +193,6 @@ Location freshness uses `DRIVER_LOCATION_FRESH_SECONDS` (default 120).
 | GET | `/api/v1/dashboard/drivers/assignment-candidates` | `orders.assign` | |
 | POST | `/api/v1/mobile/driver/order-offers/spin` | DRIVER_APP | |
 | POST | `/api/v1/mobile/driver/order-offers/:offerId/claim` | DRIVER_APP | required |
-| POST | `/api/v1/mobile/driver/runtime/availability` | DRIVER_APP | |
 
 SUPER_ADMIN cannot run city order-offer or assign operations (pricing only).
 

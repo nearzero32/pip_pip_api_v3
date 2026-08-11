@@ -76,9 +76,8 @@ export const integrationConfig: AppConfig = {
   driverOfferSpinWindowSeconds: DEFAULT_OFFER_LIMITS.spinWindowSeconds,
   driverOfferClaimLimit: DEFAULT_OFFER_LIMITS.claimLimit,
   driverOfferClaimWindowSeconds: DEFAULT_OFFER_LIMITS.claimWindowSeconds,
-  driverRuntimeMutationLimit: DEFAULT_OFFER_LIMITS.runtimeMutationLimit,
-  driverRuntimeMutationWindowSeconds:
-    DEFAULT_OFFER_LIMITS.runtimeMutationWindowSeconds,
+  driverRuntimeMutationLimit: 20,
+  driverRuntimeMutationWindowSeconds: 60,
   dashboardManualAssignLimit: DEFAULT_OFFER_LIMITS.dashboardManualAssignLimit,
   dashboardManualAssignWindowSeconds:
     DEFAULT_OFFER_LIMITS.dashboardManualAssignWindowSeconds,

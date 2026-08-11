@@ -67,8 +67,14 @@ describe("M4-B Driver Offers", () => {
     );
   };
 
-  const goOnline = async (driverId: string, cityId: string) => {
-    await h.offers.setAvailability(driverIdentity(driverId, cityId), "AVAILABLE");
+  const createEligibleDriver = async (cityId = city) => {
+    return createDriverAccount(
+      h.client,
+      `+96477${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
+      "123456",
+      "ACTIVE",
+      cityId,
+    );
   };
 
   const createApprovedSearchingOrder = async () => {
@@ -83,17 +89,8 @@ describe("M4-B Driver Offers", () => {
     return { order, round };
   };
 
-  const createOnlineDriver = async (cityId = city) => {
-    const driverId = await createDriverAccount(
-      h.client,
-      `+96477${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
-      "123456",
-      "ACTIVE",
-      cityId,
-    );
-    await goOnline(driverId, cityId);
-    return driverId;
-  };
+  /** Drivers no longer need an availability transition before spin/claim. */
+  const createOnlineDriver = createEligibleDriver;
 
   beforeAll(async () => {
     h = await createIntegrationHarness({ databasePrefix: "pip_pip_v3_offers" });
@@ -208,8 +205,8 @@ describe("M4-B Driver Offers", () => {
     }
   });
 
-  test("BUSY driver cannot spin; successful claim returns orderTotal and paymentMethod", async () => {
-    const driverId = await createOnlineDriver();
+  test("driver with active assignment cannot spin; successful claim returns orderTotal and paymentMethod", async () => {
+    const driverId = await createEligibleDriver();
     const { round } = await createApprovedSearchingOrder();
     const claimed = await h.offers.claim(
       driverIdentity(driverId, city),
@@ -224,7 +221,7 @@ describe("M4-B Driver Offers", () => {
 
     await expect(
       h.offers.spin(driverIdentity(driverId, city)),
-    ).rejects.toMatchObject({ publicCode: "DRIVER_NOT_AVAILABLE" });
+    ).rejects.toMatchObject({ publicCode: "DRIVER_ACTIVE_ORDER_EXISTS" });
   });
 
   test("two drivers race one offer — exactly one winner", async () => {
@@ -463,11 +460,9 @@ describe("M4-B Driver Offers", () => {
   });
 
   test("cancel last task does not promote OFFLINE to AVAILABLE", async () => {
-    const driverId = await createOnlineDriver();
-    await h.offers.setAvailability(driverIdentity(driverId, city), "OFFLINE");
-    // Force BUSY via manual assign after going offline still allows dashboard assign
+    const driverId = await createEligibleDriver();
+    // Force BUSY via manual assign
     const order = await createApprovedSearchingOrder();
-    // reopen path: order already searching — assign
     await h.offers.assignDriver(
       adminIdentity,
       order.order.id,
@@ -493,9 +488,9 @@ describe("M4-B Driver Offers", () => {
     expect(runtime?.activeOrderCount).toBe(0);
   });
 
-  test("cache miss hydrate stays OFFLINE not AVAILABLE", async () => {
-    const driverId = await createOnlineDriver();
-    await h.offers.setAvailability(driverIdentity(driverId, city), "OFFLINE");
+  test("cache miss hydrate stays OFFLINE but spin still works without availability transition", async () => {
+    const driverId = await createEligibleDriver();
+    await createApprovedSearchingOrder();
     await h.driverRuntime.invalidateRuntime(driverId);
     const hydrated = await h.driverRuntime.getOrHydrateRuntime(driverId, async () => {
       const { hydrateDriverRuntimeFromPostgres } = await import(
@@ -504,9 +499,85 @@ describe("M4-B Driver Offers", () => {
       return (await hydrateDriverRuntimeFromPostgres(h.client, driverId))!;
     });
     expect(hydrated.workStatus).toBe("OFFLINE");
-    await expect(
-      h.offers.spin(driverIdentity(driverId, city)),
-    ).rejects.toMatchObject({ publicCode: "DRIVER_NOT_AVAILABLE" });
+    const cards = await h.offers.spin(driverIdentity(driverId, city));
+    expect(cards.length).toBeGreaterThan(0);
+  });
+
+  test("OFFLINE and AVAILABLE runtime both allow spin; missing key does not block", async () => {
+    const offlineDriver = await createEligibleDriver();
+    const availableDriver = await createEligibleDriver();
+    const missingKeyDriver = await createEligibleDriver();
+    await createApprovedSearchingOrder();
+
+    await h.driverRuntime.setRuntime({
+      driverId: offlineDriver,
+      cityId: city,
+      eligibilityStatus: "ELIGIBLE",
+      workStatus: "OFFLINE",
+      activeOrderCount: 0,
+      eligibilityVersion: 1,
+      updatedAt: new Date().toISOString(),
+    });
+    await h.driverRuntime.setRuntime({
+      driverId: availableDriver,
+      cityId: city,
+      eligibilityStatus: "ELIGIBLE",
+      workStatus: "AVAILABLE",
+      activeOrderCount: 0,
+      eligibilityVersion: 1,
+      updatedAt: new Date().toISOString(),
+    });
+    await h.driverRuntime.invalidateRuntime(missingKeyDriver);
+
+    const a = await h.offers.spin(driverIdentity(offlineDriver, city));
+    const b = await h.offers.spin(driverIdentity(availableDriver, city));
+    const c = await h.offers.spin(driverIdentity(missingKeyDriver, city));
+    expect(a.length).toBeGreaterThan(0);
+    expect(b.length).toBeGreaterThan(0);
+    expect(c.length).toBeGreaterThan(0);
+  });
+
+  test("OFFLINE driver can claim when eligible with no active assignment", async () => {
+    const driverId = await createEligibleDriver();
+    const { round } = await createApprovedSearchingOrder();
+    await h.driverRuntime.setRuntime({
+      driverId,
+      cityId: city,
+      eligibilityStatus: "ELIGIBLE",
+      workStatus: "OFFLINE",
+      activeOrderCount: 0,
+      eligibilityVersion: 1,
+      updatedAt: new Date().toISOString(),
+    });
+    const claimed = await h.offers.claim(
+      driverIdentity(driverId, city),
+      round.id,
+      crypto.randomUUID(),
+      "offline-claim",
+    );
+    expect(claimed.orderId).toBeTruthy();
+  });
+
+  test("availability endpoint is not registered and absent from OpenAPI", async () => {
+    const response = await h.app.handle(
+      new Request("http://localhost/openapi/json"),
+    );
+    expect(response.status).toBe(200);
+    const document = (await response.json()) as {
+      paths: Record<string, unknown>;
+    };
+    expect(
+      document.paths["/api/v1/mobile/driver/runtime/availability"],
+    ).toBeUndefined();
+
+    const post = await h.app.handle(
+      new Request("http://localhost/api/v1/mobile/driver/runtime/availability", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workStatus: "AVAILABLE" }),
+      }),
+    );
+    expect(post.status).toBe(404);
   });
 
   test("manual assign without round stores historical pricing snapshot", async () => {

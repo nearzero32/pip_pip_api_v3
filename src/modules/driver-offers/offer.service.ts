@@ -14,7 +14,6 @@ import type { OrderStatus } from "../orders/order-state-machine";
 import { computeOfferedDriverFee } from "./driver-fee";
 import {
   hydrateDriverRuntimeFromPostgres,
-  type DriverRuntimeState,
   type DriverRuntimeStoreLike,
   type DriverWorkStatus,
   type LocationFreshness,
@@ -670,6 +669,8 @@ export class OfferService {
       this.limits.spinWindowSeconds,
     );
 
+    // Eligibility + city from PG (via hydrate when Redis missing/degraded).
+    // workStatus AVAILABLE/OFFLINE is NOT a gate for fetching offers in this phase.
     const runtime = await this.runtime.getOrHydrateRuntime(driverId, async () => {
       const hydrated = await hydrateDriverRuntimeFromPostgres(
         this.client,
@@ -688,13 +689,13 @@ export class OfferService {
       throw new AppError(404, "CITY_MISMATCH", "Driver city mismatch");
     if (runtime.eligibilityStatus !== "ELIGIBLE")
       throw new AppError(403, "DRIVER_NOT_ELIGIBLE", "Driver is not eligible");
-    if (runtime.workStatus !== "AVAILABLE")
-      throw new AppError(
-        409,
-        "DRIVER_NOT_AVAILABLE",
-        "Driver is not available",
-      );
-    if (runtime.activeOrderCount !== 0)
+
+    // PostgreSQL is authoritative for active assignments (not Redis BUSY alone).
+    const [activeCount] = await this.client<{ count: number }[]>`
+      select count(*)::int as count from order_driver_assignments
+      where driver_id = ${driverId}
+        and completed_at is null and cancelled_at is null`;
+    if ((activeCount?.count ?? 0) !== 0)
       throw new AppError(
         409,
         "DRIVER_ACTIVE_ORDER_EXISTS",
@@ -1378,96 +1379,6 @@ export class OfferService {
     }
 
     return committed.result;
-  }
-
-  async setAvailability(
-    driverIdentity: AuthIdentity,
-    workStatus: Extract<DriverWorkStatus, "AVAILABLE" | "OFFLINE">,
-  ) {
-    const { driverId, cityId } = requireTrustedDriverCity(driverIdentity);
-    if (workStatus !== "AVAILABLE" && workStatus !== "OFFLINE")
-      throw new AppError(422, "VALIDATION_FAILED", "Invalid workStatus");
-    await this.consumeLimit(
-      "driver.runtime.availability",
-      driverId,
-      this.limits.runtimeMutationLimit,
-      this.limits.runtimeMutationWindowSeconds,
-    );
-
-    let runtime: DriverRuntimeState;
-    if (workStatus === "AVAILABLE") {
-      const hydrated = await hydrateDriverRuntimeFromPostgres(
-        this.client,
-        driverId,
-      );
-      if (!hydrated)
-        throw new AppError(403, "DRIVER_NOT_ELIGIBLE", "Driver is not eligible");
-      runtime = hydrated;
-    } else {
-      runtime = await this.runtime.getOrHydrateRuntime(driverId, async () => {
-        const hydrated = await hydrateDriverRuntimeFromPostgres(
-          this.client,
-          driverId,
-        );
-        if (!hydrated)
-          throw new AppError(
-            403,
-            "DRIVER_NOT_ELIGIBLE",
-            "Driver is not eligible",
-          );
-        return hydrated;
-      });
-    }
-
-    if (runtime.cityId !== cityId)
-      throw new AppError(404, "CITY_MISMATCH", "Driver city mismatch");
-    if (runtime.eligibilityStatus !== "ELIGIBLE")
-      throw new AppError(403, "DRIVER_NOT_ELIGIBLE", "Driver is not eligible");
-
-    const nextWorkStatus: DriverWorkStatus =
-      runtime.activeOrderCount > 0
-        ? "BUSY"
-        : workStatus === "AVAILABLE"
-          ? "AVAILABLE"
-          : "OFFLINE";
-
-    const { revision, jobId } = await this.client.begin(async (tx) => {
-      const revision = await bumpDriverRuntimeRevision(tx, driverId);
-      const jobId = await enqueueDriverRuntimeRecon(tx, {
-        driverId,
-        expectedRevision: revision,
-        cityId,
-      });
-      return { revision, jobId };
-    });
-
-    const next: DriverRuntimeState = {
-      ...runtime,
-      workStatus: nextWorkStatus,
-      revision,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await applyRedisAfterCommit({
-      client: this.client,
-      jobIds: [jobId],
-      logger: this.logger,
-      event: "driver_availability_redis_apply_failed",
-      apply: async () => {
-        if (workStatus === "AVAILABLE") {
-          await this.runtime.invalidateRuntime(driverId);
-        }
-        await this.runtime.setRuntime(next);
-      },
-    });
-
-    return {
-      driverId,
-      cityId,
-      workStatus: next.workStatus,
-      eligibilityStatus: next.eligibilityStatus,
-      activeOrderCount: next.activeOrderCount,
-    };
   }
 
   async listDriverCandidates(

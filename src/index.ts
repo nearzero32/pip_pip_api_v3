@@ -65,8 +65,6 @@ const offerLimits = loadOfferLimits({
   DRIVER_OFFER_SPIN_WINDOW: String(config.driverOfferSpinWindowSeconds),
   DRIVER_OFFER_CLAIM_LIMIT: String(config.driverOfferClaimLimit),
   DRIVER_OFFER_CLAIM_WINDOW: String(config.driverOfferClaimWindowSeconds),
-  DRIVER_RUNTIME_MUTATION_LIMIT: String(config.driverRuntimeMutationLimit),
-  DRIVER_RUNTIME_MUTATION_WINDOW: String(config.driverRuntimeMutationWindowSeconds),
   DASHBOARD_MANUAL_ASSIGN_LIMIT: String(config.dashboardManualAssignLimit),
   DASHBOARD_MANUAL_ASSIGN_WINDOW: String(config.dashboardManualAssignWindowSeconds),
   DRIVER_RUNTIME_HYDRATE_LOCK_TTL_SECONDS: String(config.driverRuntimeHydrateLockTtlSeconds),

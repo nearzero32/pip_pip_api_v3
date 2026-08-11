@@ -75,7 +75,9 @@ describe("M4-B redis reconciliation + hydration outage", () => {
   beforeAll(async () => {
     h = await createIntegrationHarness({ databasePrefix: "pip_pip_v3_recon" });
     city = await createActiveCity(h.client, "Recon City");
-    const [actor] = await h.client<{ id: string }[]>`insert into accounts default values returning id`;
+    const [actor] = await h.client<
+      { id: string }[]
+    >`insert into accounts default values returning id`;
     const superIdentity: AuthIdentity = {
       accountId: actor!.id,
       sessionId: null as unknown as string,
@@ -110,8 +112,16 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     const versions = await h.deliveryPricing.list(superIdentity, city);
     await h.deliveryPricing.activate(superIdentity, city, versions[0]!.id);
     h.routingProvider.setResult({ distanceMeters: 1000, durationSeconds: 120 });
-    await h.cityDriverPricing.put(superIdentity, city, driverPricingInput, "p", crypto.randomUUID());
-    const [c] = await h.client<{ id: string }[]>`insert into accounts default values returning id`;
+    await h.cityDriverPricing.put(
+      superIdentity,
+      city,
+      driverPricingInput,
+      "p",
+      crypto.randomUUID(),
+    );
+    const [c] = await h.client<
+      { id: string }[]
+    >`insert into accounts default values returning id`;
     customer = c!.id;
     await h.client`insert into customer_profiles(account_id) values (${customer})`;
     const addr = await h.addresses.create(customer, city, {
@@ -154,18 +164,6 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       "ACTIVE",
       city,
     );
-    await h.offers.setAvailability(
-      {
-        accountId: driverId,
-        sessionId: null as unknown as string,
-        applicationType: "DRIVER_APP",
-        roles: [],
-        scopeType: null,
-        cityId: city,
-        storeId: null,
-      },
-      "AVAILABLE",
-    );
     const order = await h.orders.create(customer, city, {
       storeId: store,
       addressId,
@@ -174,7 +172,12 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       idempotencyKey: crypto.randomUUID(),
     });
     await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
-    const round = await h.offers.openRound(adminIdentity, order.id, "r", crypto.randomUUID());
+    const round = await h.offers.openRound(
+      adminIdentity,
+      order.id,
+      "r",
+      crypto.randomUUID(),
+    );
     await h.offers.claim(
       {
         accountId: driverId,
@@ -196,7 +199,9 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       select cancelled_at from order_driver_assignments where order_id = ${order.id}`;
     expect(assignment?.cancelled_at).not.toBeNull();
 
-    const jobs = await h.client<{ id: string; status: string; job_type: string }[]>`
+    const jobs = await h.client<
+      { id: string; status: string; job_type: string }[]
+    >`
       select id::text, status::text, job_type::text from redis_reconciliation_jobs
       where resource_id in (${driverId}, ${city})
       order by created_at desc`;
@@ -216,7 +221,12 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     const worker = new RedisReconciliationWorker(
       h.client,
       realRuntime,
-      { ...loadRedisReconConfig(), enabled: true, pollIntervalMs: 60_000, maxAttempts: 5 },
+      {
+        ...loadRedisReconConfig(),
+        enabled: true,
+        pollIntervalMs: 60_000,
+        maxAttempts: 5,
+      },
       silentLogger,
       (cityId, revision) => h.offers.reconcileCityOffers(cityId, revision),
     );
@@ -251,9 +261,26 @@ describe("M4-B redis reconciliation + hydration outage", () => {
         cityId: city,
       });
     });
-    const cfg = { ...loadRedisReconConfig(), enabled: true, batchSize: 10, maxAttempts: 8 };
-    const w1 = new RedisReconciliationWorker(h.client, realRuntime, cfg, silentLogger, async () => ({}));
-    const w2 = new RedisReconciliationWorker(h.client, realRuntime, cfg, silentLogger, async () => ({}));
+    const cfg = {
+      ...loadRedisReconConfig(),
+      enabled: true,
+      batchSize: 10,
+      maxAttempts: 8,
+    };
+    const w1 = new RedisReconciliationWorker(
+      h.client,
+      realRuntime,
+      cfg,
+      silentLogger,
+      async () => ({}),
+    );
+    const w2 = new RedisReconciliationWorker(
+      h.client,
+      realRuntime,
+      cfg,
+      silentLogger,
+      async () => ({}),
+    );
     const [a, b] = await Promise.all([w1.runOnce(), w2.runOnce()]);
     expect(a.claimed + b.claimed).toBeGreaterThanOrEqual(1);
     expect(a.claimed + b.claimed).toBeLessThanOrEqual(2);
@@ -272,7 +299,10 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       "ACTIVE",
       city,
     );
-    const base: Omit<DriverRuntimeState, "revision" | "workStatus" | "updatedAt"> = {
+    const base: Omit<
+      DriverRuntimeState,
+      "revision" | "workStatus" | "updatedAt"
+    > = {
       driverId,
       cityId: city,
       eligibilityStatus: "ELIGIBLE",
@@ -288,7 +318,9 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     const gated = {
       getRuntime: (id: string) => realRuntime.getRuntime(id),
       invalidateRuntime: (id: string) => realRuntime.invalidateRuntime(id),
-      setRuntimeWithCas: async (state: DriverRuntimeState): Promise<RuntimeCasResult> => {
+      setRuntimeWithCas: async (
+        state: DriverRuntimeState,
+      ): Promise<RuntimeCasResult> => {
         if (state.revision === 1) {
           nEntered = true;
           await holdN;
@@ -332,10 +364,16 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     );
     const oldRev = await h.client.begin(async (tx: SQL) => {
       const rev = await bumpDriverRuntimeRevision(tx, driverId);
-      await enqueueDriverRuntimeRecon(tx, { driverId, expectedRevision: rev, cityId: city });
+      await enqueueDriverRuntimeRecon(tx, {
+        driverId,
+        expectedRevision: rev,
+        cityId: city,
+      });
       return rev;
     });
-    await h.client.begin(async (tx: SQL) => bumpDriverRuntimeRevision(tx, driverId));
+    await h.client.begin(async (tx: SQL) =>
+      bumpDriverRuntimeRevision(tx, driverId),
+    );
     await realRuntime.invalidateRuntime(driverId);
     await h.client`
       update redis_reconciliation_jobs
@@ -437,7 +475,9 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       enqueueCityOpenOffersRecon(tx, city),
     );
     expect(afterEnqueue.jobId).toBe(jobId);
-    const [mid] = await h.client<{ expected_revision: number; status: string }[]>`
+    const [mid] = await h.client<
+      { expected_revision: number; status: string }[]
+    >`
       select expected_revision, status::text from redis_reconciliation_jobs where id = ${jobId}`;
     expect(mid!.status).toBe("PROCESSING");
     expect(Number(mid!.expected_revision)).toBeGreaterThan(r0);
@@ -445,7 +485,9 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     release();
     await run;
 
-    const [after] = await h.client<{ status: string; expected_revision: number }[]>`
+    const [after] = await h.client<
+      { status: string; expected_revision: number }[]
+    >`
       select status::text, expected_revision from redis_reconciliation_jobs where id = ${jobId}`;
     // Must requeue rather than COMPLETE with stale city snapshot.
     expect(after!.status).toBe("PENDING");
@@ -487,10 +529,14 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     const [r1] = await h.client<{ expected_revision: number }[]>`
       select expected_revision from redis_reconciliation_jobs where id = ${jobId}`;
     await h.client.begin((tx: SQL) => enqueueCityOpenOffersRecon(tx, city));
-    const [r2] = await h.client<{ expected_revision: number; status: string }[]>`
+    const [r2] = await h.client<
+      { expected_revision: number; status: string }[]
+    >`
       select expected_revision, status::text from redis_reconciliation_jobs where id = ${jobId}`;
     expect(r2!.status).toBe("PROCESSING");
-    expect(Number(r2!.expected_revision)).toBeGreaterThan(Number(r1!.expected_revision));
+    expect(Number(r2!.expected_revision)).toBeGreaterThan(
+      Number(r1!.expected_revision),
+    );
   });
 
   test("lease crash recovery: B waits for expiry; late A cannot complete", async () => {
@@ -543,7 +589,13 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     const workerA = new RedisReconciliationWorker(
       h.client,
       gatedRuntime as any,
-      { ...loadRedisReconConfig(), enabled: true, leaseSeconds, retryBaseMs: 1, retryMaxMs: 1 },
+      {
+        ...loadRedisReconConfig(),
+        enabled: true,
+        leaseSeconds,
+        retryBaseMs: 1,
+        retryMaxMs: 1,
+      },
       silentLogger,
       async () => ({}),
     );
@@ -560,14 +612,22 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     const earlyB = await workerB.runOnce();
     expect(earlyB.claimed).toBe(0);
 
-    await waitUntil(async () => {
-      await workerB.runOnce();
-      const [row] = await h.client<{ status: string; locked_by: string | null }[]>`
+    await waitUntil(
+      async () => {
+        await workerB.runOnce();
+        const [row] = await h.client<
+          { status: string; locked_by: string | null }[]
+        >`
         select status::text, locked_by from redis_reconciliation_jobs where id = ${jobId}`;
-      return row?.status === "COMPLETED";
-    }, 8_000, 50);
+        return row?.status === "COMPLETED";
+      },
+      8_000,
+      50,
+    );
 
-    const [afterB] = await h.client<{ status: string; locked_by: string | null }[]>`
+    const [afterB] = await h.client<
+      { status: string; locked_by: string | null }[]
+    >`
       select status::text, locked_by from redis_reconciliation_jobs where id = ${jobId}`;
     expect(afterB!.status).toBe("COMPLETED");
     expect(afterB!.locked_by).toBeNull();
@@ -687,7 +747,11 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     );
     const oldRev = await h.client.begin(async (tx: SQL) => {
       const rev = await bumpDriverRuntimeRevision(tx, driverId);
-      await enqueueDriverRuntimeRecon(tx, { driverId, expectedRevision: rev, cityId: city });
+      await enqueueDriverRuntimeRecon(tx, {
+        driverId,
+        expectedRevision: rev,
+        cityId: city,
+      });
       return rev;
     });
     const newRev = await h.client.begin(async (tx: SQL) =>
@@ -747,18 +811,6 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       "ACTIVE",
       city,
     );
-    await h.offers.setAvailability(
-      {
-        accountId: driverId,
-        sessionId: null as unknown as string,
-        applicationType: "DRIVER_APP",
-        roles: [],
-        scopeType: null,
-        cityId: city,
-        storeId: null,
-      },
-      "AVAILABLE",
-    );
     const order = await h.orders.create(customer, city, {
       storeId: store,
       addressId,
@@ -767,7 +819,12 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       idempotencyKey: crypto.randomUUID(),
     });
     await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
-    const round = await h.offers.openRound(adminIdentity, order.id, "r", crypto.randomUUID());
+    const round = await h.offers.openRound(
+      adminIdentity,
+      order.id,
+      "r",
+      crypto.randomUUID(),
+    );
     await h.offers.claim(
       {
         accountId: driverId,
@@ -819,7 +876,9 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       return (await hydrateDriverRuntimeFromPostgres(h.client, driverId))!;
     };
     const results = await Promise.all(
-      Array.from({ length: 12 }, () => storeRt.getOrHydrateRuntime(driverId, hydrate)),
+      Array.from({ length: 12 }, () =>
+        storeRt.getOrHydrateRuntime(driverId, hydrate),
+      ),
     );
     expect(hydrations).toBe(1);
     expect(results.every((r) => r.workStatus === "OFFLINE")).toBe(true);
@@ -944,7 +1003,12 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     const worker = new RedisReconciliationWorker(
       h.client,
       boomRuntime,
-      { ...loadRedisReconConfig(), maxAttempts: 2, retryBaseMs: 1, retryMaxMs: 1 },
+      {
+        ...loadRedisReconConfig(),
+        maxAttempts: 2,
+        retryBaseMs: 1,
+        retryMaxMs: 1,
+      },
       silentLogger,
       async () => {
         throw new Error("no");
@@ -965,8 +1029,12 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       set status = 'COMPLETED', completed_at = now(), locked_at = null, locked_by = null
       where job_type = 'CITY_OPEN_OFFERS' and resource_id = ${city}
         and status in ('PENDING', 'PROCESSING')`;
-    const a = await h.client.begin((tx: SQL) => enqueueCityOpenOffersRecon(tx, city));
-    const b = await h.client.begin((tx: SQL) => enqueueCityOpenOffersRecon(tx, city));
+    const a = await h.client.begin((tx: SQL) =>
+      enqueueCityOpenOffersRecon(tx, city),
+    );
+    const b = await h.client.begin((tx: SQL) =>
+      enqueueCityOpenOffersRecon(tx, city),
+    );
     expect(a.jobId).toBe(b.jobId);
     const [count] = await h.client<{ count: number }[]>`
       select count(*)::int as count from redis_reconciliation_jobs
@@ -1192,12 +1260,16 @@ describe("M4-B redis reconciliation + hydration outage", () => {
           );
         },
       );
-      await waitUntil(async () => {
-        await workerB.runOnce();
-        const [row] = await h.client<{ status: string }[]>`
+      await waitUntil(
+        async () => {
+          await workerB.runOnce();
+          const [row] = await h.client<{ status: string }[]>`
           select status::text from redis_reconciliation_jobs where id = ${jobId}`;
-        return row?.status === "COMPLETED";
-      }, 8_000, 50);
+          return row?.status === "COMPLETED";
+        },
+        8_000,
+        50,
+      );
 
       const redisRevBeforeLateA = await redis.getCityOpenOffersRevision(city);
       expect(redisRevBeforeLateA).toBeGreaterThan(rClaim);
@@ -1205,7 +1277,11 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       expect(idsBeforeLateA).not.toContain(round.id);
 
       const [jobBeforeLateA] = await h.client<
-        { status: string; locked_by: string | null; expected_revision: number }[]
+        {
+          status: string;
+          locked_by: string | null;
+          expected_revision: number;
+        }[]
       >`select status::text, locked_by, expected_revision from redis_reconciliation_jobs where id = ${jobId}`;
 
       releaseA();
@@ -1224,7 +1300,11 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       expect(ids).not.toContain(round.id);
 
       const [jobAfter] = await h.client<
-        { status: string; locked_by: string | null; expected_revision: number }[]
+        {
+          status: string;
+          locked_by: string | null;
+          expected_revision: number;
+        }[]
       >`select status::text, locked_by, expected_revision from redis_reconciliation_jobs where id = ${jobId}`;
       expect(jobAfter!.status).toBe(jobBeforeLateA!.status);
       expect(jobAfter!.locked_by).toBe(jobBeforeLateA!.locked_by);
@@ -1278,7 +1358,9 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       const run = worker.runOnce();
       await waitUntil(async () => entered);
 
-      const [claimed] = await h.client<{ status: string; locked_by: string | null }[]>`
+      const [claimed] = await h.client<
+        { status: string; locked_by: string | null }[]
+      >`
         select status::text, locked_by from redis_reconciliation_jobs where id = ${jobId}`;
       expect(claimed!.status).toBe("PROCESSING");
       expect(claimed!.locked_by).toBe(worker.ownershipToken);
@@ -1291,14 +1373,17 @@ describe("M4-B redis reconciliation + hydration outage", () => {
         },
       });
 
-      const [still] = await h.client<{ status: string; locked_by: string | null }[]>`
+      const [still] = await h.client<
+        { status: string; locked_by: string | null }[]
+      >`
         select status::text, locked_by from redis_reconciliation_jobs where id = ${jobId}`;
       expect(still!.status).toBe("PROCESSING");
       expect(still!.locked_by).toBe(worker.ownershipToken);
 
       const newer = revision + 5;
       expect(
-        (await redis.rebuildCityOpenOffersWithCas(city, newer, [])) === "APPLIED",
+        (await redis.rebuildCityOpenOffersWithCas(city, newer, [])) ===
+          "APPLIED",
       ).toBe(true);
       expect(
         (await redis.rebuildCityOpenOffersWithCas(city, revision, [])) ===

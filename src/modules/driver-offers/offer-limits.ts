@@ -4,8 +4,6 @@ export type OfferLimitsConfig = {
   spinWindowSeconds: number;
   claimLimit: number;
   claimWindowSeconds: number;
-  runtimeMutationLimit: number;
-  runtimeMutationWindowSeconds: number;
   dashboardManualAssignLimit: number;
   dashboardManualAssignWindowSeconds: number;
   spinAgeBucketMs: number;
@@ -22,8 +20,6 @@ export const DEFAULT_OFFER_LIMITS: OfferLimitsConfig = {
   spinWindowSeconds: 60,
   claimLimit: 20,
   claimWindowSeconds: 60,
-  runtimeMutationLimit: 20,
-  runtimeMutationWindowSeconds: 60,
   dashboardManualAssignLimit: 30,
   dashboardManualAssignWindowSeconds: 60,
   spinAgeBucketMs: 60_000,
@@ -81,20 +77,6 @@ export function loadOfferLimits(
       env,
       "DRIVER_OFFER_CLAIM_WINDOW",
       DEFAULT_OFFER_LIMITS.claimWindowSeconds,
-      1,
-      86_400,
-    ),
-    runtimeMutationLimit: parseIntDefault(
-      env,
-      "DRIVER_RUNTIME_MUTATION_LIMIT",
-      DEFAULT_OFFER_LIMITS.runtimeMutationLimit,
-      1,
-      10_000,
-    ),
-    runtimeMutationWindowSeconds: parseIntDefault(
-      env,
-      "DRIVER_RUNTIME_MUTATION_WINDOW",
-      DEFAULT_OFFER_LIMITS.runtimeMutationWindowSeconds,
       1,
       86_400,
     ),
