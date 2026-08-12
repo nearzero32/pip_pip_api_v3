@@ -25,6 +25,7 @@ import { DeliveryPricingService } from "../../src/modules/delivery-pricing/deliv
 import { FakeRoutingProvider } from "../../src/modules/delivery-pricing/routing-provider";
 import { FakeActivePricingCache } from "../../src/modules/delivery-pricing/active-pricing-cache";
 import { OrderService } from "../../src/modules/orders/order.service";
+import { OrderLifecycleService } from "../../src/modules/orders/order-lifecycle.service";
 import { CityDriverPricingService } from "../../src/modules/driver-offers/city-driver-pricing.service";
 import {
   FakeDriverRuntimeStore,
@@ -183,6 +184,7 @@ export type IntegrationHarness = {
   addresses: CustomerAddressService;
   deliveryPricing: DeliveryPricingService;
   orders: OrderService;
+  orderLifecycle: OrderLifecycleService;
   cityDriverPricing: CityDriverPricingService;
   offers: OfferService;
   driverRuntime: FakeDriverRuntimeStore;
@@ -264,6 +266,13 @@ export async function createIntegrationHarness(options?: {
   const rateLimiter = new InMemoryRateLimiter(() => clock.value);
   const driverRuntime = new FakeDriverRuntimeStore();
   const orders = new OrderService(client, deliveryPricing, driverRuntime, silentLogger);
+  const orderLifecycle = new OrderLifecycleService(
+    client,
+    orders,
+    media,
+    driverRuntime,
+    silentLogger,
+  );
   const cityDriverPricing = new CityDriverPricingService(client);
   const offers = new OfferService(
     client,
@@ -291,6 +300,7 @@ export async function createIntegrationHarness(options?: {
     customerAddressService: addresses,
     deliveryPricingService: deliveryPricing,
     orderService: orders,
+    orderLifecycleService: orderLifecycle,
     cityDriverPricingService: cityDriverPricing,
     offerService: offers,
     driverRuntime,
@@ -317,6 +327,7 @@ export async function createIntegrationHarness(options?: {
     addresses,
     deliveryPricing,
     orders,
+    orderLifecycle,
     cityDriverPricing,
     offers,
     driverRuntime,

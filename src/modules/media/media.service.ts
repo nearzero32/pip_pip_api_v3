@@ -10,6 +10,7 @@ import { dateValue } from "../geography/shared";
 import {
   buildCategoryImageObjectKey,
   buildProductImageObjectKey,
+  buildOrderProofObjectKey,
   buildPublicMediaUrl,
   buildStoreCoverObjectKey,
   buildStoreLogoObjectKey,
@@ -130,6 +131,11 @@ export class MediaService {
     identity: AuthIdentity,
     permission: "media.read" | "media.create" | "media.delete",
   ): Promise<string> {
+    if (identity.applicationType === "DRIVER_APP") {
+      if (!identity.cityId || permission === "media.delete")
+        throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
+      return identity.cityId;
+    }
     if (identity.applicationType === "MERCHANT_APP") {
       return authorizeMerchantStoreScope(this.client, identity);
     }
@@ -318,9 +324,137 @@ export class MediaService {
     };
   }
 
+  async createDriverProofUploadIntent(
+    driverIdentity: AuthIdentity,
+    input: {
+      orderId: string;
+      assignmentId: string;
+      purpose: "PICKUP_PROOF" | "DELIVERY_PROOF";
+      contentType: string;
+      fileName: string;
+      sizeBytes: number;
+    },
+  ) {
+    if (driverIdentity.applicationType !== "DRIVER_APP" || !driverIdentity.cityId)
+      throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+    if (
+      input.purpose !== "PICKUP_PROOF" &&
+      input.purpose !== "DELIVERY_PROOF"
+    )
+      throw new AppError(422, "VALIDATION_FAILED", "Unsupported proof purpose");
+    if (!isAllowedImageContentType(input.contentType))
+      throw new AppError(
+        422,
+        "VALIDATION_FAILED",
+        "Unsupported media content type",
+      );
+    let fileName: string;
+    try {
+      fileName = validateOriginalFileName(input.fileName);
+    } catch {
+      throw new AppError(422, "VALIDATION_FAILED", "Invalid file name");
+    }
+    if (
+      !Number.isSafeInteger(input.sizeBytes) ||
+      input.sizeBytes <= 0 ||
+      input.sizeBytes > this.config.mediaMaxImageBytes
+    )
+      throw new AppError(422, "VALIDATION_FAILED", "Invalid media size");
+
+    const cityId = driverIdentity.cityId;
+    const [assignment] = await this.client<{ id: string }[]>`
+      select a.id::text
+      from order_driver_assignments a
+      join orders o on o.id = a.order_id and o.city_id = a.city_id
+      where a.id = ${input.assignmentId}
+        and a.order_id = ${input.orderId}
+        and a.driver_id = ${driverIdentity.accountId}
+        and a.city_id = ${cityId}
+        and a.completed_at is null and a.cancelled_at is null`;
+    if (!assignment)
+      throw new AppError(
+        409,
+        "DRIVER_ASSIGNMENT_REQUIRED",
+        "An active driver assignment is required",
+      );
+
+    const assetId = crypto.randomUUID();
+    const objectKey = buildOrderProofObjectKey(
+      cityId,
+      input.orderId,
+      assetId,
+      input.contentType,
+    );
+    const uploadExpiresAt = new Date(
+      Date.now() + this.config.r2UploadUrlTtlSeconds * 1000,
+    );
+    let upload;
+    try {
+      upload = await this.storage.createUploadUrl({
+        objectKey,
+        contentType: input.contentType,
+        expiresInSeconds: this.config.r2UploadUrlTtlSeconds,
+      });
+    } catch (error) {
+      mapStorageError(error, this.logger, {
+        asset_id: assetId,
+        city_id: cityId,
+        order_id: input.orderId,
+      });
+    }
+    await this.client.begin(async (tx) => {
+      const [locked] = await tx<{ id: string }[]>`
+        select id::text from order_driver_assignments
+        where id = ${input.assignmentId}
+          and order_id = ${input.orderId}
+          and driver_id = ${driverIdentity.accountId}
+          and city_id = ${cityId}
+          and completed_at is null and cancelled_at is null
+        for update`;
+      if (!locked)
+        throw new AppError(
+          409,
+          "DRIVER_ASSIGNMENT_REQUIRED",
+          "An active driver assignment is required",
+        );
+      await tx`
+        insert into media_assets (
+          id, city_id, purpose, visibility, status, object_key, original_name,
+          expected_content_type, expected_size_bytes, created_by_account_id,
+          upload_expires_at
+        ) values (
+          ${assetId}, ${cityId}, ${input.purpose}, 'PRIVATE', 'PENDING_UPLOAD',
+          ${objectKey}, ${fileName}, ${input.contentType}, ${input.sizeBytes},
+          ${driverIdentity.accountId}, ${uploadExpiresAt}
+        )`;
+      await tx`
+        insert into order_proofs (
+          order_id, assignment_id, city_id, media_asset_id, purpose,
+          uploaded_by_driver_id
+        ) values (
+          ${input.orderId}, ${input.assignmentId}, ${cityId}, ${assetId},
+          ${input.purpose}, ${driverIdentity.accountId}
+        )`;
+    });
+    return {
+      fileId: assetId,
+      upload: {
+        method: "PUT" as const,
+        url: upload!.url,
+        headers: { "Content-Type": input.contentType },
+        expiresAt: upload!.expiresAt.toISOString(),
+      },
+    };
+  }
+
   async confirm(identity: AuthIdentity, assetId: string, requestId: string) {
     const cityId = await this.authorize(identity, "media.create");
     const existing = await this.loadCityScoped(assetId, cityId);
+    if (
+      identity.applicationType === "DRIVER_APP" &&
+      existing.created_by_account_id !== identity.accountId
+    )
+      throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
 
     if (existing.status === "READY") {
       return mediaAssetDto(existing, this.config.r2PublicBaseUrl);
@@ -589,7 +723,13 @@ export class MediaService {
     input: {
       assetId: string;
       cityId: string;
-      purpose: "CATEGORY_IMAGE" | "STORE_LOGO" | "STORE_IMAGE" | "PRODUCT_IMAGE";
+      purpose:
+        | "CATEGORY_IMAGE"
+        | "STORE_LOGO"
+        | "STORE_IMAGE"
+        | "PRODUCT_IMAGE"
+        | "PICKUP_PROOF"
+        | "DELIVERY_PROOF";
       visibility?: "PUBLIC" | "PRIVATE";
     },
   ): Promise<void> {

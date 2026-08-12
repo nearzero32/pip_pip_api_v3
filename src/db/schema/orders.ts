@@ -17,16 +17,21 @@ import { instant } from "./columns";
 import { customerAddresses } from "./customer-addresses";
 import { cityDeliveryPricingVersions } from "./delivery-pricing";
 import {
+  orderCustodyStatus,
+  orderEventType,
   orderActionSource,
   orderActorType,
   orderItemState,
   orderPaymentMethod,
   orderPaymentStatus,
+  orderProofPurpose,
   orderStatus,
 } from "./enums";
 import { cities, zones } from "./geography";
+import { mediaAssets } from "./media";
 import { products, productSizes } from "./products";
 import { stores } from "./stores";
+import { orderDriverAssignments } from "./driver-offers";
 
 export const orders = pgTable(
   "orders",
@@ -42,7 +47,11 @@ export const orders = pgTable(
       .notNull()
       .references(() => accounts.id),
     driverAccountId: uuid("driver_account_id").references(() => accounts.id),
-    status: orderStatus("status").notNull().default("UNDER_STORE_REVIEW"),
+    status: orderStatus("status").notNull().default("PENDING_STORE_APPROVAL"),
+    custodyStatus: orderCustodyStatus("custody_status")
+      .notNull()
+      .default("WITH_STORE"),
+    custodyDriverId: uuid("custody_driver_id").references(() => accounts.id),
     paymentMethod: orderPaymentMethod("payment_method").notNull(),
     paymentStatus: orderPaymentStatus("payment_status").notNull(),
     productsSubtotal: integer("products_subtotal").notNull(),
@@ -108,6 +117,18 @@ export const orders = pgTable(
     check(
       "orders_delivered_at_chk",
       sql`(${table.status} = 'DELIVERED' and ${table.deliveredAt} is not null) or (${table.status} <> 'DELIVERED' and ${table.deliveredAt} is null)`,
+    ),
+    check(
+      "orders_custody_logic_chk",
+      sql`(${table.custodyStatus} = 'WITH_STORE' and ${table.custodyDriverId} is null)
+        or (${table.custodyStatus} = 'WITH_DRIVER' and ${table.custodyDriverId} is not null)
+        or (${table.custodyStatus} = 'WITH_CUSTOMER' and ${table.custodyDriverId} is null)`,
+    ),
+    check(
+      "orders_status_custody_chk",
+      sql`(${table.status} in ('PICKED_UP','ARRIVED_AT_CUSTOMER') and ${table.custodyStatus} = 'WITH_DRIVER' and ${table.custodyDriverId} is not null)
+        or (${table.status} = 'DELIVERED' and ${table.custodyStatus} = 'WITH_CUSTOMER' and ${table.custodyDriverId} is null)
+        or (${table.status} not in ('PICKED_UP','ARRIVED_AT_CUSTOMER','DELIVERED'))`,
     ),
   ],
 );
@@ -213,7 +234,9 @@ export const orderItemReplacements = pgTable(
     actorType: orderActorType("actor_type").notNull(),
     source: orderActionSource("source").notNull(),
     reason: text("reason").notNull(),
-    customerAgreedByPhone: boolean("customer_agreed_by_phone").notNull(),
+    customerAgreedByPhone: boolean("customer_agreed_by_phone")
+      .notNull()
+      .default(true),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
@@ -229,10 +252,149 @@ export const orderItemReplacements = pgTable(
       "order_item_replacements_reason_chk",
       sql`length(btrim(${table.reason})) > 0`,
     ),
-    check(
-      "order_item_replacements_agreed_phone_chk",
-      sql`${table.customerAgreedByPhone} = true`,
+  ],
+);
+
+export const orderCustodyHistory = pgTable(
+  "order_custody_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => orders.id),
+    assignmentId: uuid("assignment_id").references(
+      () => orderDriverAssignments.id,
     ),
+    fromStatus: orderCustodyStatus("from_status"),
+    toStatus: orderCustodyStatus("to_status").notNull(),
+    fromDriverId: uuid("from_driver_id"),
+    toDriverId: uuid("to_driver_id"),
+    actorAccountId: uuid("actor_account_id"),
+    actorType: orderActorType("actor_type").notNull(),
+    source: orderActionSource("source").notNull(),
+    reason: text("reason"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("order_custody_history_order_created_idx").on(
+      table.orderId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
+export const orderEvents = pgTable(
+  "order_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => orders.id),
+    assignmentId: uuid("assignment_id").references(
+      () => orderDriverAssignments.id,
+    ),
+    eventType: orderEventType("event_type").notNull(),
+    fromOrderStatus: orderStatus("from_order_status"),
+    toOrderStatus: orderStatus("to_order_status"),
+    fromCustodyStatus: orderCustodyStatus("from_custody_status"),
+    toCustodyStatus: orderCustodyStatus("to_custody_status"),
+    actorType: orderActorType("actor_type").notNull(),
+    actorAccountId: uuid("actor_account_id").references(() => accounts.id),
+    source: orderActionSource("source").notNull(),
+    actedOnBehalfOf: text("acted_on_behalf_of"),
+    reason: text("reason"),
+    proofId: uuid("proof_id"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("order_events_order_created_idx").on(
+      table.orderId,
+      table.createdAt,
+      table.id,
+    ),
+    check(
+      "order_events_acted_on_behalf_chk",
+      sql`${table.actedOnBehalfOf} is null or ${table.actedOnBehalfOf} in ('STORE','DRIVER')`,
+    ),
+  ],
+);
+
+export const orderItemMutations = pgTable(
+  "order_item_mutations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => orders.id),
+    mutationType: text("mutation_type").notNull(),
+    orderItemId: uuid("order_item_id"),
+    relatedOrderItemId: uuid("related_order_item_id"),
+    productIdBefore: uuid("product_id_before"),
+    productIdAfter: uuid("product_id_after"),
+    productNameBefore: text("product_name_before"),
+    productNameAfter: text("product_name_after"),
+    quantityBefore: integer("quantity_before"),
+    quantityAfter: integer("quantity_after"),
+    unitPriceBefore: integer("unit_price_before"),
+    unitPriceAfter: integer("unit_price_after"),
+    lineTotalBefore: integer("line_total_before"),
+    lineTotalAfter: integer("line_total_after"),
+    productsSubtotalBefore: integer("products_subtotal_before").notNull(),
+    productsSubtotalAfter: integer("products_subtotal_after").notNull(),
+    deliveryFeeBefore: integer("delivery_fee_before").notNull(),
+    deliveryFeeAfter: integer("delivery_fee_after").notNull(),
+    totalBefore: integer("total_before").notNull(),
+    totalAfter: integer("total_after").notNull(),
+    actorAccountId: uuid("actor_account_id").notNull(),
+    actorType: orderActorType("actor_type").notNull(),
+    source: orderActionSource("source").notNull(),
+    reason: text("reason").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("order_item_mutations_order_created_idx").on(
+      table.orderId,
+      table.createdAt,
+      table.id,
+    ),
+    check(
+      "order_item_mutations_reason_chk",
+      sql`length(btrim(${table.reason})) > 0`,
+    ),
+    check(
+      "order_item_mutations_type_chk",
+      sql`${table.mutationType} in ('ADD','REMOVE','REPLACE','QUANTITY_CHANGE')`,
+    ),
+    check(
+      "order_item_mutations_delivery_fee_unchanged_chk",
+      sql`${table.deliveryFeeBefore} = ${table.deliveryFeeAfter}`,
+    ),
+  ],
+);
+
+export const orderProofs = pgTable(
+  "order_proofs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => orders.id),
+    assignmentId: uuid("assignment_id")
+      .notNull()
+      .references(() => orderDriverAssignments.id),
+    cityId: uuid("city_id").notNull().references(() => cities.id),
+    mediaAssetId: uuid("media_asset_id")
+      .notNull()
+      .references(() => mediaAssets.id),
+    purpose: orderProofPurpose("purpose").notNull(),
+    uploadedByDriverId: uuid("uploaded_by_driver_id")
+      .notNull()
+      .references(() => accounts.id),
+    consumedAt: instant("consumed_at"),
+    consumedByEventId: uuid("consumed_by_event_id"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("order_proofs_media_asset_uidx").on(table.mediaAssetId),
+    uniqueIndex("order_proofs_one_consumed_purpose_uidx")
+      .on(table.orderId, table.assignmentId, table.purpose)
+      .where(sql`${table.consumedAt} is not null`),
+    index("order_proofs_order_created_idx").on(table.orderId, table.createdAt),
   ],
 );
 

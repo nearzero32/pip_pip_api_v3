@@ -55,6 +55,8 @@ export const mediaAssetPurpose = pgEnum("media_asset_purpose", [
   "DRIVER_DOCUMENT",
   "USER_AVATAR",
   "BANNER_IMAGE",
+  "PICKUP_PROOF",
+  "DELIVERY_PROOF",
 ]);
 export const mediaAssetVisibility = pgEnum("media_asset_visibility", ["PUBLIC", "PRIVATE"]);
 export const mediaAssetStatus = pgEnum("media_asset_status", [
@@ -99,7 +101,7 @@ export const deliveryPricingStatus = pgEnum("delivery_pricing_status", [
   "INACTIVE",
 ]);
 export const orderStatus = pgEnum("order_status", [
-  "UNDER_STORE_REVIEW",
+  "PENDING_STORE_APPROVAL",
   "APPROVED_BY_STORE",
   "SEARCHING_DRIVER",
   "DRIVER_ASSIGNED",
@@ -123,6 +125,7 @@ export const orderPaymentStatus = pgEnum("order_payment_status", [
 export const orderItemState = pgEnum("order_item_state", [
   "ACTIVE",
   "REPLACED",
+  "REMOVED",
 ]);
 export const orderActorType = pgEnum("order_actor_type", [
   "CUSTOMER",
@@ -135,6 +138,35 @@ export const orderActionSource = pgEnum("order_action_source", [
   "CUSTOMER_APP",
   "MERCHANT_APP",
   "DASHBOARD",
+  "DASHBOARD_OVERRIDE",
   "SYSTEM",
   "DRIVER_APP",
+]);
+export const orderCustodyStatus = pgEnum("order_custody_status", [
+  "WITH_STORE",
+  "WITH_DRIVER",
+  "WITH_CUSTOMER",
+]);
+export const assignmentLifecycleStatus = pgEnum("assignment_lifecycle_status", [
+  "ASSIGNED",
+  "PICKED_UP",
+  "ARRIVED_AT_CUSTOMER",
+  "COMPLETED",
+]);
+export const orderEventType = pgEnum("order_event_type", [
+  "ORDER_CREATED",
+  "ORDER_ITEM_ADDED",
+  "ORDER_ITEM_REMOVED",
+  "ORDER_ITEM_REPLACED",
+  "ORDER_ITEM_QUANTITY_CHANGED",
+  "STORE_APPROVED",
+  "DRIVER_ASSIGNED",
+  "STORE_MARKED_READY",
+  "DRIVER_PICKED_UP",
+  "DRIVER_ARRIVED_AT_CUSTOMER",
+  "ORDER_DELIVERED",
+]);
+export const orderProofPurpose = pgEnum("order_proof_purpose", [
+  "PICKUP_PROOF",
+  "DELIVERY_PROOF",
 ]);

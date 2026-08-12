@@ -172,12 +172,8 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       idempotencyKey: crypto.randomUUID(),
     });
     await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
-    const round = await h.offers.openRound(
-      adminIdentity,
-      order.id,
-      "r",
-      crypto.randomUUID(),
-    );
+    const rounds = await h.offers.listRounds(adminIdentity, order.id);
+    const round = rounds[0]!;
     await h.offers.claim(
       {
         accountId: driverId,
@@ -819,12 +815,8 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       idempotencyKey: crypto.randomUUID(),
     });
     await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
-    const round = await h.offers.openRound(
-      adminIdentity,
-      order.id,
-      "r",
-      crypto.randomUUID(),
-    );
+    const rounds = await h.offers.listRounds(adminIdentity, order.id);
+    const round = rounds[0]!;
     await h.offers.claim(
       {
         accountId: driverId,
@@ -1065,12 +1057,8 @@ describe("M4-B redis reconciliation + hydration outage", () => {
         idempotencyKey: crypto.randomUUID(),
       });
       await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
-      const round = await h.offers.openRound(
-        adminIdentity,
-        order.id,
-        "cas-r",
-        crypto.randomUUID(),
-      );
+      const rounds = await h.offers.listRounds(adminIdentity, order.id);
+      const round = rounds[0]!;
 
       // Seed real Redis to match PG open snapshot at current city revision.
       const seed = await h.client.begin((tx: SQL) =>

@@ -10,6 +10,7 @@ import type { AuthIdentity } from "../auth/sessions/session-service";
 import { requireCityPermission } from "../auth/staff/authorization";
 import { dateValue, pageOf } from "../geography/shared";
 import type { OrderService } from "../orders/order.service";
+import { insertOrderEvent } from "../orders/order-events";
 import type { OrderStatus } from "../orders/order-state-machine";
 import { computeOfferedDriverFee } from "./driver-fee";
 import {
@@ -936,14 +937,15 @@ export class OfferService {
         });
 
         const assignmentSequence = 1;
-        await tx`
+        const [assignment] = await tx<{ id: string }[]>`
           insert into order_driver_assignments (
             order_id, driver_id, city_id, offer_round_id, assignment_source,
-            assignment_sequence, assigned_by_account_id, driver_fee, assigned_at
+            assignment_sequence, assigned_by_account_id, driver_fee, status, assigned_at
           ) values (
             ${String(locked.order_id)}, ${driverId}, ${cityId}, ${offerId},
-            'DRIVER_CLAIM', ${assignmentSequence}, ${driverId}, ${offeredDriverFee}, ${now}
-          )`;
+            'OFFER_CLAIM', ${assignmentSequence}, ${driverId}, ${offeredDriverFee},
+            'ASSIGNED', ${now}
+          ) returning id::text`;
 
         await tx`
           update orders set driver_account_id = ${driverId}, updated_at = ${now}
@@ -965,6 +967,17 @@ export class OfferService {
           },
           now,
         );
+        await insertOrderEvent(tx, {
+          orderId: String(locked.order_id),
+          assignmentId: assignment!.id,
+          eventType: "DRIVER_ASSIGNED",
+          fromOrderStatus: "SEARCHING_DRIVER",
+          toOrderStatus: "DRIVER_ASSIGNED",
+          accountId: driverId,
+          actorType: "DRIVER",
+          source: "DRIVER_APP",
+          createdAt: now,
+        });
 
         await tx`
           update order_offer_rounds
@@ -1293,6 +1306,18 @@ export class OfferService {
           },
           now,
         );
+        await insertOrderEvent(tx, {
+          orderId,
+          assignmentId: assignment!.id,
+          eventType: "DRIVER_ASSIGNED",
+          fromOrderStatus: orderStatus,
+          toOrderStatus: "DRIVER_ASSIGNED",
+          accountId: identity.accountId,
+          actorType: "STAFF",
+          source: "DASHBOARD",
+          reason,
+          createdAt: now,
+        });
 
         const result: ManualAssignResult = {
           assignmentId: assignment!.id,

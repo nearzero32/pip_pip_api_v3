@@ -59,12 +59,8 @@ describe("M4-B Driver Offers", () => {
 
   const approveAndOpen = async (orderId: string) => {
     await h.orders.approve(adminIdentity, orderId, { kind: "DASHBOARD" });
-    return h.offers.openRound(
-      adminIdentity,
-      orderId,
-      "req",
-      crypto.randomUUID(),
-    );
+    const rounds = await h.offers.listRounds(adminIdentity, orderId);
+    return rounds[0]!;
   };
 
   const createEligibleDriver = async (cityId = city) => {
@@ -590,8 +586,7 @@ describe("M4-B Driver Offers", () => {
       idempotencyKey: crypto.randomUUID(),
     });
     await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
-    // Transition to SEARCHING without leaving an open round: open then stop then assign
-    await h.offers.openRound(adminIdentity, order.id, "o", crypto.randomUUID());
+    // Approval opens the round; stop it before direct assignment.
     await h.offers.stopRound(adminIdentity, order.id, "pause", "s", crypto.randomUUID());
     // Need SEARCHING_DRIVER still — stop doesn't change order status
     const assigned = await h.offers.assignDriver(

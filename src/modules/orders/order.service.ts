@@ -21,9 +21,10 @@ import {
   customerMayCancel,
   dashboardMayCancel,
   mayApprove,
-  mayReplaceItems,
+  mayMutateItems,
   type OrderStatus,
 } from "./order-state-machine";
+import { insertOrderEvent } from "./order-events";
 
 export type OrderCancelSideEffect = {
   cityId: string;
@@ -41,6 +42,7 @@ type ActionSource =
   | "CUSTOMER_APP"
   | "MERCHANT_APP"
   | "DASHBOARD"
+  | "DASHBOARD_OVERRIDE"
   | "SYSTEM"
   | "DRIVER_APP";
 type PaymentMethod = "CASH" | "ONLINE";
@@ -468,6 +470,9 @@ export class OrderService {
       storeId: String(row.store_id),
       customerAccountId: String(row.customer_account_id),
       status: String(row.status) as OrderStatus,
+      custodyStatus: String(row.custody_status ?? "WITH_STORE"),
+      custodyDriverId:
+        row.custody_driver_id == null ? null : String(row.custody_driver_id),
       paymentMethod: String(row.payment_method) as PaymentMethod,
       paymentStatus: String(row.payment_status) as PaymentStatus,
       productsSubtotal: Number(row.products_subtotal),
@@ -558,6 +563,10 @@ export class OrderService {
       actorType: ActorType;
       source: ActionSource;
       reason?: string | null;
+      custody?: {
+        status: "WITH_STORE" | "WITH_DRIVER" | "WITH_CUSTOMER";
+        driverId: string | null;
+      };
     },
     now: Date,
   ) {
@@ -573,6 +582,10 @@ export class OrderService {
       actorType: ActorType;
       source: ActionSource;
       reason?: string | null;
+      custody?: {
+        status: "WITH_STORE" | "WITH_DRIVER" | "WITH_CUSTOMER";
+        driverId: string | null;
+      };
     },
     now: Date,
   ) {
@@ -613,7 +626,17 @@ export class OrderService {
           version = version + 1,
           updated_at = ${now},
           delivered_at = coalesce(${deliveredAt}, delivered_at),
-          cancelled_at = coalesce(${cancelledAt}, cancelled_at)
+          cancelled_at = coalesce(${cancelledAt}, cancelled_at),
+          custody_status = case
+            when ${actor.custody != null}
+              then ${actor.custody?.status ?? null}::order_custody_status
+            else custody_status
+          end,
+          custody_driver_id = case
+            when ${actor.custody != null}
+              then ${actor.custody?.driverId ?? null}::uuid
+            else custody_driver_id
+          end
       where id = ${order.id} and version = ${order.version}
       returning id::text`;
     if (!updated[0])
@@ -788,11 +811,11 @@ export class OrderService {
           currency, version, status_changed_at, created_at, updated_at
         ) values (
           ${numberRow!.n}, ${cityId}, ${zone.id}, ${input.storeId}, ${customerAccountId},
-          'UNDER_STORE_REVIEW', ${input.paymentMethod}, ${paymentStatus},
+          'PENDING_STORE_APPROVAL', ${input.paymentMethod}, ${paymentStatus},
           ${productsSubtotal}, ${deliveryFee}, ${total}, 'IQD', 1, ${now}, ${now}, ${now}
         )
         returning id::text, order_number, city_id::text, zone_id::text, store_id::text,
-                  customer_account_id::text, status::text, payment_method::text,
+                  customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
                   payment_status::text, products_subtotal, delivery_fee, total, currency,
                   version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at`;
 
@@ -840,9 +863,21 @@ export class OrderService {
           order_id, from_status, to_status, entered_at, changed_by_account_id,
           actor_type, source
         ) values (
-          ${order!.id}, null, 'UNDER_STORE_REVIEW', ${now}, ${customerAccountId},
+          ${order!.id}, null, 'PENDING_STORE_APPROVAL', ${now}, ${customerAccountId},
           'CUSTOMER', 'CUSTOMER_APP'
         )`;
+      await insertOrderEvent(tx, {
+        orderId: String(order!.id),
+        eventType: "ORDER_CREATED",
+        fromOrderStatus: null,
+        toOrderStatus: "PENDING_STORE_APPROVAL",
+        fromCustodyStatus: null,
+        toCustodyStatus: "WITH_STORE",
+        accountId: customerAccountId,
+        actorType: "CUSTOMER",
+        source: "CUSTOMER_APP",
+        createdAt: now,
+      });
 
       await tx`
         insert into order_idempotency_keys(
@@ -864,7 +899,7 @@ export class OrderService {
     await this.assertActiveCustomer(this.client, customerAccountId);
     const [row] = await this.client<Record<string, unknown>[]>`
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
-             customer_account_id::text, status::text, payment_method::text,
+             customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
              version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders
@@ -891,7 +926,7 @@ export class OrderService {
       where customer_account_id = ${customerAccountId} and city_id = ${cityId}`;
     const rows = await this.client<Record<string, unknown>[]>`
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
-             customer_account_id::text, status::text, payment_method::text,
+             customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
              version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders
@@ -972,7 +1007,7 @@ export class OrderService {
       select count(*)::int total from orders where city_id = ${cityId}`;
     const rows = await this.client<Record<string, unknown>[]>`
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
-             customer_account_id::text, status::text, payment_method::text,
+             customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
              version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders
@@ -995,7 +1030,7 @@ export class OrderService {
     );
     const [row] = await this.client<Record<string, unknown>[]>`
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
-             customer_account_id::text, status::text, payment_method::text,
+             customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
              version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders where id = ${orderId} and city_id = ${cityId}`;
@@ -1014,6 +1049,33 @@ export class OrderService {
       select id::text, previous_status::text, actor_account_id::text, actor_type::text,
              source::text, reason, created_at
       from order_cancellations where order_id = ${orderId}`;
+    const events = await this.client<Record<string, unknown>[]>`
+      select id::text, assignment_id::text, event_type::text, from_order_status::text,
+             to_order_status::text, from_custody_status::text, to_custody_status::text,
+             actor_type::text, actor_account_id::text, source::text,
+             acted_on_behalf_of, reason, proof_id::text, metadata, created_at
+      from order_events where order_id = ${orderId}
+      order by created_at asc, id asc`;
+    const custodyHistory = await this.client<Record<string, unknown>[]>`
+      select id::text, assignment_id::text, from_status::text, to_status::text,
+             from_driver_id::text, to_driver_id::text, actor_account_id::text,
+             actor_type::text, source::text, reason, created_at
+      from order_custody_history where order_id = ${orderId}
+      order by created_at asc, id asc`;
+    const proofs = await this.client<Record<string, unknown>[]>`
+      select id::text, assignment_id::text, media_asset_id::text, purpose::text,
+             uploaded_by_driver_id::text, consumed_at, consumed_by_event_id::text,
+             created_at
+      from order_proofs where order_id = ${orderId}
+      order by created_at asc, id asc`;
+    const assignments = await this.client<Record<string, unknown>[]>`
+      select id::text, driver_id::text, offer_round_id::text,
+             assignment_source::text, status::text, assignment_sequence,
+             assigned_by_account_id::text, assignment_reason, driver_fee,
+             assigned_at, picked_up_at, arrived_at_customer_at, completed_at,
+             cancelled_at
+      from order_driver_assignments where order_id = ${orderId}
+      order by assigned_at asc, id asc`;
     return this.mapOrder(row, {
       items: await this.loadItems(this.client, orderId),
       statusHistory: await this.loadHistory(this.client, orderId),
@@ -1065,6 +1127,28 @@ export class OrderService {
             createdAt: dateValue(cancellation.created_at),
           }
         : null,
+      events: events.map((event) => ({
+        ...event,
+        createdAt: dateValue(event.created_at),
+      })),
+      custodyHistory: custodyHistory.map((entry) => ({
+        ...entry,
+        createdAt: dateValue(entry.created_at),
+      })),
+      proofs: proofs.map((proof) => ({
+        ...proof,
+        consumedAt: dateValue(proof.consumed_at),
+        createdAt: dateValue(proof.created_at),
+      })),
+      assignments: assignments.map((assignment) => ({
+        ...assignment,
+        driverFee: Number(assignment.driver_fee),
+        assignedAt: dateValue(assignment.assigned_at),
+        pickedUpAt: dateValue(assignment.picked_up_at),
+        arrivedAtCustomerAt: dateValue(assignment.arrived_at_customer_at),
+        completedAt: dateValue(assignment.completed_at),
+        cancelledAt: dateValue(assignment.cancelled_at),
+      })),
     });
   }
 
@@ -1144,7 +1228,7 @@ export class OrderService {
     const scopedCityId = cityId;
     const merchantStoreId = scope.kind === "MERCHANT" ? scope.storeId : null;
 
-    await this.client.begin(async (tx) => {
+    const committed = await this.client.begin(async (tx) => {
       const [order] = await tx<
         {
           id: string;
@@ -1164,11 +1248,30 @@ export class OrderService {
       if (merchantStoreId && order.store_id !== merchantStoreId)
         throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
       assertPaymentAllowsMutation(order);
+      const [existingRound] = await tx<Record<string, unknown>[]>`
+        select id::text, order_id::text, city_id::text, opened_at,
+               pricing_base_snapshot, rounding_unit_snapshot,
+               pricing_stages_snapshot, pricing_version_snapshot
+        from order_offer_rounds
+        where order_id = ${order.id} and status in ('OPEN','CLAIMED')
+        order by opened_at desc limit 1 for update`;
+      if (order.status === "SEARCHING_DRIVER" && existingRound)
+        return {
+          round: existingRound,
+          jobId: null as string | null,
+          cityRevision: null as number | null,
+        };
       if (!mayApprove(order.status))
         throw new AppError(
           409,
-          "ORDER_INVALID_STATE",
+          "ORDER_INVALID_TRANSITION",
           "Order cannot be approved",
+        );
+      if (existingRound)
+        throw new AppError(
+          409,
+          "ACTIVE_OFFER_ROUND_ALREADY_EXISTS",
+          "An active offer round already exists",
         );
       const [activeCount] = await tx<{ count: number }[]>`
         select count(*)::int count from order_items
@@ -1196,7 +1299,7 @@ export class OrderService {
       await this.transition(
         tx,
         order,
-        "APPROVED_BY_STORE",
+        "SEARCHING_DRIVER",
         {
           accountId: identity.accountId,
           actorType: scope.kind === "MERCHANT" ? "MERCHANT" : "STAFF",
@@ -1204,7 +1307,82 @@ export class OrderService {
         },
         now,
       );
+      const [pricing] = await tx<{
+        pricing_base: number;
+        rounding_unit: number;
+        pricing_stages: unknown;
+        version: number;
+      }[]>`
+        select pricing_base, rounding_unit, pricing_stages, version
+        from city_driver_pricing where city_id = ${scopedCityId} for share`;
+      if (!pricing)
+        throw new AppError(
+          409,
+          "DRIVER_PRICING_NOT_CONFIGURED",
+          "Driver pricing is not configured",
+        );
+      const [round] = await tx<Record<string, unknown>[]>`
+        insert into order_offer_rounds (
+          order_id, city_id, status, pricing_base_snapshot,
+          rounding_unit_snapshot, pricing_stages_snapshot,
+          pricing_version_snapshot, created_by_account_id
+        ) values (
+          ${order.id}, ${scopedCityId}, 'OPEN', ${pricing.pricing_base},
+          ${pricing.rounding_unit}, ${pricing.pricing_stages},
+          ${pricing.version}, ${identity.accountId}
+        )
+        returning id::text, order_id::text, city_id::text, opened_at,
+          pricing_base_snapshot, rounding_unit_snapshot,
+          pricing_stages_snapshot, pricing_version_snapshot`;
+      await insertOrderEvent(tx, {
+        orderId: order.id,
+        eventType: "STORE_APPROVED",
+        fromOrderStatus: order.status,
+        toOrderStatus: "SEARCHING_DRIVER",
+        accountId: identity.accountId,
+        actorType: scope.kind === "MERCHANT" ? "MERCHANT" : "STAFF",
+        source: scope.kind === "MERCHANT" ? "MERCHANT_APP" : "DASHBOARD",
+        createdAt: now,
+      });
+      const cityRecon = await enqueueCityOpenOffersRecon(tx, scopedCityId);
+      return {
+        round,
+        jobId: cityRecon.jobId,
+        cityRevision: cityRecon.revision,
+      };
     });
+    if (
+      this.runtime &&
+      committed.jobId &&
+      committed.cityRevision != null &&
+      committed.round
+    ) {
+      const round = committed.round;
+      await applyRedisAfterCommit({
+        client: this.client,
+        jobIds: [committed.jobId],
+        ...(this.logger ? { logger: this.logger } : {}),
+        event: "order_approve_offer_publish_failed",
+        apply: async () => {
+          await this.runtime!.publishOpenOfferWithCas(
+            {
+              offerId: String(round.id),
+              orderId: String(round.order_id),
+              cityId: String(round.city_id),
+              openedAt: dateValue(round.opened_at)!,
+              pricingBaseSnapshot: Number(round.pricing_base_snapshot),
+              roundingUnitSnapshot: Number(round.rounding_unit_snapshot),
+              pricingStagesSnapshot: round.pricing_stages_snapshot as Array<{
+                afterSeconds: number;
+                increasePercentage: number;
+              }>,
+              pricingVersionSnapshot: Number(round.pricing_version_snapshot),
+            },
+            committed.cityRevision!,
+          );
+        },
+      });
+    }
     if (scope.kind === "DASHBOARD")
       return this.getForDashboard(identity, orderId);
     return this.getForStore(scope.storeId, scopedCityId, orderId);
@@ -1218,7 +1396,7 @@ export class OrderService {
       where store_id = ${storeId} and city_id = ${cityId}`;
     const rows = await this.client<Record<string, unknown>[]>`
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
-             customer_account_id::text, status::text, payment_method::text,
+             customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
              version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders
@@ -1236,7 +1414,7 @@ export class OrderService {
   async getForStore(storeId: string, cityId: string, orderId: string) {
     const [row] = await this.client<Record<string, unknown>[]>`
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
-             customer_account_id::text, status::text, payment_method::text,
+             customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
              version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders
@@ -1246,6 +1424,233 @@ export class OrderService {
       items: await this.loadItems(this.client, orderId),
       statusHistory: await this.loadHistory(this.client, orderId),
     });
+  }
+
+  private async mutationScope(
+    identity: AuthIdentity,
+    scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+  ) {
+    const cityId =
+      scope.kind === "DASHBOARD"
+        ? await requireCityPermission(
+            this.client,
+            identity,
+            "orders.items.mutate",
+          )
+        : identity.cityId;
+    if (!cityId)
+      throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
+    return {
+      cityId,
+      actorType: (scope.kind === "MERCHANT" ? "MERCHANT" : "STAFF") as ActorType,
+      source: (scope.kind === "MERCHANT" ? "MERCHANT_APP" : "DASHBOARD") as ActionSource,
+    };
+  }
+
+  async addItem(
+    identity: AuthIdentity,
+    orderId: string,
+    input: CreateItemInput & { reason: unknown },
+    scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+  ) {
+    const auth = await this.mutationScope(identity, scope);
+    const reason = cleanReason(input.reason);
+    await this.client.begin(async (tx) => {
+      const [order] = await tx<{
+        id: string; status: OrderStatus; version: number; store_id: string;
+        products_subtotal: number; delivery_fee: number; total: number;
+        payment_method: string; payment_status: string;
+      }[]>`
+        select id::text, status::text, version, store_id::text,
+               products_subtotal, delivery_fee, total,
+               payment_method::text, payment_status::text
+        from orders where id = ${orderId} and city_id = ${auth.cityId} for update`;
+      if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+      if (scope.kind === "MERCHANT" && order.store_id !== scope.storeId)
+        throw new AppError(403, "STORE_ORDER_OWNERSHIP_REQUIRED", "Store order ownership is required");
+      assertPaymentAllowsMutation(order);
+      if (!mayMutateItems(order.status))
+        throw new AppError(409, "ORDER_ITEMS_LOCKED", "Order items are locked");
+      const line = await this.validateLine(tx, auth.cityId, order.store_id, input);
+      const [created] = await tx<{ id: string }[]>`
+        insert into order_items (
+          order_id, product_id, selected_size_id, product_name_snapshot,
+          selected_size_name_snapshot, unit_price_snapshot, modifiers_price_snapshot,
+          quantity, line_total, state, modifier_selections_snapshot
+        ) values (
+          ${order.id}, ${line.productId}, ${line.selectedSizeId}, ${line.productName},
+          ${line.selectedSizeName}, ${line.unitPrice}, ${line.modifiersPrice},
+          ${line.quantity}, ${line.lineTotal}, 'ACTIVE',
+          ${JSON.stringify(line.selections)}::jsonb
+        ) returning id::text`;
+      const subtotal = order.products_subtotal + line.lineTotal;
+      const total = subtotal + order.delivery_fee;
+      const updated = await tx<{ id: string }[]>`
+        update orders set products_subtotal = ${subtotal}, total = ${total},
+          version = version + 1, updated_at = now()
+        where id = ${order.id} and version = ${order.version} returning id::text`;
+      if (!updated[0]) throw new AppError(409, "ORDER_INVALID_STATE", "Order was modified concurrently");
+      await tx`
+        insert into order_item_mutations (
+          order_id, mutation_type, order_item_id, product_id_after,
+          product_name_after, quantity_after, unit_price_after, line_total_after,
+          products_subtotal_before, products_subtotal_after,
+          delivery_fee_before, delivery_fee_after, total_before, total_after,
+          actor_account_id, actor_type, source, reason
+        ) values (
+          ${order.id}, 'ADD', ${created!.id}, ${line.productId}, ${line.productName},
+          ${line.quantity}, ${line.unitPrice}, ${line.lineTotal},
+          ${order.products_subtotal}, ${subtotal}, ${order.delivery_fee},
+          ${order.delivery_fee}, ${order.total}, ${total}, ${identity.accountId},
+          ${auth.actorType}, ${auth.source}, ${reason}
+        )`;
+      await insertOrderEvent(tx, {
+        orderId, eventType: "ORDER_ITEM_ADDED", accountId: identity.accountId,
+        actorType: auth.actorType, source: auth.source, reason,
+        metadata: { orderItemId: created!.id },
+      });
+    });
+    return scope.kind === "DASHBOARD"
+      ? this.getForDashboard(identity, orderId)
+      : this.getForStore(scope.storeId, auth.cityId, orderId);
+  }
+
+  async removeItem(
+    identity: AuthIdentity,
+    orderId: string,
+    itemId: string,
+    reasonInput: unknown,
+    scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+  ) {
+    const auth = await this.mutationScope(identity, scope);
+    const reason = cleanReason(reasonInput);
+    await this.client.begin(async (tx) => {
+      const [order] = await tx<{
+        id: string; status: OrderStatus; version: number; store_id: string;
+        products_subtotal: number; delivery_fee: number; total: number;
+        payment_method: string; payment_status: string;
+      }[]>`
+        select id::text, status::text, version, store_id::text,
+          products_subtotal, delivery_fee, total, payment_method::text, payment_status::text
+        from orders where id = ${orderId} and city_id = ${auth.cityId} for update`;
+      if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+      if (scope.kind === "MERCHANT" && order.store_id !== scope.storeId)
+        throw new AppError(403, "STORE_ORDER_OWNERSHIP_REQUIRED", "Store order ownership is required");
+      assertPaymentAllowsMutation(order);
+      if (!mayMutateItems(order.status))
+        throw new AppError(409, "ORDER_ITEMS_LOCKED", "Order items are locked");
+      const [item] = await tx<{
+        id: string; state: string; product_id: string; product_name_snapshot: string;
+        quantity: number; unit_price_snapshot: number; line_total: number;
+      }[]>`
+        select id::text, state::text, product_id::text, product_name_snapshot,
+          quantity, unit_price_snapshot, line_total
+        from order_items where id = ${itemId} and order_id = ${orderId} for update`;
+      if (!item) throw new AppError(404, "ORDER_ITEM_NOT_FOUND", "Order item not found");
+      if (item.state !== "ACTIVE") throw new AppError(409, "ORDER_ITEM_NOT_ACTIVE", "Order item is not active");
+      const subtotal = order.products_subtotal - item.line_total;
+      const total = subtotal + order.delivery_fee;
+      await tx`update order_items set state = 'REMOVED' where id = ${item.id}`;
+      const updated = await tx<{ id: string }[]>`
+        update orders set products_subtotal = ${subtotal}, total = ${total},
+          version = version + 1, updated_at = now()
+        where id = ${order.id} and version = ${order.version} returning id::text`;
+      if (!updated[0]) throw new AppError(409, "ORDER_INVALID_STATE", "Order was modified concurrently");
+      await tx`
+        insert into order_item_mutations (
+          order_id, mutation_type, order_item_id, product_id_before,
+          product_name_before, quantity_before, unit_price_before, line_total_before,
+          products_subtotal_before, products_subtotal_after, delivery_fee_before,
+          delivery_fee_after, total_before, total_after, actor_account_id,
+          actor_type, source, reason
+        ) values (
+          ${order.id}, 'REMOVE', ${item.id}, ${item.product_id},
+          ${item.product_name_snapshot}, ${item.quantity}, ${item.unit_price_snapshot},
+          ${item.line_total}, ${order.products_subtotal}, ${subtotal},
+          ${order.delivery_fee}, ${order.delivery_fee}, ${order.total}, ${total},
+          ${identity.accountId}, ${auth.actorType}, ${auth.source}, ${reason}
+        )`;
+      await insertOrderEvent(tx, {
+        orderId, eventType: "ORDER_ITEM_REMOVED", accountId: identity.accountId,
+        actorType: auth.actorType, source: auth.source, reason,
+        metadata: { orderItemId: item.id },
+      });
+    });
+    return scope.kind === "DASHBOARD"
+      ? this.getForDashboard(identity, orderId)
+      : this.getForStore(scope.storeId, auth.cityId, orderId);
+  }
+
+  async changeQuantity(
+    identity: AuthIdentity,
+    orderId: string,
+    itemId: string,
+    input: { quantity: number; reason: unknown },
+    scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+  ) {
+    const auth = await this.mutationScope(identity, scope);
+    const reason = cleanReason(input.reason);
+    const quantity = quantityOf(input.quantity);
+    await this.client.begin(async (tx) => {
+      const [order] = await tx<{
+        id: string; status: OrderStatus; version: number; store_id: string;
+        products_subtotal: number; delivery_fee: number; total: number;
+        payment_method: string; payment_status: string;
+      }[]>`
+        select id::text, status::text, version, store_id::text,
+          products_subtotal, delivery_fee, total, payment_method::text, payment_status::text
+        from orders where id = ${orderId} and city_id = ${auth.cityId} for update`;
+      if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+      if (scope.kind === "MERCHANT" && order.store_id !== scope.storeId)
+        throw new AppError(403, "STORE_ORDER_OWNERSHIP_REQUIRED", "Store order ownership is required");
+      assertPaymentAllowsMutation(order);
+      if (!mayMutateItems(order.status))
+        throw new AppError(409, "ORDER_ITEMS_LOCKED", "Order items are locked");
+      const [item] = await tx<{
+        id: string; state: string; product_id: string; product_name_snapshot: string;
+        quantity: number; unit_price_snapshot: number; modifiers_price_snapshot: number;
+        line_total: number;
+      }[]>`
+        select id::text, state::text, product_id::text, product_name_snapshot,
+          quantity, unit_price_snapshot, modifiers_price_snapshot, line_total
+        from order_items where id = ${itemId} and order_id = ${orderId} for update`;
+      if (!item) throw new AppError(404, "ORDER_ITEM_NOT_FOUND", "Order item not found");
+      if (item.state !== "ACTIVE") throw new AppError(409, "ORDER_ITEM_NOT_ACTIVE", "Order item is not active");
+      const lineTotal = (item.unit_price_snapshot + item.modifiers_price_snapshot) * quantity;
+      const subtotal = order.products_subtotal - item.line_total + lineTotal;
+      const total = subtotal + order.delivery_fee;
+      await tx`update order_items set quantity = ${quantity}, line_total = ${lineTotal} where id = ${item.id}`;
+      const updated = await tx<{ id: string }[]>`
+        update orders set products_subtotal = ${subtotal}, total = ${total},
+          version = version + 1, updated_at = now()
+        where id = ${order.id} and version = ${order.version} returning id::text`;
+      if (!updated[0]) throw new AppError(409, "ORDER_INVALID_STATE", "Order was modified concurrently");
+      await tx`
+        insert into order_item_mutations (
+          order_id, mutation_type, order_item_id, product_id_before, product_id_after,
+          product_name_before, product_name_after, quantity_before, quantity_after,
+          unit_price_before, unit_price_after, line_total_before, line_total_after,
+          products_subtotal_before, products_subtotal_after, delivery_fee_before,
+          delivery_fee_after, total_before, total_after, actor_account_id,
+          actor_type, source, reason
+        ) values (
+          ${order.id}, 'QUANTITY_CHANGE', ${item.id}, ${item.product_id}, ${item.product_id},
+          ${item.product_name_snapshot}, ${item.product_name_snapshot}, ${item.quantity},
+          ${quantity}, ${item.unit_price_snapshot}, ${item.unit_price_snapshot},
+          ${item.line_total}, ${lineTotal}, ${order.products_subtotal}, ${subtotal},
+          ${order.delivery_fee}, ${order.delivery_fee}, ${order.total}, ${total},
+          ${identity.accountId}, ${auth.actorType}, ${auth.source}, ${reason}
+        )`;
+      await insertOrderEvent(tx, {
+        orderId, eventType: "ORDER_ITEM_QUANTITY_CHANGED",
+        accountId: identity.accountId, actorType: auth.actorType,
+        source: auth.source, reason,
+        metadata: { orderItemId: item.id, quantityBefore: item.quantity, quantityAfter: quantity },
+      });
+    });
+    return scope.kind === "DASHBOARD"
+      ? this.getForDashboard(identity, orderId)
+      : this.getForStore(scope.storeId, auth.cityId, orderId);
   }
 
   async replaceItem(
@@ -1258,7 +1663,7 @@ export class OrderService {
       quantity: number;
       modifierSelections?: SelectionInput[];
       reason: unknown;
-      customerAgreedByPhone: unknown;
+      customerAgreedByPhone?: unknown;
     },
     scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
   ) {
@@ -1274,13 +1679,6 @@ export class OrderService {
       throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
     const scopedCityId = cityId;
     const reason = cleanReason(input.reason);
-    if (input.customerAgreedByPhone !== true)
-      throw new AppError(
-        422,
-        "VALIDATION_FAILED",
-        "customerAgreedByPhone must be true",
-      );
-
     await this.client.begin(async (tx) => {
       const [order] = await tx<
         {
@@ -1299,13 +1697,17 @@ export class OrderService {
         from orders where id = ${orderId} and city_id = ${scopedCityId} for update`;
       if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
       if (scope.kind === "MERCHANT" && order.store_id !== scope.storeId)
-        throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+        throw new AppError(
+          403,
+          "STORE_ORDER_OWNERSHIP_REQUIRED",
+          "Store order ownership is required",
+        );
       assertPaymentAllowsMutation(order);
-      if (!mayReplaceItems(order.status))
+      if (!mayMutateItems(order.status))
         throw new AppError(
           409,
-          "ORDER_ITEM_REPLACEMENT_NOT_ALLOWED",
-          "Item replacement is not allowed",
+          "ORDER_ITEMS_LOCKED",
+          "Order items are locked",
         );
 
       const [original] = await tx<
@@ -1400,6 +1802,38 @@ export class OrderService {
           ${scope.kind === "MERCHANT" ? "MERCHANT_APP" : "DASHBOARD"},
           ${reason}, true
         )`;
+      await tx`
+        insert into order_item_mutations (
+          order_id, mutation_type, order_item_id, related_order_item_id,
+          product_id_before, product_id_after, product_name_before,
+          product_name_after, quantity_before, quantity_after,
+          unit_price_before, unit_price_after, line_total_before, line_total_after,
+          products_subtotal_before, products_subtotal_after,
+          delivery_fee_before, delivery_fee_after, total_before, total_after,
+          actor_account_id, actor_type, source, reason
+        ) values (
+          ${order.id}, 'REPLACE', ${original.id}, ${created!.id},
+          ${original.product_id}, ${replacement.productId},
+          ${original.product_name_snapshot}, ${replacement.productName},
+          ${original.quantity}, ${replacement.quantity},
+          ${original.unit_price_snapshot}, ${replacement.unitPrice},
+          ${original.line_total}, ${replacement.lineTotal},
+          ${order.products_subtotal}, ${productsSubtotalAfter},
+          ${order.delivery_fee}, ${order.delivery_fee}, ${order.total}, ${totalAfter},
+          ${identity.accountId},
+          ${scope.kind === "MERCHANT" ? "MERCHANT" : "STAFF"},
+          ${scope.kind === "MERCHANT" ? "MERCHANT_APP" : "DASHBOARD"},
+          ${reason}
+        )`;
+      await insertOrderEvent(tx, {
+        orderId: order.id,
+        eventType: "ORDER_ITEM_REPLACED",
+        accountId: identity.accountId,
+        actorType: scope.kind === "MERCHANT" ? "MERCHANT" : "STAFF",
+        source: scope.kind === "MERCHANT" ? "MERCHANT_APP" : "DASHBOARD",
+        reason,
+        metadata: { originalItemId: original.id, replacementItemId: created!.id },
+      });
     });
     if (scope.kind === "DASHBOARD")
       return this.getForDashboard(identity, orderId);

@@ -15,6 +15,7 @@ import { accounts } from "./accounts";
 import { instant } from "./columns";
 import { cities } from "./geography";
 import { orders } from "./orders";
+import { assignmentLifecycleStatus } from "./enums";
 
 export const offerRoundStatus = pgEnum("offer_round_status", [
   "OPEN",
@@ -25,7 +26,7 @@ export const offerRoundStatus = pgEnum("offer_round_status", [
 ]);
 
 export const assignmentSource = pgEnum("assignment_source", [
-  "DRIVER_CLAIM",
+  "OFFER_CLAIM",
   "DASHBOARD_MANUAL",
 ]);
 
@@ -164,6 +165,7 @@ export const orderDriverAssignments = pgTable(
       .references(() => cities.id),
     offerRoundId: uuid("offer_round_id").references(() => orderOfferRounds.id),
     assignmentSource: assignmentSource("assignment_source").notNull(),
+    status: assignmentLifecycleStatus("status").notNull().default("ASSIGNED"),
     assignmentSequence: integer("assignment_sequence").notNull(),
     assignedByAccountId: uuid("assigned_by_account_id").references(
       () => accounts.id,
@@ -181,6 +183,8 @@ export const orderDriverAssignments = pgTable(
       "pricing_stage_increase_percentage",
     ),
     assignedAt: instant("assigned_at").notNull().defaultNow(),
+    pickedUpAt: instant("picked_up_at"),
+    arrivedAtCustomerAt: instant("arrived_at_customer_at"),
     completedAt: instant("completed_at"),
     cancelledAt: instant("cancelled_at"),
     createdAt: instant("created_at").notNull().defaultNow(),
@@ -210,6 +214,15 @@ export const orderDriverAssignments = pgTable(
     check(
       "order_driver_assignments_terminal_chk",
       sql`not (${table.completedAt} is not null and ${table.cancelledAt} is not null)`,
+    ),
+    check(
+      "order_driver_assignments_status_times_chk",
+      sql`${table.cancelledAt} is not null or (
+        (${table.status} = 'ASSIGNED' and ${table.pickedUpAt} is null and ${table.arrivedAtCustomerAt} is null and ${table.completedAt} is null)
+        or (${table.status} = 'PICKED_UP' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is null and ${table.completedAt} is null)
+        or (${table.status} = 'ARRIVED_AT_CUSTOMER' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is not null and ${table.completedAt} is null)
+        or (${table.status} = 'COMPLETED' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is not null and ${table.completedAt} is not null)
+      )`,
     ),
     check(
       "order_driver_assignments_pricing_source_chk",

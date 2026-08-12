@@ -38,6 +38,8 @@ export const GRANTABLE_PERMISSION_CODES = [
   "orders.cancel",
   "orders.approve",
   "orders.items.replace",
+  "orders.items.mutate",
+  "orders.lifecycle.override",
   "orders.assign",
   "order_offers.read",
   "order_offers.manage",

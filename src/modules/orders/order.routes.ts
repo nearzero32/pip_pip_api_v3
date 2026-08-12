@@ -60,7 +60,7 @@ const createBody = t.Object(
 );
 
 const orderStatus = t.Union([
-  t.Literal("UNDER_STORE_REVIEW"),
+  t.Literal("PENDING_STORE_APPROVAL"),
   t.Literal("APPROVED_BY_STORE"),
   t.Literal("SEARCHING_DRIVER"),
   t.Literal("DRIVER_ASSIGNED"),
@@ -82,7 +82,11 @@ const customerOrderItem = t.Object({
   modifiersPrice: t.Integer({ minimum: 0 }),
   quantity: t.Integer({ minimum: 1, maximum: 99 }),
   lineTotal: t.Integer({ exclusiveMinimum: 0 }),
-  state: t.Union([t.Literal("ACTIVE"), t.Literal("REPLACED")]),
+  state: t.Union([
+    t.Literal("ACTIVE"),
+    t.Literal("REPLACED"),
+    t.Literal("REMOVED"),
+  ]),
   replacesOrderItemId: t.Nullable(uuid),
   modifierSelections: t.Array(
     t.Object({
@@ -103,6 +107,12 @@ const customerOrderFields = {
   storeId: uuid,
   customerAccountId: uuid,
   status: orderStatus,
+  custodyStatus: t.Union([
+    t.Literal("WITH_STORE"),
+    t.Literal("WITH_DRIVER"),
+    t.Literal("WITH_CUSTOMER"),
+  ]),
+  custodyDriverId: t.Nullable(uuid),
   paymentMethod: t.Union([t.Literal("CASH"), t.Literal("ONLINE")]),
   paymentStatus: t.Union([
     t.Literal("UNPAID"),
@@ -135,13 +145,31 @@ const replaceBody = t.Object(
     quantity: t.Integer({ minimum: 1, maximum: 99 }),
     modifierSelections: t.Optional(t.Array(selection)),
     reason: t.String({ minLength: 1, maxLength: 1000 }),
-    customerAgreedByPhone: t.Literal(true),
+    customerAgreedByPhone: t.Optional(t.Boolean()),
   },
   { additionalProperties: false },
 );
 
 const cancelBody = t.Object(
   { reason: t.String({ minLength: 1, maxLength: 1000 }) },
+  { additionalProperties: false },
+);
+const mutationReasonBody = t.Object(
+  { reason: t.String({ minLength: 1, maxLength: 1000 }) },
+  { additionalProperties: false },
+);
+const quantityBody = t.Object(
+  {
+    quantity: t.Integer({ minimum: 1, maximum: 99 }),
+    reason: t.String({ minLength: 1, maxLength: 1000 }),
+  },
+  { additionalProperties: false },
+);
+const addItemBody = t.Object(
+  {
+    ...createItem.properties,
+    reason: t.String({ minLength: 1, maxLength: 1000 }),
+  },
   { additionalProperties: false },
 );
 
@@ -169,7 +197,7 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           tags: ["Customer — Orders"],
           summary: "Create order",
           description:
-            "Creates a City-scoped CASH order in UNDER_STORE_REVIEW with immutable product, address, and delivery-pricing snapshots. Prices and delivery fee are server-authoritative. Requires idempotencyKey. paymentMethod=ONLINE is rejected with ORDER_ONLINE_PAYMENT_NOT_CONFIRMED until a trusted payment confirmation flow exists; the schema retains ONLINE for that future integration.",
+            "Creates a City-scoped CASH order in PENDING_STORE_APPROVAL with immutable product, address, and delivery-pricing snapshots. Prices and delivery fee are server-authoritative. Requires idempotencyKey. paymentMethod=ONLINE is rejected with ORDER_ONLINE_PAYMENT_NOT_CONFIRMED until a trusted payment confirmation flow exists; the schema retains ONLINE for that future integration.",
           security: [{ bearerAuth: [] }],
           parameters: [cityParameter],
         },
@@ -255,7 +283,7 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           tags: ["Customer — Orders"],
           summary: "Cancel my order",
           description:
-            "Customer may cancel only while UNDER_STORE_REVIEW. After APPROVED_BY_STORE this returns ORDER_CANCELLATION_NOT_ALLOWED.",
+            "Customer may cancel only while PENDING_STORE_APPROVAL. Later states return ORDER_CANCELLATION_NOT_ALLOWED.",
           security: [{ bearerAuth: [] }],
           parameters: [cityParameter],
         },
@@ -344,7 +372,7 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
         detail: {
           tags: ["Dashboard — Orders"],
           summary: "Approve order",
-          description: "UNDER_STORE_REVIEW → APPROVED_BY_STORE. Requires orders.approve.",
+          description: "PENDING_STORE_APPROVAL → SEARCHING_DRIVER and atomically opens one offer round. Requires orders.approve.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -374,7 +402,7 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           tags: ["Dashboard — Orders"],
           summary: "Replace order item",
           description:
-            "Only while UNDER_STORE_REVIEW. Requires orders.items.replace and customerAgreedByPhone=true.",
+            "Allowed until READY_FOR_PICKUP. Requires orders.items.replace and a reason.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -475,5 +503,86 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           summary: "Replace store order item",
           security: [{ bearerAuth: [] }],
         },
+      },
+    )
+    .post(
+      "/api/v1/mobile/merchant/orders/:orderId/items",
+      async ({ request, set, params, body }) => {
+        const identity = await authIdentity(auth, request, merchantContext, requestIdOf(set));
+        const { storeId } = requireTrustedMerchantStore(identity);
+        return service.addItem(identity, params.orderId, body, { kind: "MERCHANT", storeId });
+      },
+      {
+        params: t.Object({ orderId: uuid }),
+        body: addItemBody,
+        response: { 200: t.Any(), ...errors },
+        detail: { tags: ["Mobile — Merchant Orders"], summary: "Add order item", security: [{ bearerAuth: [] }] },
+      },
+    )
+    .post(
+      "/api/v1/mobile/merchant/orders/:orderId/items/:itemId/remove",
+      async ({ request, set, params, body }) => {
+        const identity = await authIdentity(auth, request, merchantContext, requestIdOf(set));
+        const { storeId } = requireTrustedMerchantStore(identity);
+        return service.removeItem(identity, params.orderId, params.itemId, body.reason, { kind: "MERCHANT", storeId });
+      },
+      {
+        params: t.Object({ orderId: uuid, itemId: uuid }),
+        body: mutationReasonBody,
+        response: { 200: t.Any(), ...errors },
+        detail: { tags: ["Mobile — Merchant Orders"], summary: "Remove order item", security: [{ bearerAuth: [] }] },
+      },
+    )
+    .post(
+      "/api/v1/mobile/merchant/orders/:orderId/items/:itemId/quantity",
+      async ({ request, set, params, body }) => {
+        const identity = await authIdentity(auth, request, merchantContext, requestIdOf(set));
+        const { storeId } = requireTrustedMerchantStore(identity);
+        return service.changeQuantity(identity, params.orderId, params.itemId, body, { kind: "MERCHANT", storeId });
+      },
+      {
+        params: t.Object({ orderId: uuid, itemId: uuid }),
+        body: quantityBody,
+        response: { 200: t.Any(), ...errors },
+        detail: { tags: ["Mobile — Merchant Orders"], summary: "Change order item quantity", security: [{ bearerAuth: [] }] },
+      },
+    )
+    .post(
+      "/api/v1/dashboard/orders/:orderId/items",
+      async ({ request, set, params, body }) => {
+        const identity = await authIdentity(auth, request, dashboardContext, requestIdOf(set));
+        return service.addItem(identity, params.orderId, body, { kind: "DASHBOARD" });
+      },
+      {
+        params: t.Object({ orderId: uuid }),
+        body: addItemBody,
+        response: { 200: t.Any(), ...errors },
+        detail: { tags: ["Dashboard — Orders"], summary: "Add order item", security: [{ bearerAuth: [] }] },
+      },
+    )
+    .post(
+      "/api/v1/dashboard/orders/:orderId/items/:itemId/remove",
+      async ({ request, set, params, body }) => {
+        const identity = await authIdentity(auth, request, dashboardContext, requestIdOf(set));
+        return service.removeItem(identity, params.orderId, params.itemId, body.reason, { kind: "DASHBOARD" });
+      },
+      {
+        params: t.Object({ orderId: uuid, itemId: uuid }),
+        body: mutationReasonBody,
+        response: { 200: t.Any(), ...errors },
+        detail: { tags: ["Dashboard — Orders"], summary: "Remove order item", security: [{ bearerAuth: [] }] },
+      },
+    )
+    .post(
+      "/api/v1/dashboard/orders/:orderId/items/:itemId/quantity",
+      async ({ request, set, params, body }) => {
+        const identity = await authIdentity(auth, request, dashboardContext, requestIdOf(set));
+        return service.changeQuantity(identity, params.orderId, params.itemId, body, { kind: "DASHBOARD" });
+      },
+      {
+        params: t.Object({ orderId: uuid, itemId: uuid }),
+        body: quantityBody,
+        response: { 200: t.Any(), ...errors },
+        detail: { tags: ["Dashboard — Orders"], summary: "Change order item quantity", security: [{ bearerAuth: [] }] },
       },
     );

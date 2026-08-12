@@ -67,6 +67,14 @@ export const buildProductImageObjectKey = (
 ): string =>
   `cities/${cityId}/products/${assetId}/original.${canonicalExtensionForContentType(contentType)}`;
 
+export const buildOrderProofObjectKey = (
+  cityId: string,
+  orderId: string,
+  assetId: string,
+  contentType: AllowedImageContentType,
+): string =>
+  `cities/${cityId}/orders/${orderId}/proofs/${assetId}.${canonicalExtensionForContentType(contentType)}`;
+
 export const buildPublicMediaUrl = (
   publicBaseUrl: string,
   objectKey: string,

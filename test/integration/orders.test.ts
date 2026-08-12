@@ -158,6 +158,17 @@ describe("M4-A Orders Core", () => {
     await h.deliveryPricing.create(superIdentity, city, pricingInput);
     const versions = await h.deliveryPricing.list(superIdentity, city);
     await h.deliveryPricing.activate(superIdentity, city, versions[0]!.id);
+    await h.cityDriverPricing.put(
+      superIdentity,
+      city,
+      {
+        pricingBase: 3000,
+        roundingUnit: 250,
+        pricingStages: [{ afterSeconds: 0, increasePercentage: 0 }],
+      },
+      "orders-driver-pricing",
+      crypto.randomUUID(),
+    );
     h.routingProvider.setResult({ distanceMeters: 1000, durationSeconds: 120 });
 
     const [c] = await h.client<{ id: string }[]>`insert into accounts default values returning id`;
@@ -278,14 +289,14 @@ describe("M4-A Orders Core", () => {
 
   afterAll(() => h?.close());
 
-  test("creates CASH order with UNDER_STORE_REVIEW, history, and trusted totals", async () => {
+  test("creates CASH order with PENDING_STORE_APPROVAL, history, and trusted totals", async () => {
     await h.client`update products set base_price = 1000 where id = ${product}`;
     const order = await h.orders.create(customer, city, createBody({
       items: [{ productId: product, quantity: 2 }],
       idempotencyKey: `cash-${crypto.randomUUID()}`,
     }));
     expect(order).toMatchObject({
-      status: "UNDER_STORE_REVIEW",
+      status: "PENDING_STORE_APPROVAL",
       paymentMethod: "CASH",
       paymentStatus: "UNPAID",
       productsSubtotal: 2000,
@@ -308,7 +319,7 @@ describe("M4-A Orders Core", () => {
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({
       from_status: null,
-      to_status: "UNDER_STORE_REVIEW",
+      to_status: "PENDING_STORE_APPROVAL",
       exited_at: null,
       duration_seconds: null,
     });
@@ -386,7 +397,7 @@ describe("M4-A Orders Core", () => {
         currency, version, status_changed_at
       ) values (
         ${`PP-ONLINE-${crypto.randomUUID().slice(0, 8)}`}, ${city}, ${zoneId}, ${store},
-        ${customer}, 'UNDER_STORE_REVIEW', 'ONLINE', 'AWAITING_PAYMENT',
+        ${customer}, 'PENDING_STORE_APPROVAL', 'ONLINE', 'AWAITING_PAYMENT',
         1000, 1000, 2000, 'IQD', 1, now()
       ) returning id::text`;
     const [item] = await h.client<{ id: string }[]>`
@@ -401,7 +412,7 @@ describe("M4-A Orders Core", () => {
         order_id, from_status, to_status, entered_at, changed_by_account_id,
         actor_type, source
       ) values (
-        ${order!.id}, null, 'UNDER_STORE_REVIEW', now(), ${customer},
+        ${order!.id}, null, 'PENDING_STORE_APPROVAL', now(), ${customer},
         'CUSTOMER', 'CUSTOMER_APP'
       )`;
     await expect(
@@ -423,7 +434,7 @@ describe("M4-A Orders Core", () => {
     ).rejects.toMatchObject({ publicCode: "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED" });
     const status = await h.client<{ status: string; version: number }[]>`
       select status::text, version from orders where id = ${order!.id}`;
-    expect(status[0]).toMatchObject({ status: "UNDER_STORE_REVIEW", version: 1 });
+    expect(status[0]).toMatchObject({ status: "PENDING_STORE_APPROVAL", version: 1 });
     const replacements = await h.client<{ count: number }[]>`
       select count(*)::int count from order_item_replacements where order_id = ${order!.id}`;
     expect(replacements[0]!.count).toBe(0);
@@ -562,7 +573,7 @@ describe("M4-A Orders Core", () => {
     expect(count[0]!.count).toBe(1);
   });
 
-  test("customer cancel only own UNDER_STORE_REVIEW order", async () => {
+  test("customer cancel only own PENDING_STORE_APPROVAL order", async () => {
     const order = await h.orders.create(customer, city, createBody({
       idempotencyKey: `cancel-c-${crypto.randomUUID()}`,
     }));
@@ -572,7 +583,7 @@ describe("M4-A Orders Core", () => {
     const audit = await h.client<{ previous_status: string; source: string }[]>`
       select previous_status::text, source::text from order_cancellations where order_id = ${order.id}`;
     expect(audit[0]).toMatchObject({
-      previous_status: "UNDER_STORE_REVIEW",
+      previous_status: "PENDING_STORE_APPROVAL",
       source: "CUSTOMER_APP",
     });
 
@@ -638,7 +649,9 @@ describe("M4-A Orders Core", () => {
     expect(paths.some((p) => p.includes("/merchant/orders") && p.endsWith("/cancel"))).toBe(
       false,
     );
-    expect(paths.some((p) => p.includes("/driver/") && p.includes("orders"))).toBe(false);
+    expect(
+      paths.some((p) => p.includes("/driver/orders") && p.endsWith("/cancel")),
+    ).toBe(false);
   });
 
   test("item replacement preserves original, recalculates totals, keeps delivery fee", async () => {
@@ -663,7 +676,7 @@ describe("M4-A Orders Core", () => {
     expect(expensive.productsSubtotal).toBe(2500);
     expect(expensive.deliveryFee).toBe(fee);
     expect(expensive.total).toBe(2500 + fee);
-    expect(expensive.status).toBe("UNDER_STORE_REVIEW");
+    expect(expensive.status).toBe("PENDING_STORE_APPROVAL");
     const items = expensive.items as Array<{ id: string; state: string; replacesOrderItemId: string | null }>;
     const original = items.find((i) => i.id === itemId);
     const replacement = items.find((i) => i.replacesOrderItemId === itemId);
@@ -791,7 +804,7 @@ describe("M4-A Orders Core", () => {
     expect(pricingAfter).toEqual(pricingBefore);
   });
 
-  test("replacement after approval fails; unauthorized employee fails", async () => {
+  test("replacement remains open after approval; unauthorized employee fails", async () => {
     const order = await h.orders.create(customer, city, createBody({
       idempotencyKey: `rep-appr-${crypto.randomUUID()}`,
     }));
@@ -800,8 +813,7 @@ describe("M4-A Orders Core", () => {
       kind: "MERCHANT",
       storeId: store,
     });
-    await expect(
-      h.orders.replaceItem(
+    const afterApproval = await h.orders.replaceItem(
         adminIdentity,
         order.id,
         itemId,
@@ -812,8 +824,8 @@ describe("M4-A Orders Core", () => {
           customerAgreedByPhone: true,
         },
         { kind: "DASHBOARD" },
-      ),
-    ).rejects.toMatchObject({ publicCode: "ORDER_ITEM_REPLACEMENT_NOT_ALLOWED" });
+      );
+    expect(afterApproval.status).toBe("SEARCHING_DRIVER");
     await expect(
       h.orders.replaceItem(
         opsNoPermIdentity,
@@ -830,28 +842,27 @@ describe("M4-A Orders Core", () => {
     ).rejects.toMatchObject({ publicCode: "FORBIDDEN" });
   });
 
-  test("approval closes history with duration and rejects duplicate approval", async () => {
+  test("approval closes history with duration and replays duplicate approval", async () => {
     const order = await h.orders.create(customer, city, createBody({
       idempotencyKey: `appr-${crypto.randomUUID()}`,
     }));
     await new Promise((r) => setTimeout(r, 1100));
     const approved = await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
-    expect(approved.status).toBe("APPROVED_BY_STORE");
+    expect(approved.status).toBe("SEARCHING_DRIVER");
     const history = approved.statusHistory as Array<{
       toStatus: string;
       exitedAt: string | null;
       durationSeconds: number | null;
     }>;
-    const first = history.find((h) => h.toStatus === "UNDER_STORE_REVIEW");
+    const first = history.find((h) => h.toStatus === "PENDING_STORE_APPROVAL");
     expect(first?.exitedAt).toBeTruthy();
     expect(first!.durationSeconds!).toBeGreaterThanOrEqual(1);
     expect(history.filter((h) => h.exitedAt == null)).toHaveLength(1);
-    await expect(
-      h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" }),
-    ).rejects.toMatchObject({ publicCode: "ORDER_INVALID_STATE" });
+    const replay = await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
+    expect(replay.status).toBe("SEARCHING_DRIVER");
   });
 
-  test("concurrent approvals produce one success", async () => {
+  test("concurrent approvals converge on one offer round", async () => {
     const order = await h.orders.create(customer, city, createBody({
       idempotencyKey: `conc-appr-${crypto.randomUUID()}`,
     }));
@@ -863,12 +874,10 @@ describe("M4-A Orders Core", () => {
       }),
     ]);
     const fulfilled = results.filter((r) => r.status === "fulfilled");
-    const rejected = results.filter((r) => r.status === "rejected");
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
+    expect(fulfilled).toHaveLength(2);
     const row = await h.client<{ status: string; version: number }[]>`
       select status::text, version from orders where id = ${order.id}`;
-    expect(row[0]!.status).toBe("APPROVED_BY_STORE");
+    expect(row[0]!.status).toBe("SEARCHING_DRIVER");
     expect(row[0]!.version).toBe(2);
   });
 

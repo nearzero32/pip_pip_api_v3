@@ -140,17 +140,22 @@ export const createOpenApiPlugin = () =>
       {
         name: "Customer — Orders",
         description:
-          "Customer order create/read/cancel scoped by JWT + trusted X-City-Id. Server-authoritative prices, delivery fee, and snapshots. Initial state UNDER_STORE_REVIEW. Customer cancel only while UNDER_STORE_REVIEW.",
+          "Customer order create/read/cancel scoped by JWT + trusted X-City-Id. Server-authoritative prices, delivery fee, and snapshots. Initial state PENDING_STORE_APPROVAL. Customer cancel only while PENDING_STORE_APPROVAL.",
       },
       {
         name: "Dashboard — Orders",
         description:
-          "City-scoped order list/detail, cancel (orders.cancel), approve (orders.approve), and item replace (orders.items.replace). SUPER_ADMIN is blocked. Status history includes durationSeconds for closed states.",
+          "City-scoped order list/detail, cancellation, approval, item mutation, and reasoned lifecycle overrides. SUPER_ADMIN is blocked.",
       },
       {
         name: "Mobile — Merchant Orders",
         description:
-          "Authenticated Merchant Store orders: list/read, approve, and replace items during UNDER_STORE_REVIEW. No cancellation endpoint.",
+          "Authenticated Merchant Store orders: list/read, approve, mutate items until ready, and mark assigned orders ready. No cancellation endpoint.",
+      },
+      {
+        name: "Mobile — Driver Orders",
+        description:
+          "Active assignment, private pickup/delivery proof upload, and natural pickup, arrival, and delivery transitions.",
       },
       {
         name: "Dashboard — Driver Pricing",
