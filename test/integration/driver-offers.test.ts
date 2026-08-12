@@ -58,7 +58,9 @@ describe("M4-B Driver Offers", () => {
   });
 
   const approveAndOpen = async (orderId: string) => {
-    await h.orders.approve(adminIdentity, orderId, { kind: "DASHBOARD" });
+    await h.orders.approve(
+      adminIdentity, orderId, { kind: "DASHBOARD" }, crypto.randomUUID(),
+    );
     const rounds = await h.offers.listRounds(adminIdentity, orderId);
     return rounds[0]!;
   };
@@ -585,7 +587,9 @@ describe("M4-B Driver Offers", () => {
       items: [{ productId: product, quantity: 1 }],
       idempotencyKey: crypto.randomUUID(),
     });
-    await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
+    await h.orders.approve(
+      adminIdentity, order.id, { kind: "DASHBOARD" }, crypto.randomUUID(),
+    );
     // Approval opens the round; stop it before direct assignment.
     await h.offers.stopRound(adminIdentity, order.id, "pause", "s", crypto.randomUUID());
     // Need SEARCHING_DRIVER still — stop doesn't change order status

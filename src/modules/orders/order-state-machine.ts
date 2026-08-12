@@ -80,3 +80,15 @@ export const mayConfirmArrival = (status: OrderStatus) =>
 
 export const mayConfirmDelivery = (status: OrderStatus) =>
   status === "ARRIVED_AT_CUSTOMER";
+
+/**
+ * Temporary M4-C1 cancel gate: dashboard may not cancel once custody is with
+ * the driver (return workflow is M4-C2).
+ */
+export const dashboardCancelBlockedByDriverCustody = (input: {
+  status: OrderStatus;
+  custodyStatus: "WITH_STORE" | "WITH_DRIVER" | "WITH_CUSTOMER";
+}) =>
+  input.custodyStatus === "WITH_DRIVER" ||
+  input.status === "PICKED_UP" ||
+  input.status === "ARRIVED_AT_CUSTOMER";

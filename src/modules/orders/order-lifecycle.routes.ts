@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { AppError } from "../../errors/app-error";
 import type { AuthModule } from "../auth/auth-module";
 import {
   dashboardContext,
@@ -18,6 +19,22 @@ const errors = {
   404: errorResponse,
   409: errorResponse,
   422: errorResponse,
+};
+const idempotencyHeader = {
+  name: "Idempotency-Key",
+  in: "header",
+  required: true,
+  schema: { type: "string", minLength: 1, maxLength: 128 },
+} as const;
+const idempotencyHeaders = t.Object(
+  { "idempotency-key": t.String({ minLength: 1, maxLength: 128 }) },
+  { additionalProperties: true },
+);
+const idempotencyKeyOf = (request: Request) => {
+  const key = request.headers.get("idempotency-key");
+  if (!key?.trim())
+    throw new AppError(422, "VALIDATION_FAILED", "Idempotency-Key header is required");
+  return key.trim();
 };
 const proofPurpose = t.Union([
   t.Literal("PICKUP_PROOF"),
@@ -69,17 +86,19 @@ export const orderLifecycleRoutes = (
           requestIdOf(set),
         );
         const { storeId } = requireTrustedMerchantStore(identity);
-        return lifecycle.markReady(identity, params.orderId, {
-          kind: "MERCHANT",
-          storeId,
-        });
+        return lifecycle.markReady(
+          identity, params.orderId, { kind: "MERCHANT", storeId },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Mobile — Merchant Orders"],
           summary: "Mark order ready for pickup",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -159,17 +178,20 @@ export const orderLifecycleRoutes = (
           driverContext,
           requestIdOf(set),
         );
-        return lifecycle.confirmPickup(identity, params.orderId, body, {
-          kind: "DRIVER",
-        });
+        return lifecycle.confirmPickup(
+          identity, params.orderId, body, { kind: "DRIVER" },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: confirmation,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Mobile — Driver Orders"],
           summary: "Confirm order pickup",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -183,12 +205,14 @@ export const orderLifecycleRoutes = (
           driverContext,
           requestIdOf(set),
         );
-        return lifecycle.confirmArrival(identity, params.orderId, body, {
-          kind: "DRIVER",
-        });
+        return lifecycle.confirmArrival(
+          identity, params.orderId, body, { kind: "DRIVER" },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: t.Object(
           { note: t.Optional(t.String({ maxLength: 1000 })) },
           { additionalProperties: false },
@@ -197,6 +221,7 @@ export const orderLifecycleRoutes = (
         detail: {
           tags: ["Mobile — Driver Orders"],
           summary: "Confirm customer arrival",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -210,17 +235,20 @@ export const orderLifecycleRoutes = (
           driverContext,
           requestIdOf(set),
         );
-        return lifecycle.confirmDelivery(identity, params.orderId, body, {
-          kind: "DRIVER",
-        });
+        return lifecycle.confirmDelivery(
+          identity, params.orderId, body, { kind: "DRIVER" },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: confirmation,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Mobile — Driver Orders"],
           summary: "Confirm order delivery",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -234,13 +262,14 @@ export const orderLifecycleRoutes = (
           dashboardContext,
           requestIdOf(set),
         );
-        return lifecycle.markReady(identity, params.orderId, {
-          kind: "DASHBOARD",
-          ...body,
-        });
+        return lifecycle.markReady(
+          identity, params.orderId, { kind: "DASHBOARD", ...body },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: override,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -248,6 +277,7 @@ export const orderLifecycleRoutes = (
           summary: "Dashboard override: mark ready (source=DASHBOARD_OVERRIDE)",
           description:
             "City-scoped natural transition on behalf of STORE. Records source DASHBOARD_OVERRIDE with required reason. No proof required.",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -261,13 +291,14 @@ export const orderLifecycleRoutes = (
           dashboardContext,
           requestIdOf(set),
         );
-        return lifecycle.confirmPickup(identity, params.orderId, body, {
-          kind: "DASHBOARD",
-          ...body,
-        });
+        return lifecycle.confirmPickup(
+          identity, params.orderId, body, { kind: "DASHBOARD", ...body },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: override,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -275,6 +306,7 @@ export const orderLifecycleRoutes = (
           summary: "Dashboard override: confirm pickup (source=DASHBOARD_OVERRIDE)",
           description:
             "City-scoped natural transition on behalf of DRIVER. Records source DASHBOARD_OVERRIDE with required reason. Proof is not required for DASHBOARD_OVERRIDE.",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -288,18 +320,20 @@ export const orderLifecycleRoutes = (
           dashboardContext,
           requestIdOf(set),
         );
-        return lifecycle.confirmArrival(identity, params.orderId, body, {
-          kind: "DASHBOARD",
-          ...body,
-        });
+        return lifecycle.confirmArrival(
+          identity, params.orderId, body, { kind: "DASHBOARD", ...body },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: override,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Dashboard — Orders"],
           summary: "Override arrival transition",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -313,18 +347,20 @@ export const orderLifecycleRoutes = (
           dashboardContext,
           requestIdOf(set),
         );
-        return lifecycle.confirmDelivery(identity, params.orderId, body, {
-          kind: "DASHBOARD",
-          ...body,
-        });
+        return lifecycle.confirmDelivery(
+          identity, params.orderId, body, { kind: "DASHBOARD", ...body },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: override,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Dashboard — Orders"],
           summary: "Override delivery transition",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },

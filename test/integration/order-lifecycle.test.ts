@@ -424,10 +424,11 @@ describe("M4-C1 order lifecycle", () => {
 
   test("store approve opens exactly one offer round; retry is idempotent", async () => {
     const order = await h.orders.create(customer, city, createBody());
+    const approvalKey = crypto.randomUUID();
     const approved = await h.orders.approve(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, approvalKey);
     expect(approved.status).toBe("SEARCHING_DRIVER");
     const rounds = await h.client<{ id: string; status: string }[]>`
       select id::text, status::text from order_offer_rounds where order_id = ${order.id}`;
@@ -436,7 +437,7 @@ describe("M4-C1 order lifecycle", () => {
     const replay = await h.orders.approve(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, approvalKey);
     expect(replay.status).toBe("SEARCHING_DRIVER");
     const again = await h.client<{ n: number }[]>`
       select count(*)::int n from order_offer_rounds where order_id = ${order.id}`;
@@ -445,7 +446,7 @@ describe("M4-C1 order lifecycle", () => {
       h.orders.approve(merchant2Identity, order.id, {
         kind: "MERCHANT",
         storeId: store2,
-      }),
+      }, crypto.randomUUID()),
     ).rejects.toMatchObject({ publicCode: "ORDER_NOT_FOUND", statusCode: 404 });
   });
 
@@ -457,6 +458,7 @@ describe("M4-C1 order lifecycle", () => {
       order.id,
       { productId: product2, quantity: 1, reason: "طلب الزبون" },
       { kind: "MERCHANT", storeId: store },
+      crypto.randomUUID(),
     );
     expect(added.deliveryFee).toBe(fee);
     expect(added.productsSubtotal).toBe(1000 * 2 + 1500);
@@ -467,6 +469,7 @@ describe("M4-C1 order lifecycle", () => {
       itemId,
       { quantity: 3, reason: "تعديل كمية" },
       { kind: "MERCHANT", storeId: store },
+      crypto.randomUUID(),
     );
     expect(qty.productsSubtotal).toBe(1000 * 3 + 1500);
     expect(qty.deliveryFee).toBe(fee);
@@ -477,6 +480,7 @@ describe("M4-C1 order lifecycle", () => {
         itemId,
         { quantity: 1, reason: "" },
         { kind: "MERCHANT", storeId: store },
+        crypto.randomUUID(),
       ),
     ).rejects.toMatchObject({ publicCode: "VALIDATION_FAILED" });
 
@@ -488,6 +492,7 @@ describe("M4-C1 order lifecycle", () => {
       removedLine.id,
       "غير متوفر",
       { kind: "MERCHANT", storeId: store },
+      crypto.randomUUID(),
     );
     expect(afterRemove.productsSubtotal).toBe(beforeRemove - 1500);
     const mutations = await h.client<{ mutation_type: string }[]>`
@@ -502,7 +507,7 @@ describe("M4-C1 order lifecycle", () => {
     await h.orders.approve(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, crypto.randomUUID());
     const [round] = await h.client<{ id: string }[]>`
       select id::text from order_offer_rounds where order_id = ${order.id} and status='OPEN'`;
     const driver = await freshDriver();
@@ -510,13 +515,14 @@ describe("M4-C1 order lifecycle", () => {
     await h.orderLifecycle.markReady(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, crypto.randomUUID());
     await expect(
       h.orders.addItem(
         merchantIdentity,
         order.id,
         { productId: product2, quantity: 1, reason: "متأخر" },
         { kind: "MERCHANT", storeId: store },
+        crypto.randomUUID(),
       ),
     ).rejects.toMatchObject({ publicCode: "ORDER_ITEMS_LOCKED" });
   });
@@ -526,7 +532,7 @@ describe("M4-C1 order lifecycle", () => {
     await h.orders.approve(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, crypto.randomUUID());
     const [round] = await h.client<{ id: string }[]>`
       select id::text from order_offer_rounds where order_id = ${order.id} and status='OPEN'`;
     const driver = await freshDriver();
@@ -565,13 +571,14 @@ describe("M4-C1 order lifecycle", () => {
       h.orderLifecycle.markReady(merchantIdentity, order.id, {
         kind: "MERCHANT",
         storeId: store,
-      }),
+      }, crypto.randomUUID()),
     ).resolves.toMatchObject({ status: "READY_FOR_PICKUP", custodyStatus: "WITH_STORE" });
 
     const missingProof = await h.app.handle(
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-pickup`, {
         token: driver.token,
         body: {},
+        headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
     expect(missingProof.status).toBe(422);
@@ -593,15 +600,18 @@ describe("M4-C1 order lifecycle", () => {
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-pickup`, {
         token: driver.token,
         body: { fileId: wrongPurpose },
+        headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
     expect(wrongRes.status).toBe(409);
     expect((await wrongRes.json()).error.code).toBe("PROOF_PURPOSE_MISMATCH");
 
+    const pickupKey = crypto.randomUUID();
     const pickup = await h.app.handle(
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-pickup`, {
         token: driver.token,
         body: { fileId: pickupFile },
+        headers: { "idempotency-key": pickupKey },
       }),
     );
     expect(pickup.status).toBe(200);
@@ -615,6 +625,7 @@ describe("M4-C1 order lifecycle", () => {
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-pickup`, {
         token: driver.token,
         body: { fileId: pickupFile },
+        headers: { "idempotency-key": pickupKey },
       }),
     );
     expect(replayPickup.status).toBe(200);
@@ -623,7 +634,7 @@ describe("M4-C1 order lifecycle", () => {
     await expect(
       h.orderLifecycle.confirmArrival(other.identity, order.id, {}, {
         kind: "DRIVER",
-      }),
+      }, crypto.randomUUID()),
     ).rejects.toMatchObject({ publicCode: expect.stringMatching(/DRIVER_|ORDER_|PROOF_/) });
 
     const arrived = await h.orderLifecycle.confirmArrival(
@@ -631,6 +642,7 @@ describe("M4-C1 order lifecycle", () => {
       order.id,
       {},
       { kind: "DRIVER" },
+      crypto.randomUUID(),
     );
     expect(arrived).toMatchObject({
       status: "ARRIVED_AT_CUSTOMER",
@@ -641,6 +653,7 @@ describe("M4-C1 order lifecycle", () => {
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-delivery`, {
         token: driver.token,
         body: {},
+        headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
     expect(missingDelivery.status).toBe(422);
@@ -652,10 +665,12 @@ describe("M4-C1 order lifecycle", () => {
       assignmentId,
       "DELIVERY_PROOF",
     );
+    const deliveryKey = crypto.randomUUID();
     const deliveredRes = await h.app.handle(
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-delivery`, {
         token: driver.token,
         body: { fileId: deliveryFile },
+        headers: { "idempotency-key": deliveryKey },
       }),
     );
     expect(deliveredRes.status).toBe(200);
@@ -688,6 +703,7 @@ describe("M4-C1 order lifecycle", () => {
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-delivery`, {
         token: driver.token,
         body: { fileId: deliveryFile },
+        headers: { "idempotency-key": deliveryKey },
       }),
     );
     expect(replayDeliver.status).toBe(200);
@@ -695,7 +711,9 @@ describe("M4-C1 order lifecycle", () => {
 
   test("dashboard override natural transitions without proof; SUPER_ADMIN blocked", async () => {
     const order = await h.orders.create(customer, city, createBody());
-    await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
+    await h.orders.approve(
+      adminIdentity, order.id, { kind: "DASHBOARD" }, crypto.randomUUID(),
+    );
     const [round] = await h.client<{ id: string }[]>`
       select id::text from order_offer_rounds where order_id = ${order.id}`;
     const driver = await freshDriver();
@@ -705,6 +723,7 @@ describe("M4-C1 order lifecycle", () => {
       jsonRequest(`/api/v1/dashboard/orders/${order.id}/mark-ready`, {
         token: adminToken,
         body: { reason: "المتجر أبلغ بالجاهزية", actedOnBehalfOf: "STORE" },
+        headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
     expect(ready.status).toBe(200);
@@ -713,6 +732,7 @@ describe("M4-C1 order lifecycle", () => {
       jsonRequest(`/api/v1/dashboard/orders/${order.id}/confirm-pickup`, {
         token: adminToken,
         body: { reason: "استلام إداري", actedOnBehalfOf: "DRIVER" },
+        headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
     expect(pickup.status).toBe(200);
@@ -722,6 +742,7 @@ describe("M4-C1 order lifecycle", () => {
       jsonRequest(`/api/v1/dashboard/orders/${order.id}/confirm-arrival`, {
         token: adminToken,
         body: { reason: "وصول إداري", actedOnBehalfOf: "DRIVER" },
+        headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
     expect(arrive.status).toBe(200);
@@ -730,6 +751,7 @@ describe("M4-C1 order lifecycle", () => {
       jsonRequest(`/api/v1/dashboard/orders/${order.id}/confirm-delivery`, {
         token: adminToken,
         body: { reason: "تسليم إداري", actedOnBehalfOf: "DRIVER" },
+        headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
     expect(deliver.status).toBe(200);
@@ -745,7 +767,7 @@ describe("M4-C1 order lifecycle", () => {
         kind: "DASHBOARD",
         reason: "ممنوع",
         actedOnBehalfOf: "STORE",
-      }),
+      }, crypto.randomUUID()),
     ).rejects.toMatchObject({ publicCode: "FORBIDDEN" });
 
     await expect(
@@ -754,6 +776,7 @@ describe("M4-C1 order lifecycle", () => {
         order.id,
         { reason: "x" },
         { kind: "DASHBOARD", reason: "بلا صلاحية", actedOnBehalfOf: "DRIVER" },
+        crypto.randomUUID(),
       ),
     ).rejects.toMatchObject({ publicCode: "FORBIDDEN" });
   });
@@ -763,12 +786,12 @@ describe("M4-C1 order lifecycle", () => {
     await h.orders.approve(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, crypto.randomUUID());
     await expect(
       h.orderLifecycle.markReady(merchantIdentity, order.id, {
         kind: "MERCHANT",
         storeId: store,
-      }),
+      }, crypto.randomUUID()),
     ).rejects.toMatchObject({ publicCode: "DRIVER_ASSIGNMENT_REQUIRED" });
 
     const [round] = await h.client<{ id: string }[]>`
@@ -778,11 +801,11 @@ describe("M4-C1 order lifecycle", () => {
     await h.orderLifecycle.markReady(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, crypto.randomUUID());
     await expect(
       h.orderLifecycle.confirmArrival(driver.identity, order.id, {}, {
         kind: "DRIVER",
-      }),
+      }, crypto.randomUUID()),
     ).rejects.toMatchObject({ publicCode: "ORDER_INVALID_TRANSITION" });
   });
 
@@ -791,7 +814,7 @@ describe("M4-C1 order lifecycle", () => {
     await h.orders.approve(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, crypto.randomUUID());
     const [round] = await h.client<{ id: string }[]>`
       select id::text from order_offer_rounds where order_id = ${order.id}`;
     const driver = await freshDriver();
@@ -799,19 +822,21 @@ describe("M4-C1 order lifecycle", () => {
     await h.orderLifecycle.markReady(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, crypto.randomUUID());
     const results = await Promise.allSettled([
       h.orderLifecycle.confirmPickup(
         adminIdentity,
         order.id,
         {},
         { kind: "DASHBOARD", reason: "إداري 1", actedOnBehalfOf: "DRIVER" },
+        crypto.randomUUID(),
       ),
       h.orderLifecycle.confirmPickup(
         adminIdentity,
         order.id,
         {},
         { kind: "DASHBOARD", reason: "إداري 2", actedOnBehalfOf: "DRIVER" },
+        crypto.randomUUID(),
       ),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(2);
@@ -845,7 +870,9 @@ describe("M4-C1 order lifecycle", () => {
       storeId: null,
     };
     await expect(
-      h.orders.approve(otherIdentity, order.id, { kind: "DASHBOARD" }),
+      h.orders.approve(
+        otherIdentity, order.id, { kind: "DASHBOARD" }, crypto.randomUUID(),
+      ),
     ).rejects.toMatchObject({ publicCode: "ORDER_NOT_FOUND", statusCode: 404 });
   });
 });

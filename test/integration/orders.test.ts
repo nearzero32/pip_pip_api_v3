@@ -416,7 +416,7 @@ describe("M4-A Orders Core", () => {
         'CUSTOMER', 'CUSTOMER_APP'
       )`;
     await expect(
-      h.orders.approve(adminIdentity, order!.id, { kind: "DASHBOARD" }),
+      h.orders.approve(adminIdentity, order!.id, { kind: "DASHBOARD" }, crypto.randomUUID()),
     ).rejects.toMatchObject({ publicCode: "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED" });
     await expect(
       h.orders.replaceItem(
@@ -430,6 +430,7 @@ describe("M4-A Orders Core", () => {
           customerAgreedByPhone: true,
         },
         { kind: "DASHBOARD" },
+        crypto.randomUUID(),
       ),
     ).rejects.toMatchObject({ publicCode: "ORDER_ONLINE_PAYMENT_NOT_CONFIRMED" });
     const status = await h.client<{ status: string; version: number }[]>`
@@ -594,7 +595,9 @@ describe("M4-A Orders Core", () => {
     const approved = await h.orders.create(customer, city, createBody({
       idempotencyKey: `cancel-after-${crypto.randomUUID()}`,
     }));
-    await h.orders.approve(adminIdentity, approved.id, { kind: "DASHBOARD" });
+    await h.orders.approve(
+      adminIdentity, approved.id, { kind: "DASHBOARD" }, crypto.randomUUID(),
+    );
     await expect(
       h.orders.cancelByCustomer(customer, city, approved.id, "متأخر"),
     ).rejects.toMatchObject({ publicCode: "ORDER_CANCELLATION_NOT_ALLOWED" });
@@ -672,6 +675,7 @@ describe("M4-A Orders Core", () => {
         customerAgreedByPhone: true,
       },
       { kind: "MERCHANT", storeId: store },
+      crypto.randomUUID(),
     );
     expect(expensive.productsSubtotal).toBe(2500);
     expect(expensive.deliveryFee).toBe(fee);
@@ -694,6 +698,7 @@ describe("M4-A Orders Core", () => {
         customerAgreedByPhone: true,
       },
       { kind: "DASHBOARD" },
+      crypto.randomUUID(),
     );
     expect(cheap.productsSubtotal).toBe(1000);
     expect(cheap.deliveryFee).toBe(fee);
@@ -710,6 +715,7 @@ describe("M4-A Orders Core", () => {
           customerAgreedByPhone: true,
         },
         { kind: "DASHBOARD" },
+        crypto.randomUUID(),
       ),
     ).rejects.toMatchObject({ publicCode: "ORDER_ITEM_ALREADY_REPLACED" });
 
@@ -726,6 +732,7 @@ describe("M4-A Orders Core", () => {
           customerAgreedByPhone: true,
         },
         { kind: "DASHBOARD" },
+        crypto.randomUUID(),
       ),
     ).rejects.toMatchObject({ publicCode: "ORDER_ITEM_UNAVAILABLE" });
   });
@@ -754,6 +761,7 @@ describe("M4-A Orders Core", () => {
           customerAgreedByPhone: true,
         },
         { kind: "MERCHANT", storeId: store },
+        crypto.randomUUID(),
       ),
       h.orders.replaceItem(
         adminIdentity,
@@ -766,6 +774,7 @@ describe("M4-A Orders Core", () => {
           customerAgreedByPhone: true,
         },
         { kind: "DASHBOARD" },
+        crypto.randomUUID(),
       ),
     ]);
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -812,7 +821,7 @@ describe("M4-A Orders Core", () => {
     await h.orders.approve(merchantIdentity, order.id, {
       kind: "MERCHANT",
       storeId: store,
-    });
+    }, crypto.randomUUID());
     const afterApproval = await h.orders.replaceItem(
         adminIdentity,
         order.id,
@@ -824,6 +833,7 @@ describe("M4-A Orders Core", () => {
           customerAgreedByPhone: true,
         },
         { kind: "DASHBOARD" },
+        crypto.randomUUID(),
       );
     expect(afterApproval.status).toBe("SEARCHING_DRIVER");
     await expect(
@@ -838,6 +848,7 @@ describe("M4-A Orders Core", () => {
           customerAgreedByPhone: true,
         },
         { kind: "DASHBOARD" },
+        crypto.randomUUID(),
       ),
     ).rejects.toMatchObject({ publicCode: "FORBIDDEN" });
   });
@@ -847,7 +858,10 @@ describe("M4-A Orders Core", () => {
       idempotencyKey: `appr-${crypto.randomUUID()}`,
     }));
     await new Promise((r) => setTimeout(r, 1100));
-    const approved = await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
+    const approvalKey = crypto.randomUUID();
+    const approved = await h.orders.approve(
+      adminIdentity, order.id, { kind: "DASHBOARD" }, approvalKey,
+    );
     expect(approved.status).toBe("SEARCHING_DRIVER");
     const history = approved.statusHistory as Array<{
       toStatus: string;
@@ -858,7 +872,9 @@ describe("M4-A Orders Core", () => {
     expect(first?.exitedAt).toBeTruthy();
     expect(first!.durationSeconds!).toBeGreaterThanOrEqual(1);
     expect(history.filter((h) => h.exitedAt == null)).toHaveLength(1);
-    const replay = await h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" });
+    const replay = await h.orders.approve(
+      adminIdentity, order.id, { kind: "DASHBOARD" }, approvalKey,
+    );
     expect(replay.status).toBe("SEARCHING_DRIVER");
   });
 
@@ -867,11 +883,13 @@ describe("M4-A Orders Core", () => {
       idempotencyKey: `conc-appr-${crypto.randomUUID()}`,
     }));
     const results = await Promise.allSettled([
-      h.orders.approve(adminIdentity, order.id, { kind: "DASHBOARD" }),
+      h.orders.approve(
+        adminIdentity, order.id, { kind: "DASHBOARD" }, crypto.randomUUID(),
+      ),
       h.orders.approve(merchantIdentity, order.id, {
         kind: "MERCHANT",
         storeId: store,
-      }),
+      }, crypto.randomUUID()),
     ]);
     const fulfilled = results.filter((r) => r.status === "fulfilled");
     expect(fulfilled).toHaveLength(2);

@@ -19,11 +19,20 @@ import type { Logger } from "../../observability/logger";
 import {
   assertTransition,
   customerMayCancel,
+  dashboardCancelBlockedByDriverCustody,
   dashboardMayCancel,
   mayApprove,
   mayMutateItems,
   type OrderStatus,
 } from "./order-state-machine";
+import {
+  abortOrderCommandIdempotency,
+  beginOrderCommandIdempotency,
+  completeOrderCommandIdempotency,
+  hashOrderCommandPayload,
+  ORDER_COMMAND_SCOPES,
+  requireOrderIdempotencyKey,
+} from "./order-command-idempotency";
 import { insertOrderEvent } from "./order-events";
 
 export type OrderCancelSideEffect = {
@@ -527,6 +536,21 @@ export class OrderService {
       }>,
       createdAt: dateValue(row.created_at)!,
     }));
+  }
+
+  private async loadCommandResponse(executor: SQL, orderId: string) {
+    const [row] = await executor<Record<string, unknown>[]>`
+      select id::text, order_number, city_id::text, zone_id::text, store_id::text,
+             customer_account_id::text, status::text, custody_status::text,
+             custody_driver_id::text, payment_method::text, payment_status::text,
+             products_subtotal, delivery_fee, total, currency, version,
+             status_changed_at, delivered_at, cancelled_at, created_at, updated_at
+      from orders where id = ${orderId}`;
+    if (!row) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+    return this.mapOrder(row, {
+      items: await this.loadItems(executor, orderId),
+      statusHistory: await this.loadHistory(executor, orderId),
+    });
   }
 
   private async loadHistory(executor: SQL, orderId: string) {
@@ -1165,8 +1189,14 @@ export class OrderService {
     const cleaned = cleanReason(reason);
     const effect = await this.client.begin(async (tx) => {
       const [order] = await tx<
-        { id: string; status: OrderStatus; version: number; city_id: string }[]
-      >`select id::text, status::text, version, city_id::text
+        {
+          id: string;
+          status: OrderStatus;
+          version: number;
+          city_id: string;
+          custody_status: "WITH_STORE" | "WITH_DRIVER" | "WITH_CUSTOMER";
+        }[]
+      >`select id::text, status::text, version, city_id::text, custody_status::text
         from orders where id = ${orderId} and city_id = ${cityId} for update`;
       if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
       if (!dashboardMayCancel(order.status))
@@ -1174,6 +1204,17 @@ export class OrderService {
           409,
           "ORDER_CANCELLATION_NOT_ALLOWED",
           "Order cannot be cancelled",
+        );
+      if (
+        dashboardCancelBlockedByDriverCustody({
+          status: order.status,
+          custodyStatus: order.custody_status,
+        })
+      )
+        throw new AppError(
+          409,
+          "ORDER_CANCEL_REQUIRES_ADMIN_RETURN_FLOW",
+          "Order is in driver custody and requires the admin return workflow",
         );
       const now = new Date();
       await this.transition(
@@ -1218,7 +1259,9 @@ export class OrderService {
     identity: AuthIdentity,
     orderId: string,
     scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const cityId =
       scope.kind === "DASHBOARD"
         ? await requireCityPermission(this.client, identity, "orders.approve")
@@ -1227,8 +1270,32 @@ export class OrderService {
       throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
     const scopedCityId = cityId;
     const merchantStoreId = scope.kind === "MERCHANT" ? scope.storeId : null;
+    const requestHash = hashOrderCommandPayload({
+      orderId,
+      action: "approve",
+      scopeKind: scope.kind,
+      ...(merchantStoreId ? { storeId: merchantStoreId } : {}),
+    });
 
     const committed = await this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.approve,
+        actorAccountId: identity.accountId,
+        cityId: scopedCityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, {
+        ...idempotency,
+        requestHash,
+      });
+      if (gate.kind === "replay")
+        return {
+          response: gate.payload,
+          round: null,
+          jobId: null as string | null,
+          cityRevision: null as number | null,
+        };
+      try {
       const [order] = await tx<
         {
           id: string;
@@ -1255,12 +1322,20 @@ export class OrderService {
         from order_offer_rounds
         where order_id = ${order.id} and status in ('OPEN','CLAIMED')
         order by opened_at desc limit 1 for update`;
-      if (order.status === "SEARCHING_DRIVER" && existingRound)
+      if (order.status === "SEARCHING_DRIVER" && existingRound) {
+        const response = await this.loadCommandResponse(tx, order.id);
+        await completeOrderCommandIdempotency(tx, {
+          ...idempotency,
+          httpStatus: 200,
+          payload: response,
+        });
         return {
+          response,
           round: existingRound,
           jobId: null as string | null,
           cityRevision: null as number | null,
         };
+      }
       if (!mayApprove(order.status))
         throw new AppError(
           409,
@@ -1345,11 +1420,22 @@ export class OrderService {
         createdAt: now,
       });
       const cityRecon = await enqueueCityOpenOffersRecon(tx, scopedCityId);
+      const response = await this.loadCommandResponse(tx, order.id);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency,
+        httpStatus: 200,
+        payload: response,
+      });
       return {
+        response,
         round,
         jobId: cityRecon.jobId,
         cityRevision: cityRecon.revision,
       };
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
     if (
       this.runtime &&
@@ -1383,9 +1469,7 @@ export class OrderService {
         },
       });
     }
-    if (scope.kind === "DASHBOARD")
-      return this.getForDashboard(identity, orderId);
-    return this.getForStore(scope.storeId, scopedCityId, orderId);
+    return committed.response;
   }
 
   async listForStore(storeId: string, cityId: string, page = 1, limit = 20) {
@@ -1452,10 +1536,32 @@ export class OrderService {
     orderId: string,
     input: CreateItemInput & { reason: unknown },
     scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const auth = await this.mutationScope(identity, scope);
     const reason = cleanReason(input.reason);
-    await this.client.begin(async (tx) => {
+    const requestHash = hashOrderCommandPayload({
+      orderId,
+      action: "addItem",
+      scopeKind: scope.kind,
+      ...(scope.kind === "MERCHANT" ? { storeId: scope.storeId } : {}),
+      productId: input.productId,
+      sizeId: input.sizeId ?? null,
+      quantity: input.quantity,
+      modifierSelections: parseSelections(input.modifierSelections),
+      reason,
+    });
+    return this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.itemAdd,
+        actorAccountId: identity.accountId,
+        cityId: auth.cityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, { ...idempotency, requestHash });
+      if (gate.kind === "replay") return gate.payload;
+      try {
       const [order] = await tx<{
         id: string; status: OrderStatus; version: number; store_id: string;
         products_subtotal: number; delivery_fee: number; total: number;
@@ -1509,10 +1615,16 @@ export class OrderService {
         actorType: auth.actorType, source: auth.source, reason,
         metadata: { orderItemId: created!.id },
       });
+      const response = await this.loadCommandResponse(tx, order.id);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency, httpStatus: 200, payload: response,
+      });
+      return response;
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    return scope.kind === "DASHBOARD"
-      ? this.getForDashboard(identity, orderId)
-      : this.getForStore(scope.storeId, auth.cityId, orderId);
   }
 
   async removeItem(
@@ -1521,10 +1633,26 @@ export class OrderService {
     itemId: string,
     reasonInput: unknown,
     scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const auth = await this.mutationScope(identity, scope);
     const reason = cleanReason(reasonInput);
-    await this.client.begin(async (tx) => {
+    const requestHash = hashOrderCommandPayload({
+      orderId, action: "removeItem", scopeKind: scope.kind,
+      ...(scope.kind === "MERCHANT" ? { storeId: scope.storeId } : {}),
+      itemId, reason,
+    });
+    return this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.itemRemove,
+        actorAccountId: identity.accountId,
+        cityId: auth.cityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, { ...idempotency, requestHash });
+      if (gate.kind === "replay") return gate.payload;
+      try {
       const [order] = await tx<{
         id: string; status: OrderStatus; version: number; store_id: string;
         products_subtotal: number; delivery_fee: number; total: number;
@@ -1575,10 +1703,16 @@ export class OrderService {
         actorType: auth.actorType, source: auth.source, reason,
         metadata: { orderItemId: item.id },
       });
+      const response = await this.loadCommandResponse(tx, order.id);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency, httpStatus: 200, payload: response,
+      });
+      return response;
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    return scope.kind === "DASHBOARD"
-      ? this.getForDashboard(identity, orderId)
-      : this.getForStore(scope.storeId, auth.cityId, orderId);
   }
 
   async changeQuantity(
@@ -1587,11 +1721,27 @@ export class OrderService {
     itemId: string,
     input: { quantity: number; reason: unknown },
     scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const auth = await this.mutationScope(identity, scope);
     const reason = cleanReason(input.reason);
     const quantity = quantityOf(input.quantity);
-    await this.client.begin(async (tx) => {
+    const requestHash = hashOrderCommandPayload({
+      orderId, action: "changeQuantity", scopeKind: scope.kind,
+      ...(scope.kind === "MERCHANT" ? { storeId: scope.storeId } : {}),
+      itemId, quantity, reason,
+    });
+    return this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.itemQuantity,
+        actorAccountId: identity.accountId,
+        cityId: auth.cityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, { ...idempotency, requestHash });
+      if (gate.kind === "replay") return gate.payload;
+      try {
       const [order] = await tx<{
         id: string; status: OrderStatus; version: number; store_id: string;
         products_subtotal: number; delivery_fee: number; total: number;
@@ -1647,10 +1797,16 @@ export class OrderService {
         source: auth.source, reason,
         metadata: { orderItemId: item.id, quantityBefore: item.quantity, quantityAfter: quantity },
       });
+      const response = await this.loadCommandResponse(tx, order.id);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency, httpStatus: 200, payload: response,
+      });
+      return response;
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    return scope.kind === "DASHBOARD"
-      ? this.getForDashboard(identity, orderId)
-      : this.getForStore(scope.storeId, auth.cityId, orderId);
   }
 
   async replaceItem(
@@ -1666,7 +1822,9 @@ export class OrderService {
       customerAgreedByPhone?: unknown;
     },
     scope: { kind: "DASHBOARD" } | { kind: "MERCHANT"; storeId: string },
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const cityId =
       scope.kind === "DASHBOARD"
         ? await requireCityPermission(
@@ -1679,7 +1837,24 @@ export class OrderService {
       throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
     const scopedCityId = cityId;
     const reason = cleanReason(input.reason);
-    await this.client.begin(async (tx) => {
+    const requestHash = hashOrderCommandPayload({
+      orderId, action: "replaceItem", scopeKind: scope.kind,
+      ...(scope.kind === "MERCHANT" ? { storeId: scope.storeId } : {}),
+      originalItemId, productId: input.productId, sizeId: input.sizeId ?? null,
+      quantity: input.quantity,
+      modifierSelections: parseSelections(input.modifierSelections),
+      reason,
+    });
+    return this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.itemReplace,
+        actorAccountId: identity.accountId,
+        cityId: scopedCityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, { ...idempotency, requestHash });
+      if (gate.kind === "replay") return gate.payload;
+      try {
       const [order] = await tx<
         {
           id: string;
@@ -1834,9 +2009,15 @@ export class OrderService {
         reason,
         metadata: { originalItemId: original.id, replacementItemId: created!.id },
       });
+      const response = await this.loadCommandResponse(tx, order.id);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency, httpStatus: 200, payload: response,
+      });
+      return response;
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    if (scope.kind === "DASHBOARD")
-      return this.getForDashboard(identity, orderId);
-    return this.getForStore(scope.storeId, scopedCityId, orderId);
   }
 }

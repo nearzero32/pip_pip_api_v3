@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { AppError } from "../../errors/app-error";
 import type { AuthModule } from "../auth/auth-module";
 import { requirePublicCityContext } from "../auth/city/public-city-context";
 import {
@@ -31,6 +32,22 @@ const cityParameter = {
   required: true,
   schema: { type: "string", format: "uuid" },
 } as const;
+const idempotencyHeader = {
+  name: "Idempotency-Key",
+  in: "header",
+  required: true,
+  schema: { type: "string", minLength: 1, maxLength: 128 },
+} as const;
+const idempotencyHeaders = t.Object(
+  { "idempotency-key": t.String({ minLength: 1, maxLength: 128 }) },
+  { additionalProperties: true },
+);
+const idempotencyKeyOf = (request: Request) => {
+  const key = request.headers.get("idempotency-key");
+  if (!key?.trim())
+    throw new AppError(422, "VALIDATION_FAILED", "Idempotency-Key header is required");
+  return key.trim();
+};
 
 const selection = t.Object(
   {
@@ -364,15 +381,19 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           dashboardContext,
           requestIdOf(set),
         );
-        return service.approve(identity, params.orderId, { kind: "DASHBOARD" });
+        return service.approve(
+          identity, params.orderId, { kind: "DASHBOARD" }, idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Dashboard — Orders"],
           summary: "Approve order",
           description: "PENDING_STORE_APPROVAL → SEARCHING_DRIVER and atomically opens one offer round. Requires orders.approve.",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -392,10 +413,12 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           params.itemId,
           body,
           { kind: "DASHBOARD" },
+          idempotencyKeyOf(request),
         );
       },
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
+        headers: idempotencyHeaders,
         body: replaceBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -403,6 +426,7 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           summary: "Replace order item",
           description:
             "Allowed until READY_FOR_PICKUP. Requires orders.items.replace and a reason.",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -461,17 +485,19 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           requestIdOf(set),
         );
         const { storeId } = requireTrustedMerchantStore(identity);
-        return service.approve(identity, params.orderId, {
-          kind: "MERCHANT",
-          storeId,
-        });
+        return service.approve(
+          identity, params.orderId, { kind: "MERCHANT", storeId },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Mobile — Merchant Orders"],
           summary: "Approve store order",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -492,15 +518,18 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           params.itemId,
           body,
           { kind: "MERCHANT", storeId },
+          idempotencyKeyOf(request),
         );
       },
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
+        headers: idempotencyHeaders,
         body: replaceBody,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Mobile — Merchant Orders"],
           summary: "Replace store order item",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },
@@ -510,13 +539,17 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(auth, request, merchantContext, requestIdOf(set));
         const { storeId } = requireTrustedMerchantStore(identity);
-        return service.addItem(identity, params.orderId, body, { kind: "MERCHANT", storeId });
+        return service.addItem(
+          identity, params.orderId, body, { kind: "MERCHANT", storeId },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: addItemBody,
         response: { 200: t.Any(), ...errors },
-        detail: { tags: ["Mobile — Merchant Orders"], summary: "Add order item", security: [{ bearerAuth: [] }] },
+        detail: { tags: ["Mobile — Merchant Orders"], summary: "Add order item", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
       },
     )
     .post(
@@ -524,13 +557,17 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(auth, request, merchantContext, requestIdOf(set));
         const { storeId } = requireTrustedMerchantStore(identity);
-        return service.removeItem(identity, params.orderId, params.itemId, body.reason, { kind: "MERCHANT", storeId });
+        return service.removeItem(
+          identity, params.orderId, params.itemId, body.reason,
+          { kind: "MERCHANT", storeId }, idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
+        headers: idempotencyHeaders,
         body: mutationReasonBody,
         response: { 200: t.Any(), ...errors },
-        detail: { tags: ["Mobile — Merchant Orders"], summary: "Remove order item", security: [{ bearerAuth: [] }] },
+        detail: { tags: ["Mobile — Merchant Orders"], summary: "Remove order item", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
       },
     )
     .post(
@@ -538,51 +575,67 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(auth, request, merchantContext, requestIdOf(set));
         const { storeId } = requireTrustedMerchantStore(identity);
-        return service.changeQuantity(identity, params.orderId, params.itemId, body, { kind: "MERCHANT", storeId });
+        return service.changeQuantity(
+          identity, params.orderId, params.itemId, body,
+          { kind: "MERCHANT", storeId }, idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
+        headers: idempotencyHeaders,
         body: quantityBody,
         response: { 200: t.Any(), ...errors },
-        detail: { tags: ["Mobile — Merchant Orders"], summary: "Change order item quantity", security: [{ bearerAuth: [] }] },
+        detail: { tags: ["Mobile — Merchant Orders"], summary: "Change order item quantity", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
       },
     )
     .post(
       "/api/v1/dashboard/orders/:orderId/items",
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(auth, request, dashboardContext, requestIdOf(set));
-        return service.addItem(identity, params.orderId, body, { kind: "DASHBOARD" });
+        return service.addItem(
+          identity, params.orderId, body, { kind: "DASHBOARD" },
+          idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
         body: addItemBody,
         response: { 200: t.Any(), ...errors },
-        detail: { tags: ["Dashboard — Orders"], summary: "Add order item", security: [{ bearerAuth: [] }] },
+        detail: { tags: ["Dashboard — Orders"], summary: "Add order item", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
       },
     )
     .post(
       "/api/v1/dashboard/orders/:orderId/items/:itemId/remove",
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(auth, request, dashboardContext, requestIdOf(set));
-        return service.removeItem(identity, params.orderId, params.itemId, body.reason, { kind: "DASHBOARD" });
+        return service.removeItem(
+          identity, params.orderId, params.itemId, body.reason,
+          { kind: "DASHBOARD" }, idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
+        headers: idempotencyHeaders,
         body: mutationReasonBody,
         response: { 200: t.Any(), ...errors },
-        detail: { tags: ["Dashboard — Orders"], summary: "Remove order item", security: [{ bearerAuth: [] }] },
+        detail: { tags: ["Dashboard — Orders"], summary: "Remove order item", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
       },
     )
     .post(
       "/api/v1/dashboard/orders/:orderId/items/:itemId/quantity",
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(auth, request, dashboardContext, requestIdOf(set));
-        return service.changeQuantity(identity, params.orderId, params.itemId, body, { kind: "DASHBOARD" });
+        return service.changeQuantity(
+          identity, params.orderId, params.itemId, body,
+          { kind: "DASHBOARD" }, idempotencyKeyOf(request),
+        );
       },
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
+        headers: idempotencyHeaders,
         body: quantityBody,
         response: { 200: t.Any(), ...errors },
-        detail: { tags: ["Dashboard — Orders"], summary: "Change order item quantity", security: [{ bearerAuth: [] }] },
+        detail: { tags: ["Dashboard — Orders"], summary: "Change order item quantity", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
       },
     );

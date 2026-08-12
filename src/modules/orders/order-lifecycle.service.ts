@@ -24,6 +24,14 @@ import {
 } from "./order-state-machine";
 import type { OrderService } from "./order.service";
 import { insertCustodyHistory, insertOrderEvent, type OrderActor } from "./order-events";
+import {
+  abortOrderCommandIdempotency,
+  beginOrderCommandIdempotency,
+  completeOrderCommandIdempotency,
+  hashOrderCommandPayload,
+  ORDER_COMMAND_SCOPES,
+  requireOrderIdempotencyKey,
+} from "./order-command-idempotency";
 
 type MerchantScope = { kind: "MERCHANT"; storeId: string };
 type DriverScope = { kind: "DRIVER" };
@@ -170,8 +178,8 @@ export class OrderLifecycleService {
       );
   }
 
-  private async dto(orderId: string, cityId: string) {
-    const [row] = await this.client<Record<string, unknown>[]>`
+  private async dto(orderId: string, cityId: string, executor: SQL = this.client) {
+    const [row] = await executor<Record<string, unknown>[]>`
       select o.id::text, o.order_number, o.city_id::text, o.store_id::text,
              o.status::text, o.version, o.custody_status::text,
              o.custody_driver_id::text, o.status_changed_at, o.delivered_at,
@@ -211,14 +219,37 @@ export class OrderLifecycleService {
     identity: AuthIdentity,
     orderId: string,
     scope: MerchantScope | DashboardScope,
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const cityId = await this.cityFor(identity, scope);
     const actor = this.actor(identity, scope);
-    await this.client.begin(async (tx) => {
+    const requestHash = hashOrderCommandPayload({
+      orderId, action: "markReady", scopeKind: scope.kind,
+      ...(scope.kind === "MERCHANT" ? { storeId: scope.storeId } : {
+        reason: actor.reason, actedOnBehalfOf: scope.actedOnBehalfOf,
+      }),
+    });
+    return this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.markReady,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, { ...idempotency, requestHash });
+      if (gate.kind === "replay") return gate.payload;
+      try {
       const order = await this.lockOrder(tx, orderId, cityId);
       const assignment = await this.activeAssignment(tx, orderId, cityId);
       this.assertScopeOwnership(identity, scope, order, assignment);
-      if (order.status === "READY_FOR_PICKUP") return;
+      if (order.status === "READY_FOR_PICKUP") {
+        const response = await this.dto(orderId, cityId, tx);
+        await completeOrderCommandIdempotency(tx, {
+          ...idempotency, httpStatus: 200, payload: response,
+        });
+        return response;
+      }
       if (!mayMarkReady(order.status))
         throw new AppError(
           409,
@@ -242,8 +273,16 @@ export class OrderLifecycleService {
         toOrderStatus: "READY_FOR_PICKUP",
         createdAt: now,
       });
+      const response = await this.dto(orderId, cityId, tx);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency, httpStatus: 200, payload: response,
+      });
+      return response;
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    return this.dto(orderId, cityId);
   }
 
   private async consumeProof(
@@ -311,10 +350,27 @@ export class OrderLifecycleService {
     orderId: string,
     input: { fileId?: string; reason?: string; note?: string },
     scope: DriverScope | DashboardScope,
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const cityId = await this.cityFor(identity, scope);
     const actor = this.actor(identity, scope);
-    await this.client.begin(async (tx) => {
+    const requestHash = hashOrderCommandPayload({
+      orderId, action: "confirmPickup", scopeKind: scope.kind,
+      fileId: input.fileId ?? null, reason: actor.reason ?? input.reason ?? null,
+      note: input.note ?? null,
+      ...(scope.kind === "DASHBOARD" ? { actedOnBehalfOf: scope.actedOnBehalfOf } : {}),
+    });
+    return this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.confirmPickup,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, { ...idempotency, requestHash });
+      if (gate.kind === "replay") return gate.payload;
+      try {
       const order = await this.lockOrder(tx, orderId, cityId);
       const assignment = await this.activeAssignment(tx, orderId, cityId);
       this.assertScopeOwnership(identity, scope, order, assignment);
@@ -322,8 +378,13 @@ export class OrderLifecycleService {
         order.status === "PICKED_UP" &&
         assignment.status === "PICKED_UP" &&
         order.custody_driver_id === assignment.driver_id
-      )
-        return;
+      ) {
+        const response = await this.dto(orderId, cityId, tx);
+        await completeOrderCommandIdempotency(tx, {
+          ...idempotency, httpStatus: 200, payload: response,
+        });
+        return response;
+      }
       if (!mayConfirmPickup(order.status))
         throw new AppError(
           409,
@@ -381,8 +442,16 @@ export class OrderLifecycleService {
         toDriverId: assignment.driver_id,
         createdAt: now,
       });
+      const response = await this.dto(orderId, cityId, tx);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency, httpStatus: 200, payload: response,
+      });
+      return response;
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    return this.dto(orderId, cityId);
   }
 
   async confirmArrival(
@@ -390,18 +459,39 @@ export class OrderLifecycleService {
     orderId: string,
     input: { reason?: string; note?: string },
     scope: DriverScope | DashboardScope,
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const cityId = await this.cityFor(identity, scope);
     const actor = this.actor(identity, scope);
-    await this.client.begin(async (tx) => {
+    const requestHash = hashOrderCommandPayload({
+      orderId, action: "confirmArrival", scopeKind: scope.kind,
+      reason: actor.reason ?? input.reason ?? null, note: input.note ?? null,
+      ...(scope.kind === "DASHBOARD" ? { actedOnBehalfOf: scope.actedOnBehalfOf } : {}),
+    });
+    return this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.confirmArrival,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, { ...idempotency, requestHash });
+      if (gate.kind === "replay") return gate.payload;
+      try {
       const order = await this.lockOrder(tx, orderId, cityId);
       const assignment = await this.activeAssignment(tx, orderId, cityId);
       this.assertScopeOwnership(identity, scope, order, assignment);
       if (
         order.status === "ARRIVED_AT_CUSTOMER" &&
         assignment.status === "ARRIVED_AT_CUSTOMER"
-      )
-        return;
+      ) {
+        const response = await this.dto(orderId, cityId, tx);
+        await completeOrderCommandIdempotency(tx, {
+          ...idempotency, httpStatus: 200, payload: response,
+        });
+        return response;
+      }
       if (!mayConfirmArrival(order.status))
         throw new AppError(
           409,
@@ -440,8 +530,16 @@ export class OrderLifecycleService {
         metadata: input.note ? { note: input.note } : null,
         createdAt: now,
       });
+      const response = await this.dto(orderId, cityId, tx);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency, httpStatus: 200, payload: response,
+      });
+      return response;
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    return this.dto(orderId, cityId);
   }
 
   async confirmDelivery(
@@ -449,10 +547,33 @@ export class OrderLifecycleService {
     orderId: string,
     input: { fileId?: string; reason?: string; note?: string },
     scope: DriverScope | DashboardScope,
+    idempotencyKeyInput: string,
   ) {
+    const idempotencyKey = requireOrderIdempotencyKey(idempotencyKeyInput);
     const cityId = await this.cityFor(identity, scope);
     const actor = this.actor(identity, scope);
+    const requestHash = hashOrderCommandPayload({
+      orderId, action: "confirmDelivery", scopeKind: scope.kind,
+      fileId: input.fileId ?? null, reason: actor.reason ?? input.reason ?? null,
+      note: input.note ?? null,
+      ...(scope.kind === "DASHBOARD" ? { actedOnBehalfOf: scope.actedOnBehalfOf } : {}),
+    });
     const committed = await this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.confirmDelivery,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey,
+      };
+      const gate = await beginOrderCommandIdempotency(tx, { ...idempotency, requestHash });
+      if (gate.kind === "replay")
+        return {
+          response: gate.payload,
+          driverId: null as string | null,
+          revision: null as number | null,
+          jobId: null as string | null,
+        };
+      try {
       const order = await this.lockOrder(tx, orderId, cityId);
       const [latest] = await tx<Assignment[]>`
         select id::text, driver_id::text, city_id::text, status::text,
@@ -469,12 +590,18 @@ export class OrderLifecycleService {
         );
       const assignment = latest;
       this.assertScopeOwnership(identity, scope, order, assignment);
-      if (order.status === "DELIVERED" && assignment.status === "COMPLETED")
+      if (order.status === "DELIVERED" && assignment.status === "COMPLETED") {
+        const response = await this.dto(orderId, cityId, tx);
+        await completeOrderCommandIdempotency(tx, {
+          ...idempotency, httpStatus: 200, payload: response,
+        });
         return {
+          response,
           driverId: assignment.driver_id,
           revision: null as number | null,
           jobId: null as string | null,
         };
+      }
       if (!mayConfirmDelivery(order.status))
         throw new AppError(
           409,
@@ -548,23 +675,32 @@ export class OrderLifecycleService {
         expectedRevision: revision,
         cityId,
       });
-      return { driverId: assignment.driver_id, revision, jobId };
+      const response = await this.dto(orderId, cityId, tx);
+      await completeOrderCommandIdempotency(tx, {
+        ...idempotency, httpStatus: 200, payload: response,
+      });
+      return { response, driverId: assignment.driver_id, revision, jobId };
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    if (this.runtime && committed.revision != null && committed.jobId) {
+    if (this.runtime && committed.driverId && committed.revision != null && committed.jobId) {
+      const driverId = committed.driverId;
       await applyRedisAfterCommit({
         client: this.client,
         jobIds: [committed.jobId],
         ...(this.logger ? { logger: this.logger } : {}),
         event: "order_delivery_runtime_update_failed",
         apply: async () => {
-          const current = await this.runtime!.getRuntime(committed.driverId);
+          const current = await this.runtime!.getRuntime(driverId);
           const [count] = await this.client<{ count: number }[]>`
             select count(*)::int count from order_driver_assignments
-            where driver_id = ${committed.driverId}
+            where driver_id = ${driverId}
               and completed_at is null and cancelled_at is null`;
           const activeOrderCount = count?.count ?? 0;
           if (!current) {
-            await this.runtime!.invalidateRuntime(committed.driverId);
+            await this.runtime!.invalidateRuntime(driverId);
             return;
           }
           const workStatus: DriverWorkStatus =
@@ -583,7 +719,7 @@ export class OrderLifecycleService {
         },
       });
     }
-    return this.dto(orderId, cityId);
+    return committed.response;
   }
 
   async getDriverActiveAssignment(identity: AuthIdentity) {
