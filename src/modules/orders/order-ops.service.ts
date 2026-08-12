@@ -715,7 +715,7 @@ export class OrderOpsService {
         await this.trackDriver(tx, effect, current.driver_id, cityId);
 
         if (input.nextAction === "REOFFER") {
-          await this.orders.applyStatusTransition(
+          await this.orders.applyOpsStatusTransition(
             tx,
             order,
             "SEARCHING_DRIVER",
@@ -774,7 +774,7 @@ export class OrderOpsService {
             ? "READY_FOR_PICKUP"
             : "DRIVER_ASSIGNED";
           if (order.status !== nextStatus) {
-            await this.orders.applyStatusTransition(
+            await this.orders.applyOpsStatusTransition(
               tx,
               order,
               nextStatus,
@@ -1352,7 +1352,7 @@ export class OrderOpsService {
               updated_at = ${now}
           where id = ${order.id}`;
         if (order.status === "ARRIVED_AT_CUSTOMER") {
-          await this.orders.applyStatusTransition(
+          await this.orders.applyOpsStatusTransition(
             tx,
             order,
             "PICKED_UP",
@@ -1447,38 +1447,215 @@ export class OrderOpsService {
       idempotencyKey,
     };
 
-    const early = await this.client.begin(async (tx) => {
+    const committed = await this.client.begin(async (tx) => {
       const gate = await beginOrderCommandIdempotency(tx, {
         ...idempotency,
         requestHash,
       });
-      if (gate.kind === "replay") return { kind: "replay" as const, payload: gate.payload };
-      // Release reservation so OrderService.cancelByDashboard can run its own tx;
-      // we re-reserve after success for replay.
-      await abortOrderCommandIdempotency(tx, idempotency);
-      return { kind: "proceed" as const };
+      if (gate.kind === "replay")
+        return {
+          kind: "replay" as const,
+          response: gate.payload,
+          effect: null as Awaited<
+            ReturnType<OrderService["executeDashboardCancel"]>
+          > | null,
+        };
+      try {
+        const effect = await this.orders.executeDashboardCancel(
+          tx,
+          identity,
+          cityId,
+          orderId,
+          reason,
+        );
+        const response = await this.orderResponse(tx, orderId, cityId);
+        await completeOrderCommandIdempotency(tx, {
+          ...idempotency,
+          httpStatus: 200,
+          payload: response as unknown as Record<string, unknown>,
+        });
+        return { kind: "done" as const, response, effect };
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, idempotency);
+        throw error;
+      }
     });
-    if (early.kind === "replay") return early.payload;
 
-    const response = await this.orders.cancelByDashboard(
+    if (committed.kind === "done" && committed.effect)
+      await this.orders.applyDashboardCancelRuntime(committed.effect);
+    return committed.response;
+  }
+
+  async startReturnToStore(
+    identity: AuthIdentity,
+    orderId: string,
+    input: { reason: string; note?: string; idempotencyKey: string },
+  ) {
+    const idempotencyKey = requireOrderIdempotencyKey(input.idempotencyKey);
+    const cityId = await requireCityPermission(
+      this.client,
       identity,
-      orderId,
-      reason,
+      "orders.return.manage",
     );
+    const reason = reasonOf(input.reason);
+    const note = noteOf(input.note);
+    const requestHash = hashOrderCommandPayload({
+      orderId,
+      action: "startReturnToStore",
+      reason,
+      note,
+    });
 
-    await this.client.begin(async (tx) => {
+    const committed = await this.client.begin(async (tx) => {
+      const idempotency = {
+        scope: ORDER_COMMAND_SCOPES.startReturn,
+        actorAccountId: identity.accountId,
+        cityId,
+        idempotencyKey,
+      };
       const gate = await beginOrderCommandIdempotency(tx, {
         ...idempotency,
         requestHash,
       });
-      if (gate.kind === "replay") return;
-      await completeOrderCommandIdempotency(tx, {
-        ...idempotency,
-        httpStatus: 200,
-        payload: response as unknown as Record<string, unknown>,
-      });
+      if (gate.kind === "replay")
+        return { response: gate.payload, effect: this.emptyEffect(cityId) };
+      try {
+        const order = await this.lockOrder(tx, orderId, cityId);
+        if (order.custody_status !== "WITH_DRIVER")
+          throw new AppError(
+            409,
+            "ORDER_CUSTODY_NOT_WITH_DRIVER",
+            "Return requires driver custody",
+          );
+        if (order.status === "CANCELLED")
+          throw new AppError(
+            409,
+            "ORDER_ALREADY_CANCELLED",
+            "Cancelled orders already use the cancel-return path",
+          );
+        if (
+          order.status !== "PICKED_UP" &&
+          order.status !== "ARRIVED_AT_CUSTOMER"
+        )
+          throw new AppError(
+            409,
+            "ORDER_INVALID_STATE",
+            "Order is not eligible for operational return",
+          );
+        await this.lockAssignmentsForOrder(tx, orderId);
+        const [activeReturn] = await tx<{ id: string }[]>`
+          select id::text from order_return_workflows
+          where order_id = ${orderId}
+            and status in ('WAITING_FOR_DRIVER_RETURN','WAITING_FOR_STORE_CONFIRMATION')
+          for update`;
+        if (activeReturn)
+          throw new AppError(
+            409,
+            "RETURN_WORKFLOW_ALREADY_ACTIVE",
+            "A return workflow is already active",
+          );
+        const [pendingHandoff] = await tx<
+          { id: string; to_assignment_id: string; to_driver_id: string }[]
+        >`select id::text, to_assignment_id::text, to_driver_id::text
+          from order_driver_handoffs
+          where order_id = ${orderId} and status = 'PENDING' for update`;
+        const [assignment] = await tx<
+          { id: string; driver_id: string; status: string }[]
+        >`select id::text, driver_id::text, status::text
+          from order_driver_assignments
+          where order_id = ${orderId}
+            and completed_at is null and cancelled_at is null
+            and status in ('PICKED_UP','ARRIVED_AT_CUSTOMER')
+          for update`;
+        if (!assignment)
+          throw new AppError(
+            409,
+            "DRIVER_ASSIGNMENT_REQUIRED",
+            "An active driver assignment is required",
+          );
+        if (assignment.driver_id !== order.custody_driver_id)
+          throw new AppError(
+            409,
+            "DRIVER_HANDOFF_CUSTODY_MISMATCH",
+            "Custody driver does not match assignment",
+          );
+        const driverIds = [assignment.driver_id];
+        if (pendingHandoff) driverIds.push(pendingHandoff.to_driver_id);
+        await this.lockDriverIds(tx, driverIds);
+        const now = new Date();
+        const actor = this.staffActor(identity, reason);
+        if (pendingHandoff) {
+          await tx`
+            update order_driver_assignments
+            set status = 'CANCELLED', closing_reason = 'HANDOFF_CANCELLED',
+                cancelled_at = ${now}, updated_at = ${now}
+            where id = ${pendingHandoff.to_assignment_id}
+              and completed_at is null and cancelled_at is null`;
+          await tx`
+            update order_driver_handoffs
+            set status = 'CANCELLED', cancelled_at = ${now}, updated_at = ${now},
+                version = version + 1
+            where id = ${pendingHandoff.id}`;
+          await insertOrderEvent(tx, {
+            ...actor,
+            orderId,
+            assignmentId: pendingHandoff.to_assignment_id,
+            handoffId: pendingHandoff.id,
+            eventType: "HANDOFF_CANCELLED",
+            fromOrderStatus: order.status,
+            toOrderStatus: order.status,
+            reason: "Cancelled to start operational return",
+            createdAt: now,
+          });
+        }
+        await tx`
+          update order_driver_assignments
+          set status = 'RETURN_PENDING', updated_at = ${now}
+          where id = ${assignment.id}`;
+        const [workflow] = await tx<{ id: string }[]>`
+          insert into order_return_workflows (
+            order_id, city_id, assignment_id, driver_id, status, reason,
+            started_by_account_id, started_at
+          ) values (
+            ${order.id}, ${cityId}, ${assignment.id}, ${assignment.driver_id},
+            'WAITING_FOR_DRIVER_RETURN', ${reason}, ${identity.accountId}, ${now}
+          ) returning id::text`;
+        await insertOrderEvent(tx, {
+          ...actor,
+          orderId,
+          assignmentId: assignment.id,
+          returnWorkflowId: workflow!.id,
+          eventType: "RETURN_STARTED",
+          fromOrderStatus: order.status,
+          toOrderStatus: order.status,
+          fromCustodyStatus: "WITH_DRIVER",
+          toCustodyStatus: "WITH_DRIVER",
+          metadata: { note, operational: true },
+          createdAt: now,
+        });
+        const effect = this.emptyEffect(cityId);
+        await this.trackDriver(tx, effect, assignment.driver_id, cityId);
+        if (pendingHandoff)
+          await this.trackDriver(tx, effect, pendingHandoff.to_driver_id, cityId);
+        const response = await this.orderResponse(tx, orderId, cityId);
+        await completeOrderCommandIdempotency(tx, {
+          ...idempotency,
+          httpStatus: 200,
+          payload: response as unknown as Record<string, unknown>,
+        });
+        return { response, effect };
+      } catch (error) {
+        await abortOrderCommandIdempotency(tx, {
+          scope: ORDER_COMMAND_SCOPES.startReturn,
+          actorAccountId: identity.accountId,
+          cityId,
+          idempotencyKey,
+        });
+        throw error;
+      }
     });
-    return response;
+    await this.applyRuntime(committed.effect);
+    return committed.response;
   }
 
   async confirmDriverReturn(
@@ -1529,7 +1706,17 @@ export class OrderOpsService {
       if (gate.kind === "replay") return gate.payload;
       try {
         const order = await this.lockOrder(tx, orderId, cityId);
-        if (order.status !== "CANCELLED" || order.custody_status !== "WITH_DRIVER")
+        if (order.custody_status !== "WITH_DRIVER")
+          throw new AppError(
+            409,
+            "ORDER_CUSTODY_NOT_WITH_DRIVER",
+            "Order is not awaiting driver return",
+          );
+        if (
+          order.status !== "CANCELLED" &&
+          order.status !== "PICKED_UP" &&
+          order.status !== "ARRIVED_AT_CUSTOMER"
+        )
           throw new AppError(
             409,
             "ORDER_INVALID_STATE",
@@ -1701,7 +1888,17 @@ export class OrderOpsService {
             "STORE_ORDER_OWNERSHIP_REQUIRED",
             "Store order ownership is required",
           );
-        if (order.status !== "CANCELLED" || order.custody_status !== "WITH_DRIVER")
+        if (order.custody_status !== "WITH_DRIVER")
+          throw new AppError(
+            409,
+            "ORDER_CUSTODY_NOT_WITH_DRIVER",
+            "Order is not awaiting store return confirmation",
+          );
+        if (
+          order.status !== "CANCELLED" &&
+          order.status !== "PICKED_UP" &&
+          order.status !== "ARRIVED_AT_CUSTOMER"
+        )
           throw new AppError(
             409,
             "ORDER_INVALID_STATE",
@@ -1763,11 +1960,35 @@ export class OrderOpsService {
               closing_reason = 'RETURNED_TO_STORE',
               cancelled_at = ${now}, updated_at = ${now}
           where id = ${workflow.assignment_id}`;
-        await tx`
-          update orders
-          set custody_status = 'WITH_STORE', custody_driver_id = null,
-              driver_account_id = null, updated_at = ${now}
-          where id = ${order.id}`;
+
+        const fromStatus = order.status;
+        let toStatus: OrderStatus = order.status;
+        if (order.status === "CANCELLED") {
+          await tx`
+            update orders
+            set custody_status = 'WITH_STORE', custody_driver_id = null,
+                driver_account_id = null, updated_at = ${now}
+            where id = ${order.id}`;
+        } else {
+          // PICKED_UP/ARRIVED cannot stay WITH_STORE — move to READY_FOR_PICKUP.
+          toStatus = "READY_FOR_PICKUP";
+          await this.orders.applyOpsStatusTransition(
+            tx,
+            order,
+            "READY_FOR_PICKUP",
+            {
+              ...actor,
+              custody: { status: "WITH_STORE", driverId: null },
+            },
+            now,
+          );
+          await tx`
+            update orders
+            set driver_account_id = null,
+                store_ready_marked_at = coalesce(store_ready_marked_at, ${now}),
+                updated_at = ${now}
+            where id = ${order.id}`;
+        }
         await insertCustodyHistory(tx, {
           ...actor,
           orderId,
@@ -1784,8 +2005,8 @@ export class OrderOpsService {
           assignmentId: workflow.assignment_id,
           returnWorkflowId: workflow.id,
           eventType: "STORE_CONFIRMED_RETURN",
-          fromOrderStatus: "CANCELLED",
-          toOrderStatus: "CANCELLED",
+          fromOrderStatus: fromStatus,
+          toOrderStatus: toStatus,
           fromCustodyStatus: "WITH_DRIVER",
           toCustodyStatus: "WITH_STORE",
           metadata: { note },
@@ -1797,8 +2018,8 @@ export class OrderOpsService {
           assignmentId: workflow.assignment_id,
           returnWorkflowId: workflow.id,
           eventType: "RETURN_COMPLETED",
-          fromOrderStatus: "CANCELLED",
-          toOrderStatus: "CANCELLED",
+          fromOrderStatus: fromStatus,
+          toOrderStatus: toStatus,
           fromCustodyStatus: "WITH_DRIVER",
           toCustodyStatus: "WITH_STORE",
           createdAt: now,
@@ -1871,20 +2092,25 @@ export class OrderOpsService {
         return { response: gate.payload, effect: this.emptyEffect(cityId) };
       try {
         const order = await this.lockOrder(tx, orderId, cityId);
-        if (order.status !== "CANCELLED" || order.custody_status !== "WITH_STORE")
+        if (order.custody_status !== "WITH_STORE")
           throw new AppError(
             409,
-            "ORDER_INVALID_STATE",
+            "ORDER_CUSTODY_NOT_WITH_STORE",
             "Order is not eligible for reopen",
           );
         const [completedReturn] = await tx<{ id: string }[]>`
           select id::text from order_return_workflows
           where order_id = ${orderId} and status = 'COMPLETED'
           order by completed_at desc nulls last limit 1`;
-        // Reopen also allowed if never left store (cancel before pickup).
-        if (!completedReturn && order.cancelled_at) {
-          /* pre-pickup cancel is fine */
-        }
+        const eligible =
+          order.status === "CANCELLED" ||
+          (order.status === "READY_FOR_PICKUP" && !!completedReturn);
+        if (!eligible)
+          throw new AppError(
+            409,
+            "ORDER_INVALID_STATE",
+            "Order is not eligible for reopen",
+          );
         await this.lockAssignmentsForOrder(tx, orderId);
         const [activeReturn] = await tx<{ id: string }[]>`
           select id::text from order_return_workflows
@@ -1906,13 +2132,13 @@ export class OrderOpsService {
             ...actor,
             orderId,
             eventType: "ORDER_REOPENED",
-            fromOrderStatus: "CANCELLED",
-            toOrderStatus: "CANCELLED",
+            fromOrderStatus: order.status,
+            toOrderStatus: order.status,
             metadata: { note, nextAction: "KEEP_CANCELLED" },
             createdAt: now,
           });
         } else if (input.nextAction === "PREPARE") {
-          await this.orders.applyStatusTransition(
+          await this.orders.applyOpsStatusTransition(
             tx,
             order,
             "PENDING_STORE_APPROVAL",
@@ -1923,7 +2149,7 @@ export class OrderOpsService {
             ...actor,
             orderId,
             eventType: "ORDER_REOPENED",
-            fromOrderStatus: "CANCELLED",
+            fromOrderStatus: order.status,
             toOrderStatus: "PENDING_STORE_APPROVAL",
             metadata: { note, nextAction: "PREPARE" },
             createdAt: now,
@@ -1946,7 +2172,7 @@ export class OrderOpsService {
           await tx`
             update orders set locked_driver_fee = ${lockedFee}, updated_at = ${now}
             where id = ${order.id}`;
-          await this.orders.applyStatusTransition(
+          await this.orders.applyOpsStatusTransition(
             tx,
             order,
             "SEARCHING_DRIVER",
@@ -1966,7 +2192,7 @@ export class OrderOpsService {
             ...actor,
             orderId,
             eventType: "ORDER_REOPENED",
-            fromOrderStatus: "CANCELLED",
+            fromOrderStatus: order.status,
             toOrderStatus: "SEARCHING_DRIVER",
             metadata: { note, nextAction: "REOFFER", roundId },
             createdAt: now,
@@ -2037,13 +2263,15 @@ export class OrderOpsService {
           const nextStatus: OrderStatus = order.store_ready_marked_at
             ? "READY_FOR_PICKUP"
             : "DRIVER_ASSIGNED";
-          await this.orders.applyStatusTransition(
-            tx,
-            order,
-            nextStatus,
-            actor,
-            now,
-          );
+          if (order.status !== nextStatus) {
+            await this.orders.applyOpsStatusTransition(
+              tx,
+              order,
+              nextStatus,
+              actor,
+              now,
+            );
+          }
           await tx`
             update orders
             set driver_account_id = ${input.driverId},
@@ -2054,7 +2282,7 @@ export class OrderOpsService {
             orderId,
             assignmentId: assignment!.id,
             eventType: "ORDER_REOPENED",
-            fromOrderStatus: "CANCELLED",
+            fromOrderStatus: order.status,
             toOrderStatus: nextStatus,
             metadata: { note, nextAction: "ASSIGN_DRIVER" },
             createdAt: now,

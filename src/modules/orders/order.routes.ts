@@ -365,23 +365,17 @@ export const orderRoutes = (
           requestIdOf(set),
         );
         if (ops) {
-          const key =
-            request.headers.get("idempotency-key")?.trim() ||
-            `auto:${crypto.randomUUID()}`;
           return ops.cancelByDashboard(identity, params.orderId, {
             reason: body.reason,
             ...(body.note != null ? { note: body.note } : {}),
-            idempotencyKey: key,
+            idempotencyKey: idempotencyKeyOf(request),
           });
         }
         return service.cancelByDashboard(identity, params.orderId, body.reason);
       },
       {
         params: t.Object({ orderId: uuid }),
-        headers: t.Object(
-          { "idempotency-key": t.Optional(t.String({ minLength: 1, maxLength: 128 })) },
-          { additionalProperties: true },
-        ),
+        headers: idempotencyHeaders,
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
@@ -394,7 +388,7 @@ export const orderRoutes = (
           tags: ["Dashboard — Orders"],
           summary: "Cancel City order",
           description:
-            "Requires orders.cancel. Reason is mandatory. With driver custody starts return workflow. Prefer Idempotency-Key.",
+            "Requires orders.cancel. Reason is mandatory. With driver custody starts return workflow. Requires Idempotency-Key.",
           parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },

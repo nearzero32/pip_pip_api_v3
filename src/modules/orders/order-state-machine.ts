@@ -16,25 +16,42 @@ export const ORDER_STATUSES = [
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 /**
- * M4 happy path + C2 ops:
- * PENDING_STORE_APPROVAL → SEARCHING_DRIVER → DRIVER_ASSIGNED → READY_FOR_PICKUP
- * → PICKED_UP → ARRIVED_AT_CUSTOMER → DELIVERED
- *
- * C2 additions: reoffer (DRIVER_ASSIGNED/READY → SEARCHING), admin reopen from
- * CANCELLED, and handoff reset ARRIVED → PICKED_UP for replacement arrival.
- *
- * Legacy statuses APPROVED_BY_STORE / ACCEPTED_BY_DRIVER remain readable and
- * forward-only so historical rows can still advance.
+ * Natural forward-only happy path + cancel.
+ * C2-only transitions (reoffer skip-to-ready, handoff arrival reset, reopen,
+ * operational return back to store) live in OPS_ALLOWED and require
+ * assertOpsTransition / applyOpsStatusTransition.
  */
 const ALLOWED: Record<OrderStatus, readonly OrderStatus[]> = {
   PENDING_STORE_APPROVAL: ["SEARCHING_DRIVER", "CANCELLED"],
   APPROVED_BY_STORE: ["SEARCHING_DRIVER", "CANCELLED"],
-  SEARCHING_DRIVER: ["DRIVER_ASSIGNED", "READY_FOR_PICKUP", "CANCELLED"],
-  DRIVER_ASSIGNED: ["READY_FOR_PICKUP", "SEARCHING_DRIVER", "CANCELLED"],
-  READY_FOR_PICKUP: ["PICKED_UP", "SEARCHING_DRIVER", "CANCELLED"],
+  SEARCHING_DRIVER: ["DRIVER_ASSIGNED", "CANCELLED"],
+  DRIVER_ASSIGNED: ["READY_FOR_PICKUP", "CANCELLED"],
+  READY_FOR_PICKUP: ["PICKED_UP", "CANCELLED"],
   ACCEPTED_BY_DRIVER: ["PICKED_UP", "CANCELLED"],
   PICKED_UP: ["ARRIVED_AT_CUSTOMER", "CANCELLED"],
-  ARRIVED_AT_CUSTOMER: ["DELIVERED", "PICKED_UP", "CANCELLED"],
+  ARRIVED_AT_CUSTOMER: ["DELIVERED", "CANCELLED"],
+  DELIVERED: [],
+  CANCELLED: [],
+};
+
+/**
+ * Restricted transitions used only by M4-C2/ops command paths.
+ * Not reachable via merchant mark-ready, driver arrival/delivery, or generic APIs.
+ */
+const OPS_ALLOWED: Record<OrderStatus, readonly OrderStatus[]> = {
+  PENDING_STORE_APPROVAL: [],
+  APPROVED_BY_STORE: [],
+  SEARCHING_DRIVER: ["READY_FOR_PICKUP"],
+  DRIVER_ASSIGNED: ["SEARCHING_DRIVER"],
+  READY_FOR_PICKUP: ["SEARCHING_DRIVER", "PENDING_STORE_APPROVAL", "DRIVER_ASSIGNED"],
+  ACCEPTED_BY_DRIVER: [],
+  PICKED_UP: ["READY_FOR_PICKUP", "PENDING_STORE_APPROVAL", "SEARCHING_DRIVER"],
+  ARRIVED_AT_CUSTOMER: [
+    "PICKED_UP",
+    "READY_FOR_PICKUP",
+    "PENDING_STORE_APPROVAL",
+    "SEARCHING_DRIVER",
+  ],
   DELIVERED: [],
   CANCELLED: [
     "PENDING_STORE_APPROVAL",
@@ -54,6 +71,16 @@ export const assertTransition = (from: OrderStatus, to: OrderStatus) => {
       "ORDER_INVALID_TRANSITION",
       "Order state transition is not allowed",
     );
+};
+
+/** Ops/admin/command-specific transitions (not part of natural app flows). */
+export const assertOpsTransition = (from: OrderStatus, to: OrderStatus) => {
+  if (ALLOWED[from].includes(to) || OPS_ALLOWED[from].includes(to)) return;
+  throw new AppError(
+    409,
+    "ORDER_INVALID_TRANSITION",
+    "Order state transition is not allowed",
+  );
 };
 
 /** Customer may cancel only while awaiting store approval. */

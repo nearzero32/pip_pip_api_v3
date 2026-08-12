@@ -1130,7 +1130,12 @@ export class OfferService {
             ? ("READY_FOR_PICKUP" as const)
             : ("DRIVER_ASSIGNED" as const);
 
-        await this.orders.applyStatusTransition(
+        const transition =
+          nextStatus === "READY_FOR_PICKUP"
+            ? this.orders.applyOpsStatusTransition.bind(this.orders)
+            : this.orders.applyStatusTransition.bind(this.orders);
+
+        await transition(
           tx,
           {
             id: String(locked.order_id),
@@ -1487,7 +1492,12 @@ export class OfferService {
             ? ("READY_FOR_PICKUP" as const)
             : ("DRIVER_ASSIGNED" as const);
 
-        await this.orders.applyStatusTransition(
+        const transition =
+          nextStatus === "READY_FOR_PICKUP"
+            ? this.orders.applyOpsStatusTransition.bind(this.orders)
+            : this.orders.applyStatusTransition.bind(this.orders);
+
+        await transition(
           tx,
           { id: order.id, status: orderStatus, version: orderVersion },
           nextStatus,

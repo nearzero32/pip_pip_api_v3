@@ -514,9 +514,9 @@ export class OrderLifecycleService {
       if (gate.kind === "replay") return gate.payload;
       try {
       const order = await this.lockOrder(tx, orderId, cityId);
+      await this.assertDeliveryNotBlocked(tx, order);
       const assignment = await this.activeAssignment(tx, orderId, cityId);
       this.assertScopeOwnership(identity, scope, order, assignment);
-      await this.assertDeliveryNotBlocked(tx, order);
       if (
         order.status === "ARRIVED_AT_CUSTOMER" &&
         assignment.status === "ARRIVED_AT_CUSTOMER"
@@ -632,9 +632,9 @@ export class OrderLifecycleService {
           };
         }
       }
+      await this.assertDeliveryNotBlocked(tx, order);
       const assignment = await this.activeAssignment(tx, orderId, cityId);
       this.assertScopeOwnership(identity, scope, order, assignment);
-      await this.assertDeliveryNotBlocked(tx, order);
       if (!mayConfirmDelivery(order.status))
         throw new AppError(
           409,

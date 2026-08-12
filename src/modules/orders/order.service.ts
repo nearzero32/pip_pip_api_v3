@@ -17,6 +17,7 @@ import {
 import { dateValue, pageOf } from "../geography/shared";
 import type { Logger } from "../../observability/logger";
 import {
+  assertOpsTransition,
   assertTransition,
   customerMayCancel,
   dashboardMayCancel,
@@ -632,7 +633,30 @@ export class OrderService {
     },
     now: Date,
   ) {
-    return this.transition(tx, order, to, actor, now);
+    return this.transition(tx, order, to, actor, now, "natural");
+  }
+
+  /**
+   * Restricted transitions for M4-C2 ops only (reoffer ready-skip, handoff reset,
+   * reopen, operational return). Not used by merchant/driver natural endpoints.
+   */
+  async applyOpsStatusTransition(
+    tx: SQL,
+    order: { id: string; status: OrderStatus; version: number },
+    to: OrderStatus,
+    actor: {
+      accountId: string | null;
+      actorType: ActorType;
+      source: ActionSource;
+      reason?: string | null;
+      custody?: {
+        status: "WITH_STORE" | "WITH_DRIVER" | "WITH_CUSTOMER";
+        driverId: string | null;
+      };
+    },
+    now: Date,
+  ) {
+    return this.transition(tx, order, to, actor, now, "ops");
   }
 
   private async transition(
@@ -650,8 +674,10 @@ export class OrderService {
       };
     },
     now: Date,
+    mode: "natural" | "ops" = "natural",
   ) {
-    assertTransition(order.status, to);
+    if (mode === "ops") assertOpsTransition(order.status, to);
+    else assertTransition(order.status, to);
     const [open] = await tx<{ id: string; entered_at: Date }[]>`
       select id::text, entered_at
       from order_status_history
@@ -1229,7 +1255,21 @@ export class OrderService {
       "orders.cancel",
     );
     const cleaned = cleanReason(reason);
-    const effect = await this.client.begin(async (tx) => {
+    const effect = await this.client.begin(async (tx) =>
+      this.executeDashboardCancel(tx, identity, cityId, orderId, cleaned),
+    );
+    await this.applyCancelRuntime(effect);
+    return this.getForDashboard(identity, orderId);
+  }
+
+  /** Cancel body for use inside an outer transaction (e.g. ops idempotency). */
+  async executeDashboardCancel(
+    tx: SQL,
+    identity: AuthIdentity,
+    cityId: string,
+    orderId: string,
+    cleaned: string,
+  ): Promise<OrderCancelSideEffect> {
       const [order] = await tx<
         {
           id: string;
@@ -1390,9 +1430,11 @@ export class OrderService {
         { id: order.id, cityId: order.city_id },
         now,
       );
-    });
-    await this.applyCancelRuntime(effect);
-    return this.getForDashboard(identity, orderId);
+  }
+
+  /** Exposed for OrderOps cancel idempotency post-commit runtime apply. */
+  async applyDashboardCancelRuntime(effect: OrderCancelSideEffect) {
+    return this.applyCancelRuntime(effect);
   }
 
   async approve(

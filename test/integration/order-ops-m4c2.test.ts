@@ -889,4 +889,171 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
       where order_id = ${order.id} and status = 'COMPLETED'`;
     expect(handoffs[0]!.n).toBe(1);
   });
+
+  test("independent start return without commercial cancel keeps status and custody until store confirm", async () => {
+    const { order, driver, assignmentId } = await approveAndClaim();
+    await pickupOrder(order.id, driver, assignmentId);
+
+    const started = await h.orderOps.startReturnToStore(adminIdentity, order.id, {
+      reason: "إرجاع تشغيلي",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    expect(started.status).toBe("PICKED_UP");
+    expect(started.custodyStatus).toBe("WITH_DRIVER");
+    expect(started.custodyDriverId).toBe(driver.id);
+
+    const [assignment] = await h.client<{ status: string }[]>`
+      select status::text from order_driver_assignments where id = ${assignmentId}`;
+    expect(assignment!.status).toBe("RETURN_PENDING");
+    const [wf] = await h.client<{ status: string }[]>`
+      select status::text from order_return_workflows where order_id = ${order.id}`;
+    expect(wf!.status).toBe("WAITING_FOR_DRIVER_RETURN");
+
+    await expect(
+      h.orderOps.startReturnToStore(adminIdentity, order.id, {
+        reason: "تكرار",
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    ).rejects.toMatchObject({ publicCode: "RETURN_WORKFLOW_ALREADY_ACTIVE" });
+
+    await expect(
+      h.orderLifecycle.confirmDelivery(
+        driver.identity,
+        order.id,
+        { fileId: crypto.randomUUID() },
+        { kind: "DRIVER" },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toMatchObject({ publicCode: "RETURN_WORKFLOW_ALREADY_ACTIVE" });
+
+    await h.orderOps.confirmDriverReturn(
+      adminIdentity,
+      order.id,
+      { reason: "سائق أعاد", idempotencyKey: crypto.randomUUID() },
+      { kind: "DASHBOARD" },
+    );
+    const [mid] = await h.client<
+      { status: string; custody_status: string }[]
+    >`select status::text, custody_status::text from orders where id = ${order.id}`;
+    expect(mid).toMatchObject({
+      status: "PICKED_UP",
+      custody_status: "WITH_DRIVER",
+    });
+
+    const confirmed = await h.orderOps.confirmStoreReturn(
+      adminIdentity,
+      order.id,
+      { reason: "المتجر استلم", idempotencyKey: crypto.randomUUID() },
+      { kind: "DASHBOARD" },
+    );
+    expect(confirmed.status).toBe("READY_FOR_PICKUP");
+    expect(confirmed.custodyStatus).toBe("WITH_STORE");
+    expect(confirmed.custodyDriverId).toBeNull();
+
+    const [closed] = await h.client<{ status: string; cancelled_at: Date | null }[]>`
+      select status::text, cancelled_at from order_driver_assignments where id = ${assignmentId}`;
+    expect(closed!.status).toBe("RETURNED_TO_STORE");
+    expect(closed!.cancelled_at).not.toBeNull();
+  });
+
+  test("after handoff at ARRIVED, replacement must confirm own arrival before delivery", async () => {
+    const { order, driver, assignmentId } = await approveAndClaim();
+    await pickupOrder(order.id, driver, assignmentId);
+    await h.orderLifecycle.confirmArrival(
+      driver.identity,
+      order.id,
+      {},
+      { kind: "DRIVER" },
+      crypto.randomUUID(),
+    );
+    const [firstArrival] = await h.client<{ n: number }[]>`
+      select count(*)::int n from order_events
+      where order_id = ${order.id} and event_type = 'DRIVER_ARRIVED_AT_CUSTOMER'`;
+    expect(firstArrival!.n).toBe(1);
+
+    const replacement = await freshDriver();
+    const started = await h.orderOps.startHandoffAssign(
+      adminIdentity,
+      order.id,
+      {
+        driverId: replacement.id,
+        reason: "نقل بعد الوصول",
+        idempotencyKey: crypto.randomUUID(),
+      },
+    );
+    await h.orderOps.completeHandoff(
+      adminIdentity,
+      order.id,
+      started.handoff!.id,
+      {
+        reason: "إكمال",
+        actedOnBehalfOf: "DRIVER",
+        idempotencyKey: crypto.randomUUID(),
+      },
+      { kind: "DASHBOARD" },
+    );
+
+    const [orderRow] = await h.client<{ status: string }[]>`
+      select status::text from orders where id = ${order.id}`;
+    expect(orderRow!.status).toBe("PICKED_UP");
+
+    const [toAssignment] = await h.client<{ id: string; status: string }[]>`
+      select id::text, status::text from order_driver_assignments
+      where order_id = ${order.id} and driver_id = ${replacement.id}
+        and cancelled_at is null`;
+    expect(toAssignment!.status).toBe("PICKED_UP");
+
+    await expect(
+      h.orderLifecycle.confirmDelivery(
+        replacement.identity,
+        order.id,
+        {},
+        { kind: "DRIVER" },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toMatchObject({ publicCode: "ORDER_INVALID_TRANSITION" });
+
+    await h.orderLifecycle.confirmArrival(
+      replacement.identity,
+      order.id,
+      {},
+      { kind: "DRIVER" },
+      crypto.randomUUID(),
+    );
+    const arrivals = await h.client<{ n: number }[]>`
+      select count(*)::int n from order_events
+      where order_id = ${order.id} and event_type = 'DRIVER_ARRIVED_AT_CUSTOMER'`;
+    expect(arrivals[0]!.n).toBe(2);
+  });
+
+  test("HANDOFF_PENDING counts toward admin assignment limit of two", async () => {
+    const busy = await freshDriver();
+    const first = await approveAndClaim();
+    await pickupOrder(first.order.id, first.driver, first.assignmentId);
+    await h.orderOps.startHandoffAssign(adminIdentity, first.order.id, {
+      driverId: busy.id,
+      reason: "أول handoff",
+      idempotencyKey: crypto.randomUUID(),
+    });
+
+    const second = await approveAndClaim();
+    await pickupOrder(second.order.id, second.driver, second.assignmentId);
+    await h.orderOps.startHandoffAssign(adminIdentity, second.order.id, {
+      driverId: busy.id,
+      reason: "ثاني handoff",
+      idempotencyKey: crypto.randomUUID(),
+    });
+
+    const third = await approveAndClaim();
+    await pickupOrder(third.order.id, third.driver, third.assignmentId);
+    await expect(
+      h.orderOps.startHandoffAssign(adminIdentity, third.order.id, {
+        driverId: busy.id,
+        reason: "ثالث مرفوض",
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      publicCode: "DRIVER_ACTIVE_ASSIGNMENT_LIMIT_REACHED",
+    });
+  });
 });

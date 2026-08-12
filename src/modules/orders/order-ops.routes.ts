@@ -249,6 +249,33 @@ export const orderOpsRoutes = (
       },
     )
     .post(
+      "/api/v1/dashboard/orders/:orderId/returns/start",
+      async ({ request, set, params, body }) => {
+        const identity = await authIdentity(
+          auth,
+          request,
+          dashboardContext,
+          requestIdOf(set),
+        );
+        return ops.startReturnToStore(identity, params.orderId, {
+          ...body,
+          idempotencyKey: idempotencyKeyOf(request),
+        });
+      },
+      {
+        params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
+        body: reasonBody,
+        response: { 200: t.Any(), ...errors },
+        detail: {
+          tags: ["Dashboard — Order Ops"],
+          summary: "Start operational return to store without commercial cancel",
+          parameters: [idempotencyHeader],
+          security: [{ bearerAuth: [] }],
+        },
+      },
+    )
+    .post(
       "/api/v1/dashboard/orders/:orderId/returns/confirm-driver",
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(
