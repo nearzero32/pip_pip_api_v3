@@ -572,7 +572,7 @@ describe("M4-C1 gap closure: cancel, proofs, custody constraints, idempotency", 
     );
   });
 
-  test("dashboard cancel rejects order while custody is with driver", async () => {
+  test("dashboard cancel while custody with driver starts return workflow", async () => {
     const { order, driver, assignmentId } = await approveAndClaimReady();
     const fileId = await putReadyProof(
       driver.token,
@@ -587,21 +587,28 @@ describe("M4-C1 gap closure: cancel, proofs, custody constraints, idempotency", 
       { kind: "DRIVER" },
       crypto.randomUUID(),
     );
-    await expect(
-      h.orders.cancelByDashboard(adminIdentity, order.id, "محاولة إلغاء"),
-    ).rejects.toMatchObject({
-      publicCode: "ORDER_CANCEL_REQUIRES_ADMIN_RETURN_FLOW",
-    });
+    const cancelled = await h.orders.cancelByDashboard(
+      adminIdentity,
+      order.id,
+      "محاولة إلغاء",
+    );
+    expect(cancelled.status).toBe("CANCELLED");
+    expect(cancelled.custodyStatus).toBe("WITH_DRIVER");
     const row = await h.client<{ status: string; custody_status: string }[]>`
       select status::text, custody_status::text from orders where id = ${order.id}`;
     expect(row[0]).toMatchObject({
-      status: "PICKED_UP",
+      status: "CANCELLED",
       custody_status: "WITH_DRIVER",
     });
-    const assignment = await h.client<{ completed_at: Date | null; cancelled_at: Date | null }[]>`
-      select completed_at, cancelled_at from order_driver_assignments where id = ${assignmentId}`;
+    const assignment = await h.client<
+      { status: string; completed_at: Date | null; cancelled_at: Date | null }[]
+    >`select status::text, completed_at, cancelled_at from order_driver_assignments where id = ${assignmentId}`;
+    expect(assignment[0]!.status).toBe("RETURN_PENDING");
     expect(assignment[0]!.completed_at).toBeNull();
     expect(assignment[0]!.cancelled_at).toBeNull();
+    const workflow = await h.client<{ status: string }[]>`
+      select status::text from order_return_workflows where order_id = ${order.id}`;
+    expect(workflow[0]?.status).toBe("WAITING_FOR_DRIVER_RETURN");
   });
 
   test("lifecycle idempotency replay returns same payload without new event", async () => {

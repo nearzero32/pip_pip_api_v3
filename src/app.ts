@@ -33,6 +33,8 @@ import type { OrderService } from "./modules/orders/order.service";
 import { orderRoutes } from "./modules/orders/order.routes";
 import type { OrderLifecycleService } from "./modules/orders/order-lifecycle.service";
 import { orderLifecycleRoutes } from "./modules/orders/order-lifecycle.routes";
+import type { OrderOpsService } from "./modules/orders/order-ops.service";
+import { orderOpsRoutes } from "./modules/orders/order-ops.routes";
 import type { CityDriverPricingService } from "./modules/driver-offers/city-driver-pricing.service";
 import type { OfferService } from "./modules/driver-offers/offer.service";
 import type { DriverRuntimeStoreLike } from "./modules/driver-offers/driver-runtime";
@@ -55,6 +57,7 @@ export interface AppDependencies extends HealthDependencies {
   deliveryPricingService?: DeliveryPricingService;
   orderService?: OrderService;
   orderLifecycleService?: OrderLifecycleService;
+  orderOpsService?: OrderOpsService;
   cityDriverPricingService?: CityDriverPricingService;
   offerService?: OfferService;
   driverRuntime?: DriverRuntimeStoreLike;
@@ -146,7 +149,11 @@ export function createApp(dependencies: AppDependencies) {
     .use(dependencies.authModule && dependencies.deliveryPricingService ? deliveryPricingRoutes(dependencies.authModule, dependencies.deliveryPricingService) : new Elysia())
     .use(
       dependencies.authModule && dependencies.orderService
-        ? orderRoutes(dependencies.authModule, dependencies.orderService)
+        ? orderRoutes(
+            dependencies.authModule,
+            dependencies.orderService,
+            dependencies.orderOpsService,
+          )
         : new Elysia(),
     )
     .use(
@@ -159,6 +166,17 @@ export function createApp(dependencies: AppDependencies) {
             dependencies.mediaService,
           )
         : new Elysia(),
+    )
+    .use(
+      (dependencies.authModule &&
+      dependencies.orderOpsService &&
+      dependencies.mediaService
+        ? orderOpsRoutes(
+            dependencies.authModule,
+            dependencies.orderOpsService,
+            dependencies.mediaService,
+          )
+        : new Elysia()) as unknown as Parameters<Elysia["use"]>[0],
     )
     .use(
       dependencies.authModule &&

@@ -41,6 +41,9 @@ export const GRANTABLE_PERMISSION_CODES = [
   "orders.items.mutate",
   "orders.lifecycle.override",
   "orders.assign",
+  "orders.reoffer",
+  "orders.handoff.manage",
+  "orders.return.manage",
   "order_offers.read",
   "order_offers.manage",
 ] as const;

@@ -15,23 +15,40 @@ export type OrderActor = {
   reason?: string | null;
 };
 
+export type OrderEventType =
+  | "ORDER_CREATED"
+  | "ORDER_ITEM_ADDED"
+  | "ORDER_ITEM_REMOVED"
+  | "ORDER_ITEM_REPLACED"
+  | "ORDER_ITEM_QUANTITY_CHANGED"
+  | "STORE_APPROVED"
+  | "DRIVER_ASSIGNED"
+  | "STORE_MARKED_READY"
+  | "DRIVER_PICKED_UP"
+  | "DRIVER_ARRIVED_AT_CUSTOMER"
+  | "ORDER_DELIVERED"
+  | "DRIVER_REMOVAL_REQUESTED"
+  | "DRIVER_REMOVED_BEFORE_PICKUP"
+  | "ORDER_REOFFERED"
+  | "DRIVER_MANUALLY_ASSIGNED"
+  | "HANDOFF_STARTED"
+  | "HANDOFF_COMPLETED"
+  | "HANDOFF_CANCELLED"
+  | "ORDER_CANCELLED_BY_DASHBOARD"
+  | "RETURN_STARTED"
+  | "DRIVER_RETURN_PROOF_SUBMITTED"
+  | "STORE_CONFIRMED_RETURN"
+  | "RETURN_COMPLETED"
+  | "ORDER_REOPENED";
+
 export async function insertOrderEvent(
   tx: SQL,
   input: OrderActor & {
     orderId: string;
     assignmentId?: string | null;
-    eventType:
-      | "ORDER_CREATED"
-      | "ORDER_ITEM_ADDED"
-      | "ORDER_ITEM_REMOVED"
-      | "ORDER_ITEM_REPLACED"
-      | "ORDER_ITEM_QUANTITY_CHANGED"
-      | "STORE_APPROVED"
-      | "DRIVER_ASSIGNED"
-      | "STORE_MARKED_READY"
-      | "DRIVER_PICKED_UP"
-      | "DRIVER_ARRIVED_AT_CUSTOMER"
-      | "ORDER_DELIVERED";
+    handoffId?: string | null;
+    returnWorkflowId?: string | null;
+    eventType: OrderEventType;
     fromOrderStatus?: OrderStatus | null;
     toOrderStatus?: OrderStatus | null;
     fromCustodyStatus?: "WITH_STORE" | "WITH_DRIVER" | "WITH_CUSTOMER" | null;
@@ -43,11 +60,13 @@ export async function insertOrderEvent(
 ): Promise<string> {
   const [row] = await tx<{ id: string }[]>`
     insert into order_events (
-      order_id, assignment_id, event_type, from_order_status, to_order_status,
-      from_custody_status, to_custody_status, actor_type, actor_account_id,
-      source, acted_on_behalf_of, reason, proof_id, metadata, created_at
+      order_id, assignment_id, handoff_id, return_workflow_id, event_type,
+      from_order_status, to_order_status, from_custody_status, to_custody_status,
+      actor_type, actor_account_id, source, acted_on_behalf_of, reason, proof_id,
+      metadata, created_at
     ) values (
-      ${input.orderId}, ${input.assignmentId ?? null}, ${input.eventType},
+      ${input.orderId}, ${input.assignmentId ?? null}, ${input.handoffId ?? null},
+      ${input.returnWorkflowId ?? null}, ${input.eventType},
       ${input.fromOrderStatus ?? null}, ${input.toOrderStatus ?? null},
       ${input.fromCustodyStatus ?? null}, ${input.toCustodyStatus ?? null},
       ${input.actorType}, ${input.accountId}, ${input.source},

@@ -57,6 +57,8 @@ export const mediaAssetPurpose = pgEnum("media_asset_purpose", [
   "BANNER_IMAGE",
   "PICKUP_PROOF",
   "DELIVERY_PROOF",
+  "HANDOFF_PROOF",
+  "RETURN_PROOF",
 ]);
 export const mediaAssetVisibility = pgEnum("media_asset_visibility", ["PUBLIC", "PRIVATE"]);
 export const mediaAssetStatus = pgEnum("media_asset_status", [
@@ -152,6 +154,35 @@ export const assignmentLifecycleStatus = pgEnum("assignment_lifecycle_status", [
   "PICKED_UP",
   "ARRIVED_AT_CUSTOMER",
   "COMPLETED",
+  "REMOVED_BEFORE_PICKUP",
+  "HANDOFF_PENDING",
+  "REPLACED_AFTER_PICKUP",
+  "RETURN_PENDING",
+  "RETURNED_TO_STORE",
+  "CANCELLED",
+]);
+export const assignmentClosingReason = pgEnum("assignment_closing_reason", [
+  "ORDER_CANCELLED",
+  "REMOVED_BEFORE_PICKUP",
+  "REPLACED_AFTER_HANDOFF",
+  "HANDOFF_CANCELLED",
+  "RETURNED_TO_STORE",
+  "SUPERSEDED_BY_REASSIGN",
+]);
+export const driverHandoffStatus = pgEnum("driver_handoff_status", [
+  "PENDING",
+  "COMPLETED",
+  "CANCELLED",
+]);
+export const orderReturnWorkflowStatus = pgEnum("order_return_workflow_status", [
+  "WAITING_FOR_DRIVER_RETURN",
+  "WAITING_FOR_STORE_CONFIRMATION",
+  "COMPLETED",
+  "CANCELLED",
+]);
+export const offerRoundKind = pgEnum("offer_round_kind", [
+  "INITIAL",
+  "DRIVER_REPLACEMENT",
 ]);
 export const orderEventType = pgEnum("order_event_type", [
   "ORDER_CREATED",
@@ -165,8 +196,23 @@ export const orderEventType = pgEnum("order_event_type", [
   "DRIVER_PICKED_UP",
   "DRIVER_ARRIVED_AT_CUSTOMER",
   "ORDER_DELIVERED",
+  "DRIVER_REMOVAL_REQUESTED",
+  "DRIVER_REMOVED_BEFORE_PICKUP",
+  "ORDER_REOFFERED",
+  "DRIVER_MANUALLY_ASSIGNED",
+  "HANDOFF_STARTED",
+  "HANDOFF_COMPLETED",
+  "HANDOFF_CANCELLED",
+  "ORDER_CANCELLED_BY_DASHBOARD",
+  "RETURN_STARTED",
+  "DRIVER_RETURN_PROOF_SUBMITTED",
+  "STORE_CONFIRMED_RETURN",
+  "RETURN_COMPLETED",
+  "ORDER_REOPENED",
 ]);
 export const orderProofPurpose = pgEnum("order_proof_purpose", [
   "PICKUP_PROOF",
   "DELIVERY_PROOF",
+  "HANDOFF_PROOF",
+  "RETURN_PROOF",
 ]);

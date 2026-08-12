@@ -225,6 +225,20 @@
       "when": 1786471000001,
       "tag": "0031_m4c1_order_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786472000000,
+      "tag": "0032_m4c2_ops_enums",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786472000001,
+      "tag": "0033_m4c2_ops_tables",
+      "breakpoints": true
     }
   ]
 }

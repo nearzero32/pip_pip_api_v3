@@ -1,35 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import {
-  dashboardCancelBlockedByDriverCustody,
   dashboardMayCancel,
+  assertTransition,
 } from "../../src/modules/orders/order-state-machine";
 
-describe("M4-C1 temporary cancel gate", () => {
-  test("blocks dashboard cancel once custody is with driver or post-pickup status", () => {
-    expect(
-      dashboardCancelBlockedByDriverCustody({
-        status: "PICKED_UP",
-        custodyStatus: "WITH_DRIVER",
-      }),
-    ).toBe(true);
-    expect(
-      dashboardCancelBlockedByDriverCustody({
-        status: "ARRIVED_AT_CUSTOMER",
-        custodyStatus: "WITH_DRIVER",
-      }),
-    ).toBe(true);
-    expect(
-      dashboardCancelBlockedByDriverCustody({
-        status: "READY_FOR_PICKUP",
-        custodyStatus: "WITH_DRIVER",
-      }),
-    ).toBe(true);
-    expect(
-      dashboardCancelBlockedByDriverCustody({
-        status: "DRIVER_ASSIGNED",
-        custodyStatus: "WITH_STORE",
-      }),
-    ).toBe(false);
+describe("M4-C2 cancel and reopen transitions", () => {
+  test("dashboard may cancel non-terminal orders including post-pickup", () => {
     expect(dashboardMayCancel("PICKED_UP")).toBe(true);
+    expect(dashboardMayCancel("ARRIVED_AT_CUSTOMER")).toBe(true);
+    expect(dashboardMayCancel("CANCELLED")).toBe(false);
+    expect(dashboardMayCancel("DELIVERED")).toBe(false);
+  });
+
+  test("allows reopen and handoff reset transitions", () => {
+    expect(() =>
+      assertTransition("CANCELLED", "PENDING_STORE_APPROVAL"),
+    ).not.toThrow();
+    expect(() => assertTransition("CANCELLED", "SEARCHING_DRIVER")).not.toThrow();
+    expect(() =>
+      assertTransition("ARRIVED_AT_CUSTOMER", "PICKED_UP"),
+    ).not.toThrow();
+    expect(() =>
+      assertTransition("DRIVER_ASSIGNED", "SEARCHING_DRIVER"),
+    ).not.toThrow();
   });
 });

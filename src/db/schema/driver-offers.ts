@@ -15,7 +15,11 @@ import { accounts } from "./accounts";
 import { instant } from "./columns";
 import { cities } from "./geography";
 import { orders } from "./orders";
-import { assignmentLifecycleStatus } from "./enums";
+import {
+  assignmentClosingReason,
+  assignmentLifecycleStatus,
+  offerRoundKind,
+} from "./enums";
 
 export const offerRoundStatus = pgEnum("offer_round_status", [
   "OPEN",
@@ -82,6 +86,9 @@ export const orderOfferRounds = pgTable(
       .notNull()
       .references(() => cities.id),
     status: offerRoundStatus("status").notNull().default("OPEN"),
+    roundKind: offerRoundKind("round_kind").notNull().default("INITIAL"),
+    reofferReason: text("reoffer_reason"),
+    openedByAccountId: uuid("opened_by_account_id").references(() => accounts.id),
     openedAt: instant("opened_at").notNull().defaultNow(),
     closedAt: instant("closed_at"),
     stoppedAt: instant("stopped_at"),
@@ -172,6 +179,11 @@ export const orderDriverAssignments = pgTable(
     ),
     assignmentReason: text("assignment_reason"),
     driverFee: integer("driver_fee").notNull(),
+    originalDriverFee: integer("original_driver_fee"),
+    feeLockedFromAssignmentId: uuid("fee_locked_from_assignment_id"),
+    replacesAssignmentId: uuid("replaces_assignment_id"),
+    replacedByAssignmentId: uuid("replaced_by_assignment_id"),
+    closingReason: assignmentClosingReason("closing_reason"),
     pricingBaseSnapshot: integer("pricing_base_snapshot"),
     roundingUnitSnapshot: integer("rounding_unit_snapshot"),
     pricingStagesSnapshot: jsonb("pricing_stages_snapshot").$type<
@@ -191,9 +203,16 @@ export const orderDriverAssignments = pgTable(
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("order_driver_assignments_active_order_uidx")
+    uniqueIndex("order_driver_assignments_custody_active_uidx")
       .on(table.orderId)
-      .where(sql`${table.completedAt} is null and ${table.cancelledAt} is null`),
+      .where(
+        sql`${table.completedAt} is null and ${table.cancelledAt} is null and ${table.status} in ('ASSIGNED','PICKED_UP','ARRIVED_AT_CUSTOMER','RETURN_PENDING')`,
+      ),
+    uniqueIndex("order_driver_assignments_handoff_pending_uidx")
+      .on(table.orderId)
+      .where(
+        sql`${table.completedAt} is null and ${table.cancelledAt} is null and ${table.status} = 'HANDOFF_PENDING'`,
+      ),
     index("order_driver_assignments_driver_active_idx")
       .on(table.driverId, table.assignmentSequence, table.assignedAt)
       .where(sql`${table.completedAt} is null and ${table.cancelledAt} is null`),
@@ -222,6 +241,9 @@ export const orderDriverAssignments = pgTable(
         or (${table.status} = 'PICKED_UP' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is null and ${table.completedAt} is null)
         or (${table.status} = 'ARRIVED_AT_CUSTOMER' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is not null and ${table.completedAt} is null)
         or (${table.status} = 'COMPLETED' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is not null and ${table.completedAt} is not null)
+        or (${table.status} = 'HANDOFF_PENDING' and ${table.pickedUpAt} is null and ${table.arrivedAtCustomerAt} is null and ${table.completedAt} is null)
+        or (${table.status} = 'RETURN_PENDING' and ${table.pickedUpAt} is not null and ${table.completedAt} is null)
+        or (${table.status} in ('REMOVED_BEFORE_PICKUP','REPLACED_AFTER_PICKUP','RETURNED_TO_STORE','CANCELLED'))
       )`,
     ),
     check(

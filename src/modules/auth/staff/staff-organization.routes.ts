@@ -119,6 +119,12 @@ const employeeDto = t.Object({
       t.Literal("orders.items.replace"),
       t.Literal("orders.items.mutate"),
       t.Literal("orders.lifecycle.override"),
+      t.Literal("orders.assign"),
+      t.Literal("orders.reoffer"),
+      t.Literal("orders.handoff.manage"),
+      t.Literal("orders.return.manage"),
+      t.Literal("order_offers.read"),
+      t.Literal("order_offers.manage"),
     ]),
   ),
   cityId: t.String({ format: "uuid" }),
@@ -174,6 +180,12 @@ const permissionLiteral = t.Union([
   t.Literal("orders.items.replace"),
   t.Literal("orders.items.mutate"),
   t.Literal("orders.lifecycle.override"),
+  t.Literal("orders.assign"),
+  t.Literal("orders.reoffer"),
+  t.Literal("orders.handoff.manage"),
+  t.Literal("orders.return.manage"),
+  t.Literal("order_offers.read"),
+  t.Literal("order_offers.manage"),
 ]);
 
 const employeeRoleLiteral = t.Union([

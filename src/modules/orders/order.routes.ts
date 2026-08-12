@@ -17,6 +17,7 @@ import {
   requestIdOf,
 } from "../geography/shared";
 import type { OrderService } from "./order.service";
+import type { OrderOpsService } from "./order-ops.service";
 
 const uuid = t.String({ format: "uuid" });
 const errors = {
@@ -25,6 +26,7 @@ const errors = {
   403: errorResponse,
   404: errorResponse,
   409: errorResponse,
+  422: errorResponse,
 };
 const cityParameter = {
   name: "X-City-Id",
@@ -190,7 +192,11 @@ const addItemBody = t.Object(
   { additionalProperties: false },
 );
 
-export const orderRoutes = (auth: AuthModule, service: OrderService) =>
+export const orderRoutes = (
+  auth: AuthModule,
+  service: OrderService,
+  ops?: OrderOpsService,
+) =>
   new Elysia({ name: "order-routes" })
     .post(
       "/api/v1/mobile/customer/orders",
@@ -358,16 +364,38 @@ export const orderRoutes = (auth: AuthModule, service: OrderService) =>
           dashboardContext,
           requestIdOf(set),
         );
+        if (ops) {
+          const key =
+            request.headers.get("idempotency-key")?.trim() ||
+            `auto:${crypto.randomUUID()}`;
+          return ops.cancelByDashboard(identity, params.orderId, {
+            reason: body.reason,
+            ...(body.note != null ? { note: body.note } : {}),
+            idempotencyKey: key,
+          });
+        }
         return service.cancelByDashboard(identity, params.orderId, body.reason);
       },
       {
         params: t.Object({ orderId: uuid }),
-        body: cancelBody,
+        headers: t.Object(
+          { "idempotency-key": t.Optional(t.String({ minLength: 1, maxLength: 128 })) },
+          { additionalProperties: true },
+        ),
+        body: t.Object(
+          {
+            reason: t.String({ minLength: 1, maxLength: 1000 }),
+            note: t.Optional(t.String({ maxLength: 1000 })),
+          },
+          { additionalProperties: false },
+        ),
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Dashboard — Orders"],
           summary: "Cancel City order",
-          description: "Requires orders.cancel. Reason is mandatory.",
+          description:
+            "Requires orders.cancel. Reason is mandatory. With driver custody starts return workflow. Prefer Idempotency-Key.",
+          parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
       },

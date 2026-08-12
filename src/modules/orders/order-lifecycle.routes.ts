@@ -39,6 +39,8 @@ const idempotencyKeyOf = (request: Request) => {
 const proofPurpose = t.Union([
   t.Literal("PICKUP_PROOF"),
   t.Literal("DELIVERY_PROOF"),
+  t.Literal("HANDOFF_PROOF"),
+  t.Literal("RETURN_PROOF"),
 ]);
 const proofIntentBody = t.Object(
   {
@@ -51,6 +53,8 @@ const proofIntentBody = t.Object(
     ]),
     fileName: t.String({ minLength: 1, maxLength: 255 }),
     sizeBytes: t.Integer({ minimum: 1 }),
+    handoffId: t.Optional(uuid),
+    returnWorkflowId: t.Optional(uuid),
   },
   { additionalProperties: false },
 );

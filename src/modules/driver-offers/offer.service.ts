@@ -892,7 +892,12 @@ export class OfferService {
         const offerRows = (await tx.unsafe(
           `select o.id::text as order_id, o.status::text as order_status, o.version as order_version,
                   o.city_id::text as order_city_id, o.driver_account_id::text as driver_account_id,
+                  o.locked_driver_fee as locked_driver_fee,
+                  o.custody_status::text as custody_status,
+                  o.custody_driver_id::text as custody_driver_id,
+                  o.store_ready_marked_at as store_ready_marked_at,
                   r.id::text as offer_id, r.status::text as offer_status, r.opened_at,
+                  r.round_kind::text as round_kind,
                   r.pricing_base_snapshot, r.rounding_unit_snapshot, r.pricing_stages_snapshot,
                   r.city_id::text as offer_city_id
            from order_offer_rounds r
@@ -908,48 +913,222 @@ export class OfferService {
           throw new AppError(404, "OFFER_NOT_FOUND", "Offer not found");
         if (String(locked.offer_status) !== "OPEN")
           throw new AppError(409, "OFFER_NOT_OPEN", "Offer is not open");
-        if (String(locked.order_status) !== "SEARCHING_DRIVER")
+
+        const roundKind = String(locked.round_kind ?? "INITIAL");
+        const isReplacement = roundKind === "DRIVER_REPLACEMENT";
+
+        if (!isReplacement && String(locked.order_status) !== "SEARCHING_DRIVER")
           throw new AppError(
             409,
             "ORDER_INVALID_STATE",
             "Order is not searching for a driver",
           );
+        if (
+          isReplacement &&
+          String(locked.custody_status) !== "WITH_DRIVER"
+        )
+          throw new AppError(
+            409,
+            "ORDER_INVALID_STATE",
+            "Replacement claim requires driver custody",
+          );
 
-        const [orderAssignment] = await tx<{ id: string }[]>`
-          select id::text from order_driver_assignments
+        const activeAssignments = await tx<
+          { id: string; driver_id: string; status: string; driver_fee: number }[]
+        >`select id::text, driver_id::text, status::text, driver_fee
+          from order_driver_assignments
           where order_id = ${String(locked.order_id)}
             and completed_at is null and cancelled_at is null
           for update`;
-        if (orderAssignment || locked.driver_account_id)
-          throw new AppError(
-            409,
-            "ORDER_ALREADY_ASSIGNED",
-            "Order already has an active driver assignment",
+
+        if (!isReplacement) {
+          if (activeAssignments.length > 0 || locked.driver_account_id)
+            throw new AppError(
+              409,
+              "ORDER_ALREADY_ASSIGNED",
+              "Order already has an active driver assignment",
+            );
+        } else {
+          const custody = activeAssignments.find((row) =>
+            ["ASSIGNED", "PICKED_UP", "ARRIVED_AT_CUSTOMER"].includes(row.status),
           );
+          const pendingHandoff = activeAssignments.find(
+            (row) => row.status === "HANDOFF_PENDING",
+          );
+          if (!custody)
+            throw new AppError(
+              409,
+              "DRIVER_ASSIGNMENT_REQUIRED",
+              "An active driver assignment is required",
+            );
+          if (pendingHandoff)
+            throw new AppError(
+              409,
+              "HANDOFF_ALREADY_PENDING",
+              "A handoff is already pending",
+            );
+          if (custody.driver_id === driverId)
+            throw new AppError(
+              409,
+              "ORDER_INVALID_STATE",
+              "Driver already holds this order",
+            );
+          const [pendingHandoffRow] = await tx<{ id: string }[]>`
+            select id::text from order_driver_handoffs
+            where order_id = ${String(locked.order_id)} and status = 'PENDING'
+            for update`;
+          if (pendingHandoffRow)
+            throw new AppError(
+              409,
+              "HANDOFF_ALREADY_PENDING",
+              "A handoff is already pending",
+            );
+        }
 
         const now = new Date();
-        const { offeredDriverFee } = computeOfferedDriverFee({
+        const lockedFee =
+          locked.locked_driver_fee == null
+            ? null
+            : Number(locked.locked_driver_fee);
+        const computedFee = computeOfferedDriverFee({
           pricingBase: Number(locked.pricing_base_snapshot),
           roundingUnit: Number(locked.rounding_unit_snapshot),
           pricingStages: parseStages(locked.pricing_stages_snapshot),
           openedAt: new Date(locked.opened_at as Date | string),
           now,
-        });
+        }).offeredDriverFee;
+        const offeredDriverFee =
+          lockedFee && lockedFee > 0 ? lockedFee : computedFee;
+
+        if (isReplacement) {
+          const from = activeAssignments.find((row) =>
+            ["PICKED_UP", "ARRIVED_AT_CUSTOMER"].includes(row.status),
+          );
+          if (!from)
+            throw new AppError(
+              409,
+              "ORDER_INVALID_STATE",
+              "Replacement claim requires post-pickup assignment",
+            );
+          await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-assign:${from.driver_id}`}, 0))`;
+          const assignmentSequence = 1;
+          const [assignment] = await tx<{ id: string }[]>`
+            insert into order_driver_assignments (
+              order_id, driver_id, city_id, offer_round_id, assignment_source,
+              assignment_sequence, assigned_by_account_id, driver_fee,
+              original_driver_fee, fee_locked_from_assignment_id,
+              replaces_assignment_id, status, assigned_at
+            ) values (
+              ${String(locked.order_id)}, ${driverId}, ${cityId}, ${offerId},
+              'OFFER_CLAIM', ${assignmentSequence}, ${driverId}, ${offeredDriverFee},
+              ${offeredDriverFee}, ${from.id}, ${from.id},
+              'HANDOFF_PENDING', ${now}
+            ) returning id::text`;
+          await tx`
+            update order_driver_assignments
+            set replaced_by_assignment_id = ${assignment!.id}, updated_at = ${now}
+            where id = ${from.id}`;
+          const [handoff] = await tx<{ id: string }[]>`
+            insert into order_driver_handoffs (
+              order_id, city_id, from_assignment_id, to_assignment_id,
+              from_driver_id, to_driver_id, status, reason, started_by_account_id,
+              started_at
+            ) values (
+              ${String(locked.order_id)}, ${cityId}, ${from.id}, ${assignment!.id},
+              ${from.driver_id}, ${driverId}, 'PENDING', 'Driver claimed replacement offer',
+              ${driverId}, ${now}
+            ) returning id::text`;
+          await tx`
+            update order_offer_rounds
+            set status = 'CLAIMED', closed_at = ${now}, final_driver_fee = ${offeredDriverFee},
+                claimed_by_driver_id = ${driverId}, updated_at = ${now}
+            where id = ${offerId}`;
+          if (!lockedFee) {
+            await tx`
+              update orders set locked_driver_fee = ${offeredDriverFee}, updated_at = ${now}
+              where id = ${String(locked.order_id)}`;
+          }
+          await insertOrderEvent(tx, {
+            orderId: String(locked.order_id),
+            assignmentId: assignment!.id,
+            handoffId: handoff!.id,
+            eventType: "HANDOFF_STARTED",
+            fromOrderStatus: String(locked.order_status) as OrderStatus,
+            toOrderStatus: String(locked.order_status) as OrderStatus,
+            accountId: driverId,
+            actorType: "DRIVER",
+            source: "DRIVER_APP",
+            createdAt: now,
+          });
+          const payload = await this.loadClaimPayload(
+            tx,
+            String(locked.order_id),
+            offeredDriverFee,
+          );
+          await this.audit(
+            tx,
+            "OFFER_CLAIMED",
+            driverIdentity,
+            "ORDER_OFFER_ROUND",
+            offerId,
+            requestId,
+            {
+              orderId: payload.orderId,
+              driverId,
+              offeredDriverFee,
+              roundKind,
+              handoffId: handoff!.id,
+            },
+          );
+          const revision = await bumpDriverRuntimeRevision(tx, driverId);
+          const driverJobId = await enqueueDriverRuntimeRecon(tx, {
+            driverId,
+            expectedRevision: revision,
+            cityId,
+          });
+          const cityRecon = await enqueueCityOpenOffersRecon(tx, cityId);
+          await completeOfferIdempotency(tx, {
+            scope,
+            actorAccountId: driverId,
+            cityId,
+            idempotencyKey: key,
+            httpStatus: 200,
+            payload: payload as unknown as Record<string, unknown>,
+          });
+          return {
+            payload,
+            offerCityId: cityId,
+            offerId,
+            revision,
+            cityRevision: cityRecon.revision,
+            activeOrderCount: assignmentSequence,
+            jobIds: [driverJobId, cityRecon.jobId] as string[],
+          };
+        }
 
         const assignmentSequence = 1;
         const [assignment] = await tx<{ id: string }[]>`
           insert into order_driver_assignments (
             order_id, driver_id, city_id, offer_round_id, assignment_source,
-            assignment_sequence, assigned_by_account_id, driver_fee, status, assigned_at
+            assignment_sequence, assigned_by_account_id, driver_fee,
+            original_driver_fee, status, assigned_at
           ) values (
             ${String(locked.order_id)}, ${driverId}, ${cityId}, ${offerId},
             'OFFER_CLAIM', ${assignmentSequence}, ${driverId}, ${offeredDriverFee},
-            'ASSIGNED', ${now}
+            ${offeredDriverFee}, 'ASSIGNED', ${now}
           ) returning id::text`;
 
         await tx`
-          update orders set driver_account_id = ${driverId}, updated_at = ${now}
+          update orders
+          set driver_account_id = ${driverId},
+              locked_driver_fee = coalesce(locked_driver_fee, ${offeredDriverFee}),
+              updated_at = ${now}
           where id = ${String(locked.order_id)}`;
+
+        const nextStatus =
+          locked.store_ready_marked_at != null
+            ? ("READY_FOR_PICKUP" as const)
+            : ("DRIVER_ASSIGNED" as const);
 
         await this.orders.applyStatusTransition(
           tx,
@@ -958,7 +1137,7 @@ export class OfferService {
             status: String(locked.order_status) as OrderStatus,
             version: Number(locked.order_version),
           },
-          "DRIVER_ASSIGNED",
+          nextStatus,
           {
             accountId: driverId,
             actorType: "DRIVER",
@@ -972,7 +1151,7 @@ export class OfferService {
           assignmentId: assignment!.id,
           eventType: "DRIVER_ASSIGNED",
           fromOrderStatus: "SEARCHING_DRIVER",
-          toOrderStatus: "DRIVER_ASSIGNED",
+          toOrderStatus: nextStatus,
           accountId: driverId,
           actorType: "DRIVER",
           source: "DRIVER_APP",
@@ -1168,7 +1347,7 @@ export class OfferService {
         if (activeCount >= 2)
           throw new AppError(
             409,
-            "DRIVER_ASSIGNMENT_CAPACITY_REACHED",
+            "DRIVER_ACTIVE_ASSIGNMENT_LIMIT_REACHED",
             "Driver assignment capacity reached",
           );
 
@@ -1178,8 +1357,11 @@ export class OfferService {
             status: OrderStatus;
             version: number;
             driver_account_id: string | null;
+            locked_driver_fee: number | null;
+            store_ready_marked_at: Date | string | null;
           }[]
-        >`select id::text, status::text, version, driver_account_id::text
+        >`select id::text, status::text, version, driver_account_id::text,
+                 locked_driver_fee, store_ready_marked_at
           from orders where id = ${orderId} and city_id = ${cityId} for update`;
         if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
 
@@ -1187,6 +1369,7 @@ export class OfferService {
           select id::text from order_driver_assignments
           where order_id = ${orderId}
             and completed_at is null and cancelled_at is null
+            and status in ('ASSIGNED','PICKED_UP','ARRIVED_AT_CUSTOMER','RETURN_PENDING','HANDOFF_PENDING')
           for update`;
         if (orderAssignment)
           throw new AppError(
@@ -1269,20 +1452,22 @@ export class OfferService {
           pricingStageAfterSeconds = computed.stage.afterSeconds;
           pricingStageIncreasePercentage = computed.stage.increasePercentage;
         }
+        if (order.locked_driver_fee != null && order.locked_driver_fee > 0)
+          driverFee = Number(order.locked_driver_fee);
 
         const sequence = activeCount + 1;
         const [assignment] = await tx<{ id: string }[]>`
           insert into order_driver_assignments (
             order_id, driver_id, city_id, offer_round_id, assignment_source,
             assignment_sequence, assigned_by_account_id, assignment_reason,
-            driver_fee, assigned_at,
+            driver_fee, original_driver_fee, assigned_at,
             pricing_base_snapshot, rounding_unit_snapshot, pricing_stages_snapshot,
             pricing_version_snapshot, pricing_stage_after_seconds,
             pricing_stage_increase_percentage
           ) values (
             ${orderId}, ${input.driverId}, ${cityId}, ${offerRoundId},
             'DASHBOARD_MANUAL', ${sequence}, ${identity.accountId}, ${reason},
-            ${driverFee}, ${now},
+            ${driverFee}, ${driverFee}, ${now},
             ${pricingBaseSnapshot}, ${roundingUnitSnapshot},
             ${pricingStagesSnapshot},
             ${pricingVersionSnapshot}, ${pricingStageAfterSeconds},
@@ -1291,13 +1476,21 @@ export class OfferService {
           returning id::text`;
 
         await tx`
-          update orders set driver_account_id = ${input.driverId}, updated_at = ${now}
+          update orders
+          set driver_account_id = ${input.driverId},
+              locked_driver_fee = coalesce(locked_driver_fee, ${driverFee}),
+              updated_at = ${now}
           where id = ${orderId}`;
+
+        const nextStatus =
+          order.store_ready_marked_at != null
+            ? ("READY_FOR_PICKUP" as const)
+            : ("DRIVER_ASSIGNED" as const);
 
         await this.orders.applyStatusTransition(
           tx,
           { id: order.id, status: orderStatus, version: orderVersion },
-          "DRIVER_ASSIGNED",
+          nextStatus,
           {
             accountId: identity.accountId,
             actorType: "STAFF",
@@ -1309,9 +1502,9 @@ export class OfferService {
         await insertOrderEvent(tx, {
           orderId,
           assignmentId: assignment!.id,
-          eventType: "DRIVER_ASSIGNED",
+          eventType: "DRIVER_MANUALLY_ASSIGNED",
           fromOrderStatus: orderStatus,
-          toOrderStatus: "DRIVER_ASSIGNED",
+          toOrderStatus: nextStatus,
           accountId: identity.accountId,
           actorType: "STAFF",
           source: "DASHBOARD",

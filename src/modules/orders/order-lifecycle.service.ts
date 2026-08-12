@@ -148,6 +148,7 @@ export class OrderLifecycleService {
       from order_driver_assignments
       where order_id = ${orderId} and city_id = ${cityId}
         and completed_at is null and cancelled_at is null
+        and status in ('ASSIGNED','PICKED_UP','ARRIVED_AT_CUSTOMER')
       for update`;
     if (!assignment)
       throw new AppError(
@@ -156,6 +157,34 @@ export class OrderLifecycleService {
         "An active driver assignment is required",
       );
     return assignment;
+  }
+
+  private async assertDeliveryNotBlocked(tx: SQL, order: LockedOrder) {
+    if (order.status === "CANCELLED")
+      throw new AppError(
+        409,
+        "ORDER_ALREADY_CANCELLED",
+        "Cancelled orders cannot be delivered",
+      );
+    const [handoff] = await tx<{ id: string }[]>`
+      select id::text from order_driver_handoffs
+      where order_id = ${order.id} and status = 'PENDING'`;
+    if (handoff)
+      throw new AppError(
+        409,
+        "DRIVER_HANDOFF_ALREADY_ACTIVE",
+        "Pending handoff freezes delivery for the current driver",
+      );
+    const [ret] = await tx<{ id: string }[]>`
+      select id::text from order_return_workflows
+      where order_id = ${order.id}
+        and status in ('WAITING_FOR_DRIVER_RETURN','WAITING_FOR_STORE_CONFIRMATION')`;
+    if (ret)
+      throw new AppError(
+        409,
+        "RETURN_WORKFLOW_ALREADY_ACTIVE",
+        "Return workflow is active; delivery is not allowed",
+      );
   }
 
   private assertScopeOwnership(
@@ -264,6 +293,11 @@ export class OrderLifecycleService {
         actor,
         now,
       );
+      await tx`
+        update orders
+        set store_ready_marked_at = coalesce(store_ready_marked_at, ${now}),
+            updated_at = ${now}
+        where id = ${order.id}`;
       await insertOrderEvent(tx, {
         ...actor,
         orderId,
@@ -482,6 +516,7 @@ export class OrderLifecycleService {
       const order = await this.lockOrder(tx, orderId, cityId);
       const assignment = await this.activeAssignment(tx, orderId, cityId);
       this.assertScopeOwnership(identity, scope, order, assignment);
+      await this.assertDeliveryNotBlocked(tx, order);
       if (
         order.status === "ARRIVED_AT_CUSTOMER" &&
         assignment.status === "ARRIVED_AT_CUSTOMER"
@@ -575,33 +610,31 @@ export class OrderLifecycleService {
         };
       try {
       const order = await this.lockOrder(tx, orderId, cityId);
-      const [latest] = await tx<Assignment[]>`
-        select id::text, driver_id::text, city_id::text, status::text,
-               picked_up_at, arrived_at_customer_at, completed_at
-        from order_driver_assignments
-        where order_id = ${orderId} and city_id = ${cityId}
-          and cancelled_at is null
-        order by assigned_at desc limit 1 for update`;
-      if (!latest)
-        throw new AppError(
-          409,
-          "DRIVER_ASSIGNMENT_REQUIRED",
-          "An active driver assignment is required",
-        );
-      const assignment = latest;
-      this.assertScopeOwnership(identity, scope, order, assignment);
-      if (order.status === "DELIVERED" && assignment.status === "COMPLETED") {
-        const response = await this.dto(orderId, cityId, tx);
-        await completeOrderCommandIdempotency(tx, {
-          ...idempotency, httpStatus: 200, payload: response,
-        });
-        return {
-          response,
-          driverId: assignment.driver_id,
-          revision: null as number | null,
-          jobId: null as string | null,
-        };
+      if (order.status === "DELIVERED") {
+        const [done] = await tx<Assignment[]>`
+          select id::text, driver_id::text, city_id::text, status::text,
+                 picked_up_at, arrived_at_customer_at, completed_at
+          from order_driver_assignments
+          where order_id = ${orderId} and city_id = ${cityId}
+            and status = 'COMPLETED' and completed_at is not null
+          order by completed_at desc limit 1 for update`;
+        if (done) {
+          this.assertScopeOwnership(identity, scope, order, done);
+          const response = await this.dto(orderId, cityId, tx);
+          await completeOrderCommandIdempotency(tx, {
+            ...idempotency, httpStatus: 200, payload: response,
+          });
+          return {
+            response,
+            driverId: done.driver_id,
+            revision: null as number | null,
+            jobId: null as string | null,
+          };
+        }
       }
+      const assignment = await this.activeAssignment(tx, orderId, cityId);
+      this.assertScopeOwnership(identity, scope, order, assignment);
+      await this.assertDeliveryNotBlocked(tx, order);
       if (!mayConfirmDelivery(order.status))
         throw new AppError(
           409,

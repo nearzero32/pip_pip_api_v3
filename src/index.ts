@@ -23,6 +23,7 @@ import { OsrmRoutingProvider } from "./modules/delivery-pricing/osrm-routing-pro
 import { RedisActivePricingCache } from "./modules/delivery-pricing/active-pricing-cache";
 import { OrderService } from "./modules/orders/order.service";
 import { OrderLifecycleService } from "./modules/orders/order-lifecycle.service";
+import { OrderOpsService } from "./modules/orders/order-ops.service";
 import { CityDriverPricingService } from "./modules/driver-offers/city-driver-pricing.service";
 import { DriverRuntimeStore } from "./modules/driver-offers/driver-runtime";
 import { OfferService } from "./modules/driver-offers/offer.service";
@@ -107,6 +108,13 @@ const orderLifecycleService = new OrderLifecycleService(
   driverRuntimeStore,
   logger,
 );
+const orderOpsService = new OrderOpsService(
+  database.client,
+  orderService,
+  mediaService,
+  driverRuntimeStore,
+  logger,
+);
 const cityDriverPricingService = new CityDriverPricingService(database.client);
 const offerService = new OfferService(
   database.client,
@@ -153,6 +161,7 @@ const app = createApp({
   deliveryPricingService,
   orderService,
   orderLifecycleService,
+  orderOpsService,
   cityDriverPricingService,
   offerService,
   driverRuntime: driverRuntimeStore,

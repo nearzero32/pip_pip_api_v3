@@ -287,7 +287,7 @@ describe("M4-B Driver Offers", () => {
         crypto.randomUUID(),
         "assign-3",
       ),
-    ).rejects.toMatchObject({ publicCode: "DRIVER_ASSIGNMENT_CAPACITY_REACHED" });
+    ).rejects.toMatchObject({ publicCode: "DRIVER_ACTIVE_ASSIGNMENT_LIMIT_REACHED" });
 
     await expect(
       h.offers.assignDriver(

@@ -28,9 +28,21 @@ describe("order state machine", () => {
       AppError,
     );
     expect(() => assertTransition("DELIVERED", "CANCELLED")).toThrow(AppError);
-    expect(() => assertTransition("CANCELLED", "PENDING_STORE_APPROVAL")).toThrow(
-      AppError,
-    );
+    expect(() => assertTransition("PICKED_UP", "SEARCHING_DRIVER")).toThrow(AppError);
+    expect(() => assertTransition("CANCELLED", "DELIVERED")).toThrow(AppError);
+  });
+
+  test("allows admin reopen and reoffer transitions", () => {
+    expect(() =>
+      assertTransition("CANCELLED", "PENDING_STORE_APPROVAL"),
+    ).not.toThrow();
+    expect(() => assertTransition("DRIVER_ASSIGNED", "SEARCHING_DRIVER")).not.toThrow();
+    expect(() =>
+      assertTransition("ARRIVED_AT_CUSTOMER", "PICKED_UP"),
+    ).not.toThrow();
+    expect(() =>
+      assertTransition("SEARCHING_DRIVER", "READY_FOR_PICKUP"),
+    ).not.toThrow();
   });
 
   test("cancellation and replacement preconditions", () => {

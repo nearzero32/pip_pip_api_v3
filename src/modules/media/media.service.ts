@@ -329,17 +329,21 @@ export class MediaService {
     input: {
       orderId: string;
       assignmentId: string;
-      purpose: "PICKUP_PROOF" | "DELIVERY_PROOF";
+      purpose: "PICKUP_PROOF" | "DELIVERY_PROOF" | "HANDOFF_PROOF" | "RETURN_PROOF";
       contentType: string;
       fileName: string;
       sizeBytes: number;
+      handoffId?: string;
+      returnWorkflowId?: string;
     },
   ) {
     if (driverIdentity.applicationType !== "DRIVER_APP" || !driverIdentity.cityId)
       throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
     if (
       input.purpose !== "PICKUP_PROOF" &&
-      input.purpose !== "DELIVERY_PROOF"
+      input.purpose !== "DELIVERY_PROOF" &&
+      input.purpose !== "HANDOFF_PROOF" &&
+      input.purpose !== "RETURN_PROOF"
     )
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported proof purpose");
     if (!isAllowedImageContentType(input.contentType))
@@ -430,10 +434,11 @@ export class MediaService {
       await tx`
         insert into order_proofs (
           order_id, assignment_id, city_id, media_asset_id, purpose,
-          uploaded_by_driver_id
+          uploaded_by_driver_id, handoff_id, return_workflow_id
         ) values (
           ${input.orderId}, ${input.assignmentId}, ${cityId}, ${assetId},
-          ${input.purpose}, ${driverIdentity.accountId}
+          ${input.purpose}, ${driverIdentity.accountId},
+          ${input.handoffId ?? null}, ${input.returnWorkflowId ?? null}
         )`;
     });
     return {
@@ -729,7 +734,9 @@ export class MediaService {
         | "STORE_IMAGE"
         | "PRODUCT_IMAGE"
         | "PICKUP_PROOF"
-        | "DELIVERY_PROOF";
+        | "DELIVERY_PROOF"
+        | "HANDOFF_PROOF"
+        | "RETURN_PROOF";
       visibility?: "PUBLIC" | "PRIVATE";
     },
   ): Promise<void> {

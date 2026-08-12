@@ -58,6 +58,8 @@ export const orders = pgTable(
     deliveryFee: integer("delivery_fee").notNull(),
     total: integer("total").notNull(),
     currency: text("currency").notNull().default("IQD"),
+    lockedDriverFee: integer("locked_driver_fee"),
+    storeReadyMarkedAt: instant("store_ready_marked_at"),
     version: integer("version").notNull().default(1),
     statusChangedAt: instant("status_changed_at").notNull().defaultNow(),
     deliveredAt: instant("delivered_at"),
@@ -99,6 +101,10 @@ export const orders = pgTable(
       table.cityId,
       table.createdAt,
       table.id,
+    ),
+    check(
+      "orders_locked_driver_fee_chk",
+      sql`${table.lockedDriverFee} is null or ${table.lockedDriverFee} > 0`,
     ),
     check(
       "orders_money_nonneg_chk",
@@ -301,6 +307,8 @@ export const orderEvents = pgTable(
     actedOnBehalfOf: text("acted_on_behalf_of"),
     reason: text("reason"),
     proofId: uuid("proof_id"),
+    handoffId: uuid("handoff_id"),
+    returnWorkflowId: uuid("return_workflow_id"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
@@ -385,6 +393,8 @@ export const orderProofs = pgTable(
     uploadedByDriverId: uuid("uploaded_by_driver_id")
       .notNull()
       .references(() => accounts.id),
+    handoffId: uuid("handoff_id"),
+    returnWorkflowId: uuid("return_workflow_id"),
     consumedAt: instant("consumed_at"),
     consumedByEventId: uuid("consumed_by_event_id"),
     createdAt: instant("created_at").notNull().defaultNow(),
@@ -395,6 +405,108 @@ export const orderProofs = pgTable(
       .on(table.orderId, table.assignmentId, table.purpose)
       .where(sql`${table.consumedAt} is not null`),
     index("order_proofs_order_created_idx").on(table.orderId, table.createdAt),
+  ],
+);
+
+export const orderDriverHandoffs = pgTable(
+  "order_driver_handoffs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => orders.id),
+    cityId: uuid("city_id").notNull().references(() => cities.id),
+    fromAssignmentId: uuid("from_assignment_id")
+      .notNull()
+      .references(() => orderDriverAssignments.id),
+    toAssignmentId: uuid("to_assignment_id")
+      .notNull()
+      .references(() => orderDriverAssignments.id),
+    fromDriverId: uuid("from_driver_id")
+      .notNull()
+      .references(() => accounts.id),
+    toDriverId: uuid("to_driver_id").notNull().references(() => accounts.id),
+    status: text("status").notNull().default("PENDING"),
+    reason: text("reason").notNull(),
+    startedByAccountId: uuid("started_by_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    startedAt: instant("started_at").notNull().defaultNow(),
+    completedAt: instant("completed_at"),
+    cancelledAt: instant("cancelled_at"),
+    proofId: uuid("proof_id"),
+    version: integer("version").notNull().default(1),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("order_driver_handoffs_active_order_uidx")
+      .on(table.orderId)
+      .where(sql`${table.status} = 'PENDING'`),
+    index("order_driver_handoffs_order_created_idx").on(
+      table.orderId,
+      table.createdAt,
+      table.id,
+    ),
+    foreignKey({
+      name: "order_driver_handoffs_order_city_fk",
+      columns: [table.orderId, table.cityId],
+      foreignColumns: [orders.id, orders.cityId],
+    }),
+    check(
+      "order_driver_handoffs_reason_chk",
+      sql`length(btrim(${table.reason})) > 0`,
+    ),
+    check(
+      "order_driver_handoffs_drivers_diff_chk",
+      sql`${table.fromDriverId} <> ${table.toDriverId}`,
+    ),
+  ],
+);
+
+export const orderReturnWorkflows = pgTable(
+  "order_return_workflows",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").notNull().references(() => orders.id),
+    cityId: uuid("city_id").notNull().references(() => cities.id),
+    assignmentId: uuid("assignment_id")
+      .notNull()
+      .references(() => orderDriverAssignments.id),
+    driverId: uuid("driver_id").notNull().references(() => accounts.id),
+    status: text("status").notNull().default("WAITING_FOR_DRIVER_RETURN"),
+    reason: text("reason").notNull(),
+    startedByAccountId: uuid("started_by_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    startedAt: instant("started_at").notNull().defaultNow(),
+    driverReturnedAt: instant("driver_returned_at"),
+    storeConfirmedAt: instant("store_confirmed_at"),
+    completedAt: instant("completed_at"),
+    cancelledAt: instant("cancelled_at"),
+    proofId: uuid("proof_id"),
+    version: integer("version").notNull().default(1),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("order_return_workflows_active_order_uidx")
+      .on(table.orderId)
+      .where(
+        sql`${table.status} in ('WAITING_FOR_DRIVER_RETURN','WAITING_FOR_STORE_CONFIRMATION')`,
+      ),
+    index("order_return_workflows_order_created_idx").on(
+      table.orderId,
+      table.createdAt,
+      table.id,
+    ),
+    foreignKey({
+      name: "order_return_workflows_order_city_fk",
+      columns: [table.orderId, table.cityId],
+      foreignColumns: [orders.id, orders.cityId],
+    }),
+    check(
+      "order_return_workflows_reason_chk",
+      sql`length(btrim(${table.reason})) > 0`,
+    ),
   ],
 );
 

@@ -19,7 +19,6 @@ import type { Logger } from "../../observability/logger";
 import {
   assertTransition,
   customerMayCancel,
-  dashboardCancelBlockedByDriverCustody,
   dashboardMayCancel,
   mayApprove,
   mayMutateItems,
@@ -171,9 +170,16 @@ export class OrderService {
       where order_id = ${order.id} and status = 'OPEN'
       returning id::text`;
 
-    const [assignment] = await tx<
-      { id: string; driver_id: string }[]
-    >`select id::text, driver_id::text
+    const pendingHandoffs = await tx<
+      { id: string; to_assignment_id: string; to_driver_id: string }[]
+    >`select id::text, to_assignment_id::text, to_driver_id::text
+      from order_driver_handoffs
+      where order_id = ${order.id} and status = 'PENDING'
+      for update`;
+
+    const assignments = await tx<
+      { id: string; driver_id: string; status: string }[]
+    >`select id::text, driver_id::text, status::text
       from order_driver_assignments
       where order_id = ${order.id}
         and completed_at is null
@@ -185,16 +191,48 @@ export class OrderService {
     let expectedRevision: number | null = null;
     let cityRevision: number | null = null;
     const jobIds: string[] = [];
+    const driverIds = [
+      ...new Set([
+        ...assignments.map((row) => row.driver_id),
+        ...pendingHandoffs.map((row) => row.to_driver_id),
+      ]),
+    ].sort();
 
-    if (assignment) {
-      driverId = assignment.driver_id;
-      await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-assign:${driverId}`}, 0))`;
+    for (const id of driverIds) {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-assign:${id}`}, 0))`;
       await tx`
         select account_id from driver_profiles
-        where account_id = ${driverId} for update`;
+        where account_id = ${id} for update`;
+    }
+
+    for (const handoff of pendingHandoffs) {
       await tx`
         update order_driver_assignments
-        set cancelled_at = ${now}, updated_at = ${now}
+        set status = 'CANCELLED', closing_reason = 'HANDOFF_CANCELLED',
+            cancelled_at = ${now}, updated_at = ${now}
+        where id = ${handoff.to_assignment_id}
+          and completed_at is null and cancelled_at is null`;
+      await tx`
+        update order_driver_handoffs
+        set status = 'CANCELLED', cancelled_at = ${now}, updated_at = ${now},
+            version = version + 1
+        where id = ${handoff.id}`;
+    }
+
+    const remaining = assignments.filter(
+      (row) =>
+        !pendingHandoffs.some((h) => h.to_assignment_id === row.id),
+    );
+
+    if (remaining.length > 0) {
+      const assignment = remaining[0]!;
+      driverId = assignment.driver_id;
+      await tx`
+        update order_driver_assignments
+        set status = 'CANCELLED',
+            closing_reason = 'ORDER_CANCELLED',
+            cancelled_at = ${now},
+            updated_at = ${now}
         where id = ${assignment.id}
           and completed_at is null
           and cancelled_at is null`;
@@ -216,7 +254,7 @@ export class OrderService {
       );
     }
 
-    if (closedOffers.length > 0 || assignment) {
+    if (closedOffers.length > 0 || assignments.length > 0 || pendingHandoffs.length > 0) {
       const cityRecon = await enqueueCityOpenOffersRecon(tx, order.cityId);
       cityRevision = cityRecon.revision;
       jobIds.push(cityRecon.jobId);
@@ -643,6 +681,7 @@ export class OrderService {
       )`;
     const deliveredAt = to === "DELIVERED" ? now : null;
     const cancelledAt = to === "CANCELLED" ? now : null;
+    const clearCancelled = order.status === "CANCELLED" && to !== "CANCELLED";
     const updated = await tx<{ id: string }[]>`
       update orders
       set status = ${to},
@@ -650,7 +689,10 @@ export class OrderService {
           version = version + 1,
           updated_at = ${now},
           delivered_at = coalesce(${deliveredAt}, delivered_at),
-          cancelled_at = coalesce(${cancelledAt}, cancelled_at),
+          cancelled_at = case
+            when ${clearCancelled} then null
+            else coalesce(${cancelledAt}, cancelled_at)
+          end,
           custody_status = case
             when ${actor.custody != null}
               then ${actor.custody?.status ?? null}::order_custody_status
@@ -1195,8 +1237,10 @@ export class OrderService {
           version: number;
           city_id: string;
           custody_status: "WITH_STORE" | "WITH_DRIVER" | "WITH_CUSTOMER";
+          custody_driver_id: string | null;
         }[]
-      >`select id::text, status::text, version, city_id::text, custody_status::text
+      >`select id::text, status::text, version, city_id::text,
+               custody_status::text, custody_driver_id::text
         from orders where id = ${orderId} and city_id = ${cityId} for update`;
       if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
       if (!dashboardMayCancel(order.status))
@@ -1205,30 +1249,14 @@ export class OrderService {
           "ORDER_CANCELLATION_NOT_ALLOWED",
           "Order cannot be cancelled",
         );
-      if (
-        dashboardCancelBlockedByDriverCustody({
-          status: order.status,
-          custodyStatus: order.custody_status,
-        })
-      )
-        throw new AppError(
-          409,
-          "ORDER_CANCEL_REQUIRES_ADMIN_RETURN_FLOW",
-          "Order is in driver custody and requires the admin return workflow",
-        );
       const now = new Date();
-      await this.transition(
-        tx,
-        order,
-        "CANCELLED",
-        {
-          accountId: identity.accountId,
-          actorType: "STAFF",
-          source: "DASHBOARD",
-          reason: cleaned,
-        },
-        now,
-      );
+      const actor = {
+        accountId: identity.accountId,
+        actorType: "STAFF" as const,
+        source: "DASHBOARD" as const,
+        reason: cleaned,
+      };
+      await this.transition(tx, order, "CANCELLED", actor, now);
       await tx`
         insert into order_cancellations(
           order_id, previous_status, actor_account_id, actor_type, source, reason
@@ -1245,6 +1273,118 @@ export class OrderService {
           'ORDER', ${order.id}, 'SUCCESS', null,
           ${JSON.stringify({ cityId, previousStatus: order.status })}::jsonb
         )`;
+      await insertOrderEvent(tx, {
+        ...actor,
+        orderId: order.id,
+        eventType: "ORDER_CANCELLED_BY_DASHBOARD",
+        fromOrderStatus: order.status,
+        toOrderStatus: "CANCELLED",
+        fromCustodyStatus: order.custody_status,
+        toCustodyStatus: order.custody_status,
+        createdAt: now,
+      });
+
+      if (order.custody_status === "WITH_DRIVER") {
+        const closedOffers = await tx<{ id: string }[]>`
+          update order_offer_rounds
+          set status = 'CANCELLED', closed_at = ${now}, updated_at = ${now}
+          where order_id = ${order.id} and status = 'OPEN'
+          returning id::text`;
+        const [pendingHandoff] = await tx<
+          { id: string; to_assignment_id: string; to_driver_id: string }[]
+        >`select id::text, to_assignment_id::text, to_driver_id::text
+          from order_driver_handoffs
+          where order_id = ${order.id} and status = 'PENDING' for update`;
+        const driverIds = new Set<string>();
+        if (order.custody_driver_id) driverIds.add(order.custody_driver_id);
+        if (pendingHandoff) driverIds.add(pendingHandoff.to_driver_id);
+        for (const driverId of [...driverIds].sort()) {
+          await tx`select pg_advisory_xact_lock(hashtextextended(${`driver-assign:${driverId}`}, 0))`;
+          await tx`
+            select account_id from driver_profiles
+            where account_id = ${driverId} for update`;
+        }
+        if (pendingHandoff) {
+          await tx`
+            update order_driver_assignments
+            set status = 'CANCELLED', closing_reason = 'HANDOFF_CANCELLED',
+                cancelled_at = ${now}, updated_at = ${now}
+            where id = ${pendingHandoff.to_assignment_id}
+              and completed_at is null and cancelled_at is null`;
+          await tx`
+            update order_driver_handoffs
+            set status = 'CANCELLED', cancelled_at = ${now}, updated_at = ${now},
+                version = version + 1
+            where id = ${pendingHandoff.id}`;
+        }
+        const [assignment] = await tx<
+          { id: string; driver_id: string }[]
+        >`select id::text, driver_id::text from order_driver_assignments
+          where order_id = ${order.id}
+            and completed_at is null and cancelled_at is null
+            and status in ('ASSIGNED','PICKED_UP','ARRIVED_AT_CUSTOMER')
+          for update`;
+        if (!assignment)
+          throw new AppError(
+            409,
+            "DRIVER_ASSIGNMENT_REQUIRED",
+            "An active driver assignment is required",
+          );
+        await tx`
+          update order_driver_assignments
+          set status = 'RETURN_PENDING', updated_at = ${now}
+          where id = ${assignment.id}`;
+        const [workflow] = await tx<{ id: string }[]>`
+          insert into order_return_workflows (
+            order_id, city_id, assignment_id, driver_id, status, reason,
+            started_by_account_id, started_at
+          ) values (
+            ${order.id}, ${order.city_id}, ${assignment.id}, ${assignment.driver_id},
+            'WAITING_FOR_DRIVER_RETURN', ${cleaned}, ${identity.accountId}, ${now}
+          ) returning id::text`;
+        await insertOrderEvent(tx, {
+          ...actor,
+          orderId: order.id,
+          assignmentId: assignment.id,
+          returnWorkflowId: workflow!.id,
+          eventType: "RETURN_STARTED",
+          fromOrderStatus: "CANCELLED",
+          toOrderStatus: "CANCELLED",
+          fromCustodyStatus: "WITH_DRIVER",
+          toCustodyStatus: "WITH_DRIVER",
+          createdAt: now,
+        });
+        const jobIds: string[] = [];
+        let cityRevision: number | null = null;
+        const revision = await bumpDriverRuntimeRevision(tx, assignment.driver_id);
+        jobIds.push(
+          await enqueueDriverRuntimeRecon(tx, {
+            driverId: assignment.driver_id,
+            expectedRevision: revision,
+            cityId: order.city_id,
+          }),
+        );
+        if (closedOffers.length > 0 || pendingHandoff) {
+          const cityRecon = await enqueueCityOpenOffersRecon(tx, order.city_id);
+          cityRevision = cityRecon.revision;
+          jobIds.push(cityRecon.jobId);
+        }
+        const [count] = await tx<{ count: number }[]>`
+          select count(*)::int as count from order_driver_assignments
+          where driver_id = ${assignment.driver_id}
+            and completed_at is null and cancelled_at is null`;
+        return {
+          cityId: order.city_id,
+          orderId: order.id,
+          closedOfferIds: closedOffers.map((row) => row.id),
+          driverId: assignment.driver_id,
+          remainingActiveOrders: count?.count ?? 0,
+          expectedRevision: revision,
+          cityRevision,
+          jobIds,
+        } satisfies OrderCancelSideEffect;
+      }
+
       return this.closeAssignmentAndOffersOnCancel(
         tx,
         { id: order.id, cityId: order.city_id },

@@ -16,9 +16,12 @@ export const ORDER_STATUSES = [
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 /**
- * M4-C1 happy path:
+ * M4 happy path + C2 ops:
  * PENDING_STORE_APPROVAL → SEARCHING_DRIVER → DRIVER_ASSIGNED → READY_FOR_PICKUP
  * → PICKED_UP → ARRIVED_AT_CUSTOMER → DELIVERED
+ *
+ * C2 additions: reoffer (DRIVER_ASSIGNED/READY → SEARCHING), admin reopen from
+ * CANCELLED, and handoff reset ARRIVED → PICKED_UP for replacement arrival.
  *
  * Legacy statuses APPROVED_BY_STORE / ACCEPTED_BY_DRIVER remain readable and
  * forward-only so historical rows can still advance.
@@ -26,14 +29,19 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 const ALLOWED: Record<OrderStatus, readonly OrderStatus[]> = {
   PENDING_STORE_APPROVAL: ["SEARCHING_DRIVER", "CANCELLED"],
   APPROVED_BY_STORE: ["SEARCHING_DRIVER", "CANCELLED"],
-  SEARCHING_DRIVER: ["DRIVER_ASSIGNED", "CANCELLED"],
-  DRIVER_ASSIGNED: ["READY_FOR_PICKUP", "CANCELLED"],
-  READY_FOR_PICKUP: ["PICKED_UP", "CANCELLED"],
+  SEARCHING_DRIVER: ["DRIVER_ASSIGNED", "READY_FOR_PICKUP", "CANCELLED"],
+  DRIVER_ASSIGNED: ["READY_FOR_PICKUP", "SEARCHING_DRIVER", "CANCELLED"],
+  READY_FOR_PICKUP: ["PICKED_UP", "SEARCHING_DRIVER", "CANCELLED"],
   ACCEPTED_BY_DRIVER: ["PICKED_UP", "CANCELLED"],
   PICKED_UP: ["ARRIVED_AT_CUSTOMER", "CANCELLED"],
-  ARRIVED_AT_CUSTOMER: ["DELIVERED", "CANCELLED"],
+  ARRIVED_AT_CUSTOMER: ["DELIVERED", "PICKED_UP", "CANCELLED"],
   DELIVERED: [],
-  CANCELLED: [],
+  CANCELLED: [
+    "PENDING_STORE_APPROVAL",
+    "SEARCHING_DRIVER",
+    "DRIVER_ASSIGNED",
+    "READY_FOR_PICKUP",
+  ],
 };
 
 export const isTerminalStatus = (status: OrderStatus) =>
@@ -80,15 +88,3 @@ export const mayConfirmArrival = (status: OrderStatus) =>
 
 export const mayConfirmDelivery = (status: OrderStatus) =>
   status === "ARRIVED_AT_CUSTOMER";
-
-/**
- * Temporary M4-C1 cancel gate: dashboard may not cancel once custody is with
- * the driver (return workflow is M4-C2).
- */
-export const dashboardCancelBlockedByDriverCustody = (input: {
-  status: OrderStatus;
-  custodyStatus: "WITH_STORE" | "WITH_DRIVER" | "WITH_CUSTOMER";
-}) =>
-  input.custodyStatus === "WITH_DRIVER" ||
-  input.status === "PICKED_UP" ||
-  input.status === "ARRIVED_AT_CUSTOMER";
