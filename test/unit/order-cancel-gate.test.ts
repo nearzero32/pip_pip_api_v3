@@ -7,6 +7,7 @@ import {
 
 describe("M4-C2 cancel and restricted transitions", () => {
   test("dashboard may cancel non-terminal orders including post-pickup", () => {
+    expect(dashboardMayCancel("ARRIVED_AT_STORE")).toBe(true);
     expect(dashboardMayCancel("PICKED_UP")).toBe(true);
     expect(dashboardMayCancel("ARRIVED_AT_CUSTOMER")).toBe(true);
     expect(dashboardMayCancel("CANCELLED")).toBe(false);

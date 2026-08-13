@@ -84,6 +84,7 @@ const orderStatus = t.Union([
   t.Literal("SEARCHING_DRIVER"),
   t.Literal("DRIVER_ASSIGNED"),
   t.Literal("READY_FOR_PICKUP"),
+  t.Literal("ARRIVED_AT_STORE"),
   t.Literal("ACCEPTED_BY_DRIVER"),
   t.Literal("PICKED_UP"),
   t.Literal("ARRIVED_AT_CUSTOMER"),
@@ -351,6 +352,8 @@ export const orderRoutes = (
         detail: {
           tags: ["Dashboard — Orders"],
           summary: "Get City order details",
+          description:
+            "After a successful delivery, includes collection { expectedAmount, collectedAmount, differenceAmount, currency, assignmentId, collectingDriverId, confirmationSource, collectedAt }. expectedAmount is orders.total in integer IQD. Collection is immutable; there is no endpoint to edit it.",
           security: [{ bearerAuth: [] }],
         },
       },

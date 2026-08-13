@@ -140,6 +140,13 @@ describe("M4-C1 gap closure: cancel, proofs, custody constraints, idempotency", 
     const [assignment] = await h.client<{ id: string }[]>`
       select id::text from order_driver_assignments
       where order_id = ${order.id} and completed_at is null and cancelled_at is null`;
+    await h.orderLifecycle.confirmArrivalAtStore(
+      driver.identity,
+      order.id,
+      {},
+      { kind: "DRIVER" },
+      crypto.randomUUID(),
+    );
     return { order, driver, assignmentId: assignment!.id };
   };
 
@@ -347,14 +354,14 @@ describe("M4-C1 gap closure: cancel, proofs, custody constraints, idempotency", 
       h.orderLifecycle.confirmDelivery(
         driver.identity,
         order.id,
-        { fileId: deliveryFile },
+        { fileId: deliveryFile, collectedAmount: order.total },
         { kind: "DRIVER" },
         crypto.randomUUID(),
       ),
       h.orderLifecycle.confirmDelivery(
         adminIdentity,
         order.id,
-        {},
+        { collectedAmount: order.total },
         { kind: "DASHBOARD", reason: "تسليم متزامن", actedOnBehalfOf: "DRIVER" },
         crypto.randomUUID(),
       ),
@@ -407,13 +414,13 @@ describe("M4-C1 gap closure: cancel, proofs, custody constraints, idempotency", 
     >`select status::text, custody_status::text, custody_driver_id::text
       from orders where id = ${order.id}`;
     expect(row[0]).toMatchObject({
-      status: "READY_FOR_PICKUP",
+      status: "ARRIVED_AT_STORE",
       custody_status: "WITH_STORE",
       custody_driver_id: null,
     });
     const assignment = await h.client<{ status: string }[]>`
       select status::text from order_driver_assignments where id = ${assignmentId}`;
-    expect(assignment[0]!.status).toBe("ASSIGNED");
+    expect(assignment[0]!.status).toBe("ARRIVED_AT_STORE");
     const picks = await h.client<{ n: number }[]>`
       select count(*)::int n from order_events
       where order_id = ${order.id} and event_type = 'DRIVER_PICKED_UP'`;

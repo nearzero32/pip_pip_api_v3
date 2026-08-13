@@ -171,7 +171,7 @@ export class OrderOpsService {
       from order_driver_assignments
       where order_id = ${orderId} and city_id = ${cityId}
         and completed_at is null and cancelled_at is null
-        and status in ('ASSIGNED','PICKED_UP','ARRIVED_AT_CUSTOMER','RETURN_PENDING')
+        and status in ('ASSIGNED','ARRIVED_AT_STORE','PICKED_UP','ARRIVED_AT_CUSTOMER','RETURN_PENDING')
       for update`;
     if (!assignment)
       throw new AppError(
@@ -447,7 +447,7 @@ export class OrderOpsService {
       select id::text, driver_id::text, status::text, assignment_source::text,
              driver_fee, assignment_sequence, replaces_assignment_id::text,
              replaced_by_assignment_id::text, closing_reason::text,
-             assigned_at, picked_up_at, cancelled_at, completed_at
+             assigned_at, arrived_at_store_at, picked_up_at, cancelled_at, completed_at
       from order_driver_assignments
       where order_id = ${orderId}
       order by assigned_at desc, id desc`;
@@ -491,6 +491,7 @@ export class OrderOpsService {
         replacedByAssignmentId: a.replaced_by_assignment_id,
         closingReason: a.closing_reason,
         assignedAt: dateValue(a.assigned_at),
+        arrivedAtStoreAt: dateValue(a.arrived_at_store_at),
         pickedUpAt: dateValue(a.picked_up_at),
         cancelledAt: dateValue(a.cancelled_at),
         completedAt: dateValue(a.completed_at),
@@ -655,7 +656,8 @@ export class OrderOpsService {
           );
         if (
           order.status !== "DRIVER_ASSIGNED" &&
-          order.status !== "READY_FOR_PICKUP"
+          order.status !== "READY_FOR_PICKUP" &&
+          order.status !== "ARRIVED_AT_STORE"
         )
           throw new AppError(
             409,
@@ -663,7 +665,10 @@ export class OrderOpsService {
             "Order is not eligible for driver removal",
           );
         const assignments = await this.lockAssignmentsForOrder(tx, orderId);
-        const current = assignments.find((row) => row.status === "ASSIGNED");
+        const current = assignments.find(
+          (row) =>
+            row.status === "ASSIGNED" || row.status === "ARRIVED_AT_STORE",
+        );
         if (!current)
           throw new AppError(
             409,

@@ -195,6 +195,7 @@ export const orderDriverAssignments = pgTable(
       "pricing_stage_increase_percentage",
     ),
     assignedAt: instant("assigned_at").notNull().defaultNow(),
+    arrivedAtStoreAt: instant("arrived_at_store_at"),
     pickedUpAt: instant("picked_up_at"),
     arrivedAtCustomerAt: instant("arrived_at_customer_at"),
     completedAt: instant("completed_at"),
@@ -206,13 +207,21 @@ export const orderDriverAssignments = pgTable(
     uniqueIndex("order_driver_assignments_custody_active_uidx")
       .on(table.orderId)
       .where(
-        sql`${table.completedAt} is null and ${table.cancelledAt} is null and ${table.status} in ('ASSIGNED','PICKED_UP','ARRIVED_AT_CUSTOMER','RETURN_PENDING')`,
+        sql`${table.completedAt} is null and ${table.cancelledAt} is null and ${table.status} in ('ASSIGNED','ARRIVED_AT_STORE','PICKED_UP','ARRIVED_AT_CUSTOMER','RETURN_PENDING')`,
       ),
     uniqueIndex("order_driver_assignments_handoff_pending_uidx")
       .on(table.orderId)
       .where(
         sql`${table.completedAt} is null and ${table.cancelledAt} is null and ${table.status} = 'HANDOFF_PENDING'`,
       ),
+    uniqueIndex("order_driver_assignments_id_order_uidx").on(
+      table.id,
+      table.orderId,
+    ),
+    uniqueIndex("order_driver_assignments_id_driver_uidx").on(
+      table.id,
+      table.driverId,
+    ),
     index("order_driver_assignments_driver_active_idx")
       .on(table.driverId, table.assignmentSequence, table.assignedAt)
       .where(sql`${table.completedAt} is null and ${table.cancelledAt} is null`),
@@ -237,7 +246,8 @@ export const orderDriverAssignments = pgTable(
     check(
       "order_driver_assignments_status_times_chk",
       sql`${table.cancelledAt} is not null or (
-        (${table.status} = 'ASSIGNED' and ${table.pickedUpAt} is null and ${table.arrivedAtCustomerAt} is null and ${table.completedAt} is null)
+        (${table.status} = 'ASSIGNED' and ${table.pickedUpAt} is null and ${table.arrivedAtStoreAt} is null and ${table.arrivedAtCustomerAt} is null and ${table.completedAt} is null)
+        or (${table.status} = 'ARRIVED_AT_STORE' and ${table.arrivedAtStoreAt} is not null and ${table.pickedUpAt} is null and ${table.arrivedAtCustomerAt} is null and ${table.completedAt} is null)
         or (${table.status} = 'PICKED_UP' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is null and ${table.completedAt} is null)
         or (${table.status} = 'ARRIVED_AT_CUSTOMER' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is not null and ${table.completedAt} is null)
         or (${table.status} = 'COMPLETED' and ${table.pickedUpAt} is not null and ${table.arrivedAtCustomerAt} is not null and ${table.completedAt} is not null)

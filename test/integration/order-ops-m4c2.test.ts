@@ -199,6 +199,13 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
     driver: { token: string; identity: AuthIdentity },
     assignmentId: string,
   ) => {
+    await h.orderLifecycle.confirmArrivalAtStore(
+      driver.identity,
+      orderId,
+      {},
+      { kind: "DRIVER" },
+      crypto.randomUUID(),
+    );
     const fileId = await putReadyProof(
       driver.token,
       orderId,
@@ -596,7 +603,7 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
       h.orderLifecycle.confirmDelivery(
         driver.identity,
         order.id,
-        { fileId: deliveryFile },
+        { fileId: deliveryFile, collectedAmount: order.total },
         { kind: "DRIVER" },
         crypto.randomUUID(),
       ),
@@ -667,7 +674,7 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
       h.orderLifecycle.confirmDelivery(
         driver.identity,
         order.id,
-        { fileId: crypto.randomUUID() },
+        { fileId: crypto.randomUUID(), collectedAmount: order.total },
         { kind: "DRIVER" },
         crypto.randomUUID(),
       ),
@@ -920,7 +927,7 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
       h.orderLifecycle.confirmDelivery(
         driver.identity,
         order.id,
-        { fileId: crypto.randomUUID() },
+        { fileId: crypto.randomUUID(), collectedAmount: order.total },
         { kind: "DRIVER" },
         crypto.randomUUID(),
       ),
@@ -1007,7 +1014,7 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
       h.orderLifecycle.confirmDelivery(
         replacement.identity,
         order.id,
-        {},
+        { collectedAmount: order.total },
         { kind: "DRIVER" },
         crypto.randomUUID(),
       ),

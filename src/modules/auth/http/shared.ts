@@ -2,7 +2,11 @@ import { t } from "elysia";
 import { AppError } from "../../../errors/app-error";
 
 export const errorResponse = t.Object({
-  error: t.Object({ code: t.String(), message: t.String() }),
+  error: t.Object({
+    code: t.String(),
+    message: t.String(),
+    details: t.Optional(t.Record(t.String(), t.Union([t.Integer(), t.String(), t.Null()]))),
+  }),
   request_id: t.String(),
   retryable: t.Optional(t.Boolean()),
 });

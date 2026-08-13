@@ -6,6 +6,7 @@ export const ORDER_STATUSES = [
   "SEARCHING_DRIVER",
   "DRIVER_ASSIGNED",
   "READY_FOR_PICKUP",
+  "ARRIVED_AT_STORE",
   "ACCEPTED_BY_DRIVER",
   "PICKED_UP",
   "ARRIVED_AT_CUSTOMER",
@@ -25,8 +26,9 @@ const ALLOWED: Record<OrderStatus, readonly OrderStatus[]> = {
   PENDING_STORE_APPROVAL: ["SEARCHING_DRIVER", "CANCELLED"],
   APPROVED_BY_STORE: ["SEARCHING_DRIVER", "CANCELLED"],
   SEARCHING_DRIVER: ["DRIVER_ASSIGNED", "CANCELLED"],
-  DRIVER_ASSIGNED: ["READY_FOR_PICKUP", "CANCELLED"],
-  READY_FOR_PICKUP: ["PICKED_UP", "CANCELLED"],
+  DRIVER_ASSIGNED: ["READY_FOR_PICKUP", "ARRIVED_AT_STORE", "CANCELLED"],
+  READY_FOR_PICKUP: ["ARRIVED_AT_STORE", "CANCELLED"],
+  ARRIVED_AT_STORE: ["PICKED_UP", "CANCELLED"],
   ACCEPTED_BY_DRIVER: ["PICKED_UP", "CANCELLED"],
   PICKED_UP: ["ARRIVED_AT_CUSTOMER", "CANCELLED"],
   ARRIVED_AT_CUSTOMER: ["DELIVERED", "CANCELLED"],
@@ -43,7 +45,16 @@ const OPS_ALLOWED: Record<OrderStatus, readonly OrderStatus[]> = {
   APPROVED_BY_STORE: [],
   SEARCHING_DRIVER: ["READY_FOR_PICKUP"],
   DRIVER_ASSIGNED: ["SEARCHING_DRIVER"],
-  READY_FOR_PICKUP: ["SEARCHING_DRIVER", "PENDING_STORE_APPROVAL", "DRIVER_ASSIGNED"],
+  READY_FOR_PICKUP: [
+    "SEARCHING_DRIVER",
+    "PENDING_STORE_APPROVAL",
+    "DRIVER_ASSIGNED",
+  ],
+  ARRIVED_AT_STORE: [
+    "SEARCHING_DRIVER",
+    "DRIVER_ASSIGNED",
+    "READY_FOR_PICKUP",
+  ],
   ACCEPTED_BY_DRIVER: [],
   PICKED_UP: ["READY_FOR_PICKUP", "PENDING_STORE_APPROVAL", "SEARCHING_DRIVER"],
   ARRIVED_AT_CUSTOMER: [
@@ -105,10 +116,13 @@ export const mayApprove = (status: OrderStatus) =>
   status === "PENDING_STORE_APPROVAL";
 
 export const mayMarkReady = (status: OrderStatus) =>
-  status === "DRIVER_ASSIGNED";
+  status === "DRIVER_ASSIGNED" || status === "ARRIVED_AT_STORE";
+
+export const mayConfirmArrivalAtStore = (status: OrderStatus) =>
+  status === "DRIVER_ASSIGNED" || status === "READY_FOR_PICKUP";
 
 export const mayConfirmPickup = (status: OrderStatus) =>
-  status === "READY_FOR_PICKUP" || status === "ACCEPTED_BY_DRIVER";
+  status === "ARRIVED_AT_STORE";
 
 export const mayConfirmArrival = (status: OrderStatus) =>
   status === "PICKED_UP";

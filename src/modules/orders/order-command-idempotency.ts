@@ -50,6 +50,7 @@ export const requireOrderIdempotencyKey = (
 export const ORDER_COMMAND_SCOPES = {
   approve: "v1:orders.approve",
   markReady: "v1:orders.mark-ready",
+  confirmArrivalAtStore: "v1:orders.confirm-arrival-at-store",
   confirmPickup: "v1:orders.confirm-pickup",
   confirmArrival: "v1:orders.confirm-arrival",
   confirmDelivery: "v1:orders.confirm-delivery",

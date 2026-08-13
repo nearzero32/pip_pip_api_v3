@@ -950,7 +950,7 @@ export class OfferService {
             );
         } else {
           const custody = activeAssignments.find((row) =>
-            ["ASSIGNED", "PICKED_UP", "ARRIVED_AT_CUSTOMER"].includes(row.status),
+            ["ASSIGNED", "ARRIVED_AT_STORE", "PICKED_UP", "ARRIVED_AT_CUSTOMER"].includes(row.status),
           );
           const pendingHandoff = activeAssignments.find(
             (row) => row.status === "HANDOFF_PENDING",
@@ -1374,7 +1374,7 @@ export class OfferService {
           select id::text from order_driver_assignments
           where order_id = ${orderId}
             and completed_at is null and cancelled_at is null
-            and status in ('ASSIGNED','PICKED_UP','ARRIVED_AT_CUSTOMER','RETURN_PENDING','HANDOFF_PENDING')
+            and status in ('ASSIGNED','ARRIVED_AT_STORE','PICKED_UP','ARRIVED_AT_CUSTOMER','RETURN_PENDING','HANDOFF_PENDING')
           for update`;
         if (orderAssignment)
           throw new AppError(

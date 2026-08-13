@@ -134,7 +134,8 @@ export const orders = pgTable(
       "orders_status_custody_chk",
       sql`(${table.status} in ('PICKED_UP','ARRIVED_AT_CUSTOMER') and ${table.custodyStatus} = 'WITH_DRIVER' and ${table.custodyDriverId} is not null)
         or (${table.status} = 'DELIVERED' and ${table.custodyStatus} = 'WITH_CUSTOMER' and ${table.custodyDriverId} is null)
-        or (${table.status} not in ('PICKED_UP','ARRIVED_AT_CUSTOMER','DELIVERED'))`,
+        or (${table.status} = 'ARRIVED_AT_STORE' and ${table.custodyStatus} = 'WITH_STORE' and ${table.custodyDriverId} is null)
+        or (${table.status} not in ('PICKED_UP','ARRIVED_AT_CUSTOMER','DELIVERED','ARRIVED_AT_STORE'))`,
     ),
   ],
 );
@@ -638,6 +639,74 @@ export const orderCancellations = pgTable(
     check(
       "order_cancellations_reason_chk",
       sql`length(btrim(${table.reason})) > 0`,
+    ),
+  ],
+);
+
+export const orderCollections = pgTable(
+  "order_collections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
+    assignmentId: uuid("assignment_id")
+      .notNull()
+      .references(() => orderDriverAssignments.id),
+    collectingDriverId: uuid("collecting_driver_id")
+      .notNull()
+      .references(() => accounts.id),
+    expectedAmount: integer("expected_amount").notNull(),
+    collectedAmount: integer("collected_amount").notNull(),
+    differenceAmount: integer("difference_amount").notNull(),
+    currency: text("currency").notNull().default("IQD"),
+    confirmedByAccountId: uuid("confirmed_by_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    confirmationSource: orderActionSource("confirmation_source").notNull(),
+    orderEventId: uuid("order_event_id")
+      .notNull()
+      .references(() => orderEvents.id),
+    collectedAt: instant("collected_at").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("order_collections_order_uidx").on(table.orderId),
+    uniqueIndex("order_collections_event_uidx").on(table.orderEventId),
+    index("order_collections_assignment_idx").on(table.assignmentId),
+    index("order_collections_driver_idx").on(table.collectingDriverId),
+    foreignKey({
+      name: "order_collections_assignment_order_fk",
+      columns: [table.assignmentId, table.orderId],
+      foreignColumns: [orderDriverAssignments.id, orderDriverAssignments.orderId],
+    }),
+    foreignKey({
+      name: "order_collections_assignment_driver_fk",
+      columns: [table.assignmentId, table.collectingDriverId],
+      foreignColumns: [
+        orderDriverAssignments.id,
+        orderDriverAssignments.driverId,
+      ],
+    }),
+    check("order_collections_currency_chk", sql`${table.currency} = 'IQD'`),
+    check(
+      "order_collections_source_chk",
+      sql`${table.confirmationSource} in ('DRIVER_APP','DASHBOARD_OVERRIDE')`,
+    ),
+    check(
+      "order_collections_amounts_nonneg_chk",
+      sql`${table.expectedAmount} >= 0 and ${table.collectedAmount} >= 0
+        and ${table.differenceAmount} >= 0
+        and ${table.expectedAmount} <= 99999999
+        and ${table.collectedAmount} <= 99999999`,
+    ),
+    check(
+      "order_collections_collected_gte_expected_chk",
+      sql`${table.collectedAmount} >= ${table.expectedAmount}`,
+    ),
+    check(
+      "order_collections_difference_chk",
+      sql`${table.differenceAmount} = ${table.collectedAmount} - ${table.expectedAmount}`,
     ),
   ],
 );

@@ -9,6 +9,7 @@ import {
 import { requireTrustedMerchantStore } from "../auth/merchant/merchant-access";
 import { errorResponse, standardErrors } from "../auth/http/shared";
 import { authIdentity, requestIdOf } from "../geography/shared";
+import { COLLECTION_AMOUNT_MAX } from "./order-collection";
 import type { MediaService } from "../media/media.service";
 import type { OrderLifecycleService } from "./order-lifecycle.service";
 
@@ -73,6 +74,27 @@ const override = t.Object(
   },
   { additionalProperties: false },
 );
+const collectedAmount = t.Integer({
+  minimum: 0,
+  maximum: COLLECTION_AMOUNT_MAX,
+});
+const driverDeliveryBody = t.Object(
+  {
+    proofFileId: uuid,
+    collectedAmount,
+    note: t.Optional(t.String({ maxLength: 1000 })),
+  },
+  { additionalProperties: false },
+);
+const dashboardDeliveryBody = t.Object(
+  {
+    collectedAmount,
+    reason: t.String({ minLength: 1, maxLength: 1000 }),
+    note: t.Optional(t.String({ maxLength: 1000 })),
+    actedOnBehalfOf: t.Optional(t.Literal("DRIVER")),
+  },
+  { additionalProperties: false },
+);
 
 export const orderLifecycleRoutes = (
   auth: AuthModule,
@@ -123,6 +145,8 @@ export const orderLifecycleRoutes = (
         detail: {
           tags: ["Mobile — Driver Orders"],
           summary: "Get active order assignment",
+          description:
+            "Includes storeReadyMarkedAt, arrivedAtStoreAt, canConfirmArrivalAtStore, and canConfirmPickup for display only; the server re-checks on each command. Also includes expectedCollectionAmount and currency (integer IQD) from the locked order total so the driver can display the amount to collect. Server re-reads and enforces the amount inside the delivery transaction.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -174,6 +198,35 @@ export const orderLifecycleRoutes = (
       },
     )
     .post(
+      "/api/v1/mobile/driver/orders/:orderId/confirm-arrival-at-store",
+      async ({ request, set, params }) => {
+        const identity = await authIdentity(
+          auth,
+          request,
+          driverContext,
+          requestIdOf(set),
+        );
+        return lifecycle.confirmArrivalAtStore(
+          identity, params.orderId, {}, { kind: "DRIVER" },
+          idempotencyKeyOf(request),
+        );
+      },
+      {
+        params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
+        body: t.Object({}, { additionalProperties: false }),
+        response: { 200: t.Any(), ...errors },
+        detail: {
+          tags: ["Mobile — Driver Orders"],
+          summary: "Confirm driver arrival at store",
+          description:
+            "Driver taps arrived-at-store. Photo, coordinates, and proof fields are not required or accepted. Empty JSON object body only. Custody stays WITH_STORE. Pickup remains a separate later step.",
+          parameters: [idempotencyHeader],
+          security: [{ bearerAuth: [] }],
+        },
+      },
+    )
+    .post(
       "/api/v1/mobile/driver/orders/:orderId/confirm-pickup",
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(
@@ -195,6 +248,8 @@ export const orderLifecycleRoutes = (
         detail: {
           tags: ["Mobile — Driver Orders"],
           summary: "Confirm order pickup",
+          description:
+            "Requires storeReadyMarkedAt, arrivedAtStoreAt, and PICKUP_PROOF. Domain errors: ORDER_NOT_READY_FOR_PICKUP, DRIVER_HAS_NOT_ARRIVED_AT_STORE, PROOF_REQUIRED.",
           parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
@@ -240,18 +295,28 @@ export const orderLifecycleRoutes = (
           requestIdOf(set),
         );
         return lifecycle.confirmDelivery(
-          identity, params.orderId, body, { kind: "DRIVER" },
+          identity,
+          params.orderId,
+          {
+            proofFileId: body.proofFileId,
+            fileId: body.proofFileId,
+            collectedAmount: body.collectedAmount,
+            ...(body.note != null ? { note: body.note } : {}),
+          },
+          { kind: "DRIVER" },
           idempotencyKeyOf(request),
         );
       },
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
-        body: confirmation,
+        body: driverDeliveryBody,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Mobile — Driver Orders"],
           summary: "Confirm order delivery",
+          description:
+            "Requires DELIVERY_PROOF (proofFileId) and collectedAmount in integer IQD. Server compares collectedAmount to expectedCollectionAmount (orders.total). Amounts below expected are always rejected; there is no under-collection override. Proof is consumed only if delivery and collection commit together.",
           parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
@@ -287,6 +352,51 @@ export const orderLifecycleRoutes = (
       },
     )
     .post(
+      "/api/v1/dashboard/orders/:orderId/confirm-arrival-at-store",
+      async ({ request, set, params, body }) => {
+        const identity = await authIdentity(
+          auth,
+          request,
+          dashboardContext,
+          requestIdOf(set),
+        );
+        return lifecycle.confirmArrivalAtStore(
+          identity,
+          params.orderId,
+          {
+            reason: body.reason,
+            ...(body.note != null ? { note: body.note } : {}),
+          },
+          {
+            kind: "DASHBOARD",
+            reason: body.reason,
+            actedOnBehalfOf: "DRIVER",
+          },
+          idempotencyKeyOf(request),
+        );
+      },
+      {
+        params: t.Object({ orderId: uuid }),
+        headers: idempotencyHeaders,
+        body: t.Object(
+          {
+            reason: t.String({ minLength: 1, maxLength: 1000 }),
+            note: t.Optional(t.String({ maxLength: 1000 })),
+          },
+          { additionalProperties: false },
+        ),
+        response: { 200: t.Any(), ...errors },
+        detail: {
+          tags: ["Dashboard — Orders"],
+          summary: "Dashboard override: confirm driver arrival at store",
+          description:
+            "City-scoped DASHBOARD_OVERRIDE on behalf of DRIVER. reason is required. No photo or GPS. Does not transfer custody. SUPER_ADMIN is blocked. Does not invent store-ready or pickup.",
+          parameters: [idempotencyHeader],
+          security: [{ bearerAuth: [] }],
+        },
+      },
+    )
+    .post(
       "/api/v1/dashboard/orders/:orderId/confirm-pickup",
       async ({ request, set, params, body }) => {
         const identity = await authIdentity(
@@ -309,7 +419,7 @@ export const orderLifecycleRoutes = (
           tags: ["Dashboard — Orders"],
           summary: "Dashboard override: confirm pickup (source=DASHBOARD_OVERRIDE)",
           description:
-            "City-scoped natural transition on behalf of DRIVER. Records source DASHBOARD_OVERRIDE with required reason. Proof is not required for DASHBOARD_OVERRIDE.",
+            "City-scoped natural transition on behalf of DRIVER. Records source DASHBOARD_OVERRIDE with required reason. Proof is not required for DASHBOARD_OVERRIDE. Store-ready and driver arrival-at-store must already be recorded; dashboard pickup does not invent those steps. Domain errors: ORDER_NOT_READY_FOR_PICKUP, DRIVER_HAS_NOT_ARRIVED_AT_STORE.",
           parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },
@@ -352,18 +462,31 @@ export const orderLifecycleRoutes = (
           requestIdOf(set),
         );
         return lifecycle.confirmDelivery(
-          identity, params.orderId, body, { kind: "DASHBOARD", ...body },
+          identity,
+          params.orderId,
+          {
+            collectedAmount: body.collectedAmount,
+            reason: body.reason,
+            ...(body.note != null ? { note: body.note } : {}),
+          },
+          {
+            kind: "DASHBOARD",
+            reason: body.reason,
+            actedOnBehalfOf: body.actedOnBehalfOf ?? "DRIVER",
+          },
           idempotencyKeyOf(request),
         );
       },
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
-        body: override,
+        body: dashboardDeliveryBody,
         response: { 200: t.Any(), ...errors },
         detail: {
           tags: ["Dashboard — Orders"],
           summary: "Override delivery transition",
+          description:
+            "City-scoped DASHBOARD_OVERRIDE on behalf of DRIVER. collectedAmount (integer IQD) and reason are required. Proof is not required. Dashboard cannot record less than expectedCollectionAmount and cannot bypass the minimum. Collection is attributed to the current custody assignment driver, not the staff actor. SUPER_ADMIN is blocked.",
           parameters: [idempotencyHeader],
           security: [{ bearerAuth: [] }],
         },

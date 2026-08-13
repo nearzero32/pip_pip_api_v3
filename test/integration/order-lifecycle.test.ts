@@ -399,7 +399,13 @@ describe("M4-C1 order lifecycle", () => {
     expect(doc.paths["/api/v1/mobile/merchant/orders/{orderId}/cancel"]).toBeUndefined();
     const blob = JSON.stringify(doc);
     expect(blob).not.toContain("REJECTED_BY_STORE");
-    expect(blob).not.toContain("ARRIVED_AT_STORE");
+    expect(blob).toContain("ARRIVED_AT_STORE");
+    expect(
+      doc.paths["/api/v1/mobile/driver/orders/{orderId}/confirm-arrival-at-store"],
+    ).toBeTruthy();
+    expect(
+      doc.paths["/api/v1/dashboard/orders/{orderId}/confirm-arrival-at-store"],
+    ).toBeTruthy();
     expect(blob).toContain("PENDING_STORE_APPROVAL");
     expect(blob).toContain("PICKUP_PROOF");
     expect(blob).toContain("DELIVERY_PROOF");
@@ -574,6 +580,19 @@ describe("M4-C1 order lifecycle", () => {
       }, crypto.randomUUID()),
     ).resolves.toMatchObject({ status: "READY_FOR_PICKUP", custodyStatus: "WITH_STORE" });
 
+    const arrivedAtStore = await h.app.handle(
+      jsonRequest(
+        `/api/v1/mobile/driver/orders/${order.id}/confirm-arrival-at-store`,
+        {
+          token: driver.token,
+          body: {},
+          headers: { "idempotency-key": crypto.randomUUID() },
+        },
+      ),
+    );
+    expect(arrivedAtStore.status).toBe(200);
+    expect((await arrivedAtStore.json()).status).toBe("ARRIVED_AT_STORE");
+
     const missingProof = await h.app.handle(
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-pickup`, {
         token: driver.token,
@@ -652,12 +671,12 @@ describe("M4-C1 order lifecycle", () => {
     const missingDelivery = await h.app.handle(
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-delivery`, {
         token: driver.token,
-        body: {},
+        body: { collectedAmount: order.total },
         headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
     expect(missingDelivery.status).toBe(422);
-    expect((await missingDelivery.json()).error.code).toBe("PROOF_REQUIRED");
+    expect((await missingDelivery.json()).error.code).toBe("VALIDATION_FAILED");
 
     const deliveryFile = await putReadyProof(
       driver.token,
@@ -669,7 +688,7 @@ describe("M4-C1 order lifecycle", () => {
     const deliveredRes = await h.app.handle(
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-delivery`, {
         token: driver.token,
-        body: { fileId: deliveryFile },
+        body: { proofFileId: deliveryFile, collectedAmount: order.total },
         headers: { "idempotency-key": deliveryKey },
       }),
     );
@@ -694,6 +713,7 @@ describe("M4-C1 order lifecycle", () => {
       "STORE_APPROVED",
       "DRIVER_ASSIGNED",
       "STORE_MARKED_READY",
+      "DRIVER_ARRIVED_AT_STORE",
       "DRIVER_PICKED_UP",
       "DRIVER_ARRIVED_AT_CUSTOMER",
       "ORDER_DELIVERED",
@@ -702,7 +722,7 @@ describe("M4-C1 order lifecycle", () => {
     const replayDeliver = await h.app.handle(
       jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/confirm-delivery`, {
         token: driver.token,
-        body: { fileId: deliveryFile },
+        body: { proofFileId: deliveryFile, collectedAmount: order.total },
         headers: { "idempotency-key": deliveryKey },
       }),
     );
@@ -728,6 +748,18 @@ describe("M4-C1 order lifecycle", () => {
     );
     expect(ready.status).toBe(200);
 
+    const storeArrival = await h.app.handle(
+      jsonRequest(
+        `/api/v1/dashboard/orders/${order.id}/confirm-arrival-at-store`,
+        {
+          token: adminToken,
+          body: { reason: "السائق وصل للمتجر" },
+          headers: { "idempotency-key": crypto.randomUUID() },
+        },
+      ),
+    );
+    expect(storeArrival.status).toBe(200);
+
     const pickup = await h.app.handle(
       jsonRequest(`/api/v1/dashboard/orders/${order.id}/confirm-pickup`, {
         token: adminToken,
@@ -750,7 +782,7 @@ describe("M4-C1 order lifecycle", () => {
     const deliver = await h.app.handle(
       jsonRequest(`/api/v1/dashboard/orders/${order.id}/confirm-delivery`, {
         token: adminToken,
-        body: { reason: "تسليم إداري", actedOnBehalfOf: "DRIVER" },
+        body: { collectedAmount: order.total, reason: "تسليم إداري", actedOnBehalfOf: "DRIVER" },
         headers: { "idempotency-key": crypto.randomUUID() },
       }),
     );
@@ -823,6 +855,13 @@ describe("M4-C1 order lifecycle", () => {
       kind: "MERCHANT",
       storeId: store,
     }, crypto.randomUUID());
+    await h.orderLifecycle.confirmArrivalAtStore(
+      driver.identity,
+      order.id,
+      {},
+      { kind: "DRIVER" },
+      crypto.randomUUID(),
+    );
     const results = await Promise.allSettled([
       h.orderLifecycle.confirmPickup(
         adminIdentity,

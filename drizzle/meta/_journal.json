@@ -239,6 +239,27 @@
       "when": 1786472000001,
       "tag": "0033_m4c2_ops_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786474000000,
+      "tag": "0034_m4c2_order_collections",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786475000000,
+      "tag": "0035_arrived_at_store_enums",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786475000001,
+      "tag": "0036_arrived_at_store_tables",
+      "breakpoints": true
     }
   ]
 }

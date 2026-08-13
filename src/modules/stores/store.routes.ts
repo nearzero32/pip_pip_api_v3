@@ -33,10 +33,7 @@ const mutableStoreStatus = t.Union([
   t.Literal("INACTIVE"),
 ]);
 
-const orderAcceptance = t.Union([
-  t.Literal("ACCEPTING"),
-  t.Literal("PAUSED"),
-]);
+const orderAcceptance = t.Union([t.Literal("ACCEPTING"), t.Literal("PAUSED")]);
 
 const weekday = t.Union([
   t.Literal("MONDAY"),
@@ -114,10 +111,7 @@ const publicStoreDto = t.Object({
   displayOrder: t.Integer({ minimum: 0 }),
   isOpen: t.Boolean(),
   isAcceptingOrders: t.Boolean(),
-  orderAcceptanceStatus: t.Union([
-    t.Literal("ACCEPTING"),
-    t.Literal("PAUSED"),
-  ]),
+  orderAcceptanceStatus: t.Union([t.Literal("ACCEPTING"), t.Literal("PAUSED")]),
   nextOpeningAt: t.Nullable(t.String()),
   nextClosingAt: t.Nullable(t.String()),
 });
@@ -177,6 +171,7 @@ const createBodyKeys = new Set([
   "subcategoryIds",
   "workingHours",
 ]);
+
 const patchBodyKeys = new Set([
   "mainCategoryId",
   "name",
@@ -418,7 +413,8 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
         response: { 200: publicStoreDto, ...publicErrors },
         detail: {
           tags: ["Public — Stores"],
-          summary: "Get a customer-visible Store in the City selected by X-City-Id",
+          summary:
+            "Get a customer-visible Store in the City selected by X-City-Id",
           description:
             "Returns only ACTIVE non-archived Stores with an ACTIVE Main Category in the header City. Schedule-closed and PAUSED Stores remain visible with computed availability.",
           parameters: [cityIdHeaderParam],

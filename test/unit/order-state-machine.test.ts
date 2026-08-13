@@ -9,9 +9,12 @@ import {
   mayApprove,
   mayMarkReady,
   mayConfirmArrival,
+  mayConfirmArrivalAtStore,
   mayConfirmDelivery,
+  mayConfirmPickup,
   mayMutateItems,
   mayReplaceItems,
+  ORDER_STATUSES,
 } from "../../src/modules/orders/order-state-machine";
 
 describe("order state machine", () => {
@@ -19,7 +22,9 @@ describe("order state machine", () => {
     assertTransition("PENDING_STORE_APPROVAL", "SEARCHING_DRIVER");
     assertTransition("SEARCHING_DRIVER", "DRIVER_ASSIGNED");
     assertTransition("DRIVER_ASSIGNED", "READY_FOR_PICKUP");
-    assertTransition("READY_FOR_PICKUP", "PICKED_UP");
+    assertTransition("DRIVER_ASSIGNED", "ARRIVED_AT_STORE");
+    assertTransition("READY_FOR_PICKUP", "ARRIVED_AT_STORE");
+    assertTransition("ARRIVED_AT_STORE", "PICKED_UP");
     assertTransition("PICKED_UP", "ARRIVED_AT_CUSTOMER");
     assertTransition("ARRIVED_AT_CUSTOMER", "DELIVERED");
   });
@@ -47,6 +52,18 @@ describe("order state machine", () => {
       assertTransition("DRIVER_ASSIGNED", "SEARCHING_DRIVER"),
     ).toThrow(AppError);
     expect(() =>
+      assertTransition("READY_FOR_PICKUP", "PICKED_UP"),
+    ).toThrow(AppError);
+    expect(() =>
+      assertTransition("ARRIVED_AT_STORE", "DRIVER_ASSIGNED"),
+    ).toThrow(AppError);
+    expect(() =>
+      assertTransition("ARRIVED_AT_STORE", "SEARCHING_DRIVER"),
+    ).toThrow(AppError);
+    expect(() =>
+      assertTransition("ARRIVED_AT_STORE", "DELIVERED"),
+    ).toThrow(AppError);
+    expect(() =>
       assertTransition("CANCELLED", "PENDING_STORE_APPROVAL"),
     ).toThrow(AppError);
   });
@@ -62,6 +79,15 @@ describe("order state machine", () => {
       assertOpsTransition("DRIVER_ASSIGNED", "SEARCHING_DRIVER"),
     ).not.toThrow();
     expect(() =>
+      assertOpsTransition("ARRIVED_AT_STORE", "SEARCHING_DRIVER"),
+    ).not.toThrow();
+    expect(() =>
+      assertOpsTransition("ARRIVED_AT_STORE", "DRIVER_ASSIGNED"),
+    ).not.toThrow();
+    expect(() =>
+      assertOpsTransition("ARRIVED_AT_STORE", "READY_FOR_PICKUP"),
+    ).not.toThrow();
+    expect(() =>
       assertOpsTransition("CANCELLED", "PENDING_STORE_APPROVAL"),
     ).not.toThrow();
     expect(() =>
@@ -72,6 +98,13 @@ describe("order state machine", () => {
   test("merchant mark-ready and driver delivery gates cannot use C2 skips", () => {
     expect(mayMarkReady("SEARCHING_DRIVER")).toBe(false);
     expect(mayMarkReady("DRIVER_ASSIGNED")).toBe(true);
+    expect(mayMarkReady("ARRIVED_AT_STORE")).toBe(true);
+    expect(mayConfirmArrivalAtStore("DRIVER_ASSIGNED")).toBe(true);
+    expect(mayConfirmArrivalAtStore("READY_FOR_PICKUP")).toBe(true);
+    expect(mayConfirmArrivalAtStore("PICKED_UP")).toBe(false);
+    expect(mayConfirmArrivalAtStore("CANCELLED")).toBe(false);
+    expect(mayConfirmPickup("READY_FOR_PICKUP")).toBe(false);
+    expect(mayConfirmPickup("ARRIVED_AT_STORE")).toBe(true);
     expect(mayConfirmArrival("ARRIVED_AT_CUSTOMER")).toBe(false);
     expect(mayConfirmDelivery("PICKED_UP")).toBe(false);
     expect(mayConfirmDelivery("ARRIVED_AT_CUSTOMER")).toBe(true);
@@ -89,6 +122,8 @@ describe("order state machine", () => {
     expect(mayApprove("APPROVED_BY_STORE")).toBe(false);
     expect(isTerminalStatus("DELIVERED")).toBe(true);
     expect(isTerminalStatus("CANCELLED")).toBe(true);
+    expect(ORDER_STATUSES).toContain("ARRIVED_AT_STORE");
+    expect(dashboardMayCancel("ARRIVED_AT_STORE")).toBe(true);
   });
 
   test("invalid transitions use ORDER_INVALID_TRANSITION", () => {

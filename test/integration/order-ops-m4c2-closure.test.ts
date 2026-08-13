@@ -214,6 +214,13 @@ describe("M4-C2 closure: races, idempotency HTTP, DB constraints", () => {
     driver: { token: string; identity: AuthIdentity },
     assignmentId: string,
   ) => {
+    await h.orderLifecycle.confirmArrivalAtStore(
+      driver.identity,
+      orderId,
+      {},
+      { kind: "DRIVER" },
+      crypto.randomUUID(),
+    );
     const fileId = await putReadyProof(
       driver.token,
       orderId,
@@ -655,7 +662,7 @@ describe("M4-C2 closure: races, idempotency HTTP, DB constraints", () => {
       h.orderLifecycle.confirmDelivery(
         driver.identity,
         order.id,
-        { fileId },
+        { fileId, collectedAmount: order.total },
         { kind: "DRIVER" },
         crypto.randomUUID(),
       ),
@@ -681,6 +688,8 @@ describe("M4-C2 closure: races, idempotency HTTP, DB constraints", () => {
     const deliveredEvents = await eventCount(order.id, "ORDER_DELIVERED");
     const cancelEvents = await eventCount(order.id, "ORDER_CANCELLED_BY_DASHBOARD");
     const returnStarted = await eventCount(order.id, "RETURN_STARTED");
+    const [collectionCount] = await h.client<{ n: number }[]>`
+      select count(*)::int n from order_collections where order_id = ${order.id}`;
 
     const deliveredPath =
       snap.status === "DELIVERED" &&
@@ -689,7 +698,8 @@ describe("M4-C2 closure: races, idempotency HTTP, DB constraints", () => {
       assignment!.completed_at != null &&
       activeReturns === 0 &&
       deliveredEvents >= 1 &&
-      returnStarted === 0;
+      returnStarted === 0 &&
+      collectionCount!.n === 1;
 
     const cancelledPath =
       snap.status === "CANCELLED" &&
@@ -697,7 +707,8 @@ describe("M4-C2 closure: races, idempotency HTTP, DB constraints", () => {
       assignment!.status === "RETURN_PENDING" &&
       activeReturns === 1 &&
       cancelEvents >= 1 &&
-      deliveredEvents === 0;
+      deliveredEvents === 0 &&
+      collectionCount!.n === 0;
 
     // Prefer single winner; allow both fulfilled only if they converge on one terminal.
     if (fulfilled.length === 2) {

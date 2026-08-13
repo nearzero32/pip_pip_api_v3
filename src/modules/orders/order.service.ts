@@ -33,6 +33,7 @@ import {
   ORDER_COMMAND_SCOPES,
   requireOrderIdempotencyKey,
 } from "./order-command-idempotency";
+import { loadOrderCollection } from "./order-collection";
 import { insertOrderEvent } from "./order-events";
 
 export type OrderCancelSideEffect = {
@@ -1124,7 +1125,7 @@ export class OrderService {
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
              customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
-             version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
+             store_ready_marked_at, version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders where id = ${orderId} and city_id = ${cityId}`;
     if (!row) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
     const [address] = await this.client<Record<string, unknown>[]>`
@@ -1164,7 +1165,7 @@ export class OrderService {
       select id::text, driver_id::text, offer_round_id::text,
              assignment_source::text, status::text, assignment_sequence,
              assigned_by_account_id::text, assignment_reason, driver_fee,
-             assigned_at, picked_up_at, arrived_at_customer_at, completed_at,
+             assigned_at, arrived_at_store_at, picked_up_at, arrived_at_customer_at, completed_at,
              cancelled_at
       from order_driver_assignments where order_id = ${orderId}
       order by assigned_at asc, id asc`;
@@ -1236,11 +1237,22 @@ export class OrderService {
         ...assignment,
         driverFee: Number(assignment.driver_fee),
         assignedAt: dateValue(assignment.assigned_at),
+        arrivedAtStoreAt: dateValue(assignment.arrived_at_store_at),
         pickedUpAt: dateValue(assignment.picked_up_at),
         arrivedAtCustomerAt: dateValue(assignment.arrived_at_customer_at),
         completedAt: dateValue(assignment.completed_at),
         cancelledAt: dateValue(assignment.cancelled_at),
       })),
+      storeReadyMarkedAt: dateValue(row.store_ready_marked_at),
+      arrivedAtStoreAt: (() => {
+        const current = assignments.find(
+          (assignment) =>
+            assignment.cancelled_at == null && assignment.completed_at == null,
+        );
+        return dateValue(current?.arrived_at_store_at);
+      })(),
+      collection: await loadOrderCollection(this.client, orderId),
+      expectedCollectionAmount: Number(row.total),
     });
   }
 
@@ -1362,7 +1374,7 @@ export class OrderService {
         >`select id::text, driver_id::text from order_driver_assignments
           where order_id = ${order.id}
             and completed_at is null and cancelled_at is null
-            and status in ('ASSIGNED','PICKED_UP','ARRIVED_AT_CUSTOMER')
+            and status in ('ASSIGNED','ARRIVED_AT_STORE','PICKED_UP','ARRIVED_AT_CUSTOMER')
           for update`;
         if (!assignment)
           throw new AppError(

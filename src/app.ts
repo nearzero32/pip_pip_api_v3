@@ -102,7 +102,11 @@ export function createApp(dependencies: AppDependencies) {
           request_id: requestId,
         });
         return status(error.statusCode, {
-          error: { code: error.publicCode, message: error.message },
+          error: {
+            code: error.publicCode,
+            message: error.message,
+            ...(error.details ? { details: error.details } : {}),
+          },
           request_id: requestId,
           ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
         });
