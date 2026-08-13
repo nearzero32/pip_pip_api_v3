@@ -6,6 +6,7 @@ import {
   jsonRequest,
   type IntegrationHarness,
 } from "./helpers";
+import { reopenExcelWorkbook } from "../../src/modules/dashboard-export/xlsx";
 
 const password = "fixed staff password";
 
@@ -41,9 +42,30 @@ const grant = async (
   }
 };
 
-const xlsxRowCount = (bytes: Uint8Array) => {
-  const xml = new TextDecoder().decode(bytes);
-  return Math.max(0, (xml.match(/<row r="/g) ?? []).length - 1);
+const xlsxRowCount = (bytes: Uint8Array) =>
+  reopenExcelWorkbook(bytes).dataRowCount;
+
+const revoke = async (
+  harness: IntegrationHarness,
+  adminToken: string,
+  employeeId: string,
+  permission: string,
+) => {
+  const status = (
+    await harness.app.handle(
+      jsonRequest(
+        `/api/v1/dashboard/employees/${employeeId}/permissions/${permission}`,
+        { method: "DELETE", token: adminToken },
+      ),
+    )
+  ).status;
+  expect(status).toBe(200);
+};
+
+const snapshotOf = async (harness: IntegrationHarness, orderId: string) => {
+  const [row] = await harness.client<{ store_commission_rate_snapshot: number }[]>`
+    select store_commission_rate_snapshot from orders where id = ${orderId}`;
+  return Number(row?.store_commission_rate_snapshot);
 };
 
 describe("store commission rates and dashboard Excel export", () => {
@@ -469,6 +491,381 @@ describe("store commission rates and dashboard Excel export", () => {
     expect(
       JSON.stringify(doc.paths["/api/v1/mobile/customer/cart/items"]?.post?.requestBody),
     ).toContain("sizeId");
+    const exportPaths = Object.keys(doc.paths)
+      .filter((path) => path.includes("/export"))
+      .sort();
+    expect(exportPaths).toEqual([
+      "/api/v1/dashboard/admins/export",
+      "/api/v1/dashboard/cities/export",
+      "/api/v1/dashboard/cities/{cityId}/delivery-pricing/versions/export",
+      "/api/v1/dashboard/drivers/assignment-candidates/export",
+      "/api/v1/dashboard/employees/export",
+      "/api/v1/dashboard/governorates/export",
+      "/api/v1/dashboard/main-categories/export",
+      "/api/v1/dashboard/merchants/export",
+      "/api/v1/dashboard/order-assignments/export",
+      "/api/v1/dashboard/order-collections/export",
+      "/api/v1/dashboard/order-events/export",
+      "/api/v1/dashboard/order-handoffs/export",
+      "/api/v1/dashboard/order-offer-rounds/export",
+      "/api/v1/dashboard/order-returns/export",
+      "/api/v1/dashboard/orders/export",
+      "/api/v1/dashboard/orders/{orderId}/offer-rounds/export",
+      "/api/v1/dashboard/store-commission-history/export",
+      "/api/v1/dashboard/store-commissions/export",
+      "/api/v1/dashboard/stores/export",
+      "/api/v1/dashboard/stores/{storeId}/categories/export",
+      "/api/v1/dashboard/stores/{storeId}/modifier-groups/export",
+      "/api/v1/dashboard/stores/{storeId}/products/export",
+      "/api/v1/dashboard/subcategories/export",
+      "/api/v1/dashboard/zones/export",
+    ]);
+    expect(doc.paths["/api/v1/dashboard/export"]).toBeUndefined();
+  });
+
+  test("global export permissions are independent of read and not grantable to employees", async () => {
+    const grantGlobal = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/employees/${employeeId}/permissions`, {
+        method: "POST",
+        token: adminToken,
+        body: { permission: "governorates.export" },
+      }),
+    );
+    expect(grantGlobal.status).toBe(422);
+    expect(
+      (
+        await h.app.handle(
+          jsonRequest("/api/v1/dashboard/governorates/export", {
+            token: employeeToken,
+          }),
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await h.app.handle(
+          jsonRequest("/api/v1/dashboard/cities/export", { token: adminToken }),
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await h.app.handle(
+          jsonRequest("/api/v1/dashboard/admins/export", { token: superToken }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await h.app.handle(
+          jsonRequest(
+            `/api/v1/dashboard/cities/${cityA}/delivery-pricing/versions/export`,
+            { token: superToken },
+          ),
+        )
+      ).status,
+    ).toBe(200);
+  });
+
+  test("commission history export is independent of list export", async () => {
+    await grant(h, adminToken, employeeId, [
+      "stores.commission.read",
+      "stores.commission.export",
+    ]);
+    expect(
+      (
+        await h.app.handle(
+          jsonRequest("/api/v1/dashboard/store-commission-history/export", {
+            token: employeeToken,
+          }),
+        )
+      ).status,
+    ).toBe(403);
+    await grant(h, adminToken, employeeId, [
+      "stores.commission.history.export",
+    ]);
+    const allowed = await h.app.handle(
+      jsonRequest("/api/v1/dashboard/store-commission-history/export", {
+        token: employeeToken,
+      }),
+    );
+    expect(allowed.status).toBe(200);
+    await revoke(h, adminToken, employeeId, "stores.commission.history.export");
+    expect(
+      (
+        await h.app.handle(
+          jsonRequest("/api/v1/dashboard/store-commission-history/export", {
+            token: employeeToken,
+          }),
+        )
+      ).status,
+    ).toBe(403);
+  });
+
+  test("successful export writes one append-only audit row", async () => {
+    await h.client`
+      delete from audit_logs
+      where actor_account_id = ${adminAccountId}
+        and event_type = 'DASHBOARD_EXPORT'`;
+    const denied = await h.app.handle(
+      jsonRequest("/api/v1/dashboard/stores/export", { token: employeeToken }),
+    );
+    expect(denied.status).toBe(403);
+    const before = await h.client<{ count: string }[]>`
+      select count(*)::text as count from audit_logs
+      where actor_account_id = ${adminAccountId} and event_type = 'DASHBOARD_EXPORT'`;
+    expect(Number(before[0]?.count)).toBe(0);
+    const exported = await h.app.handle(
+      jsonRequest("/api/v1/dashboard/stores/export", { token: adminToken }),
+    );
+    expect(exported.status).toBe(200);
+    const rows = await h.client<
+      {
+        actor_account_id: string;
+        target_type: string;
+        outcome: string;
+        resource: string;
+        endpoint: string;
+        export_type: string;
+        permission: string;
+        filename: string;
+        row_count: number;
+        scope: string;
+        city_id: string;
+      }[]
+    >`select actor_account_id::text, target_type, outcome::text,
+             redacted_metadata->>'resource' as resource,
+             redacted_metadata->>'endpoint' as endpoint,
+             redacted_metadata->>'exportType' as export_type,
+             redacted_metadata->>'permission' as permission,
+             redacted_metadata->>'filename' as filename,
+             (redacted_metadata->>'rowCount')::int as row_count,
+             redacted_metadata->>'scope' as scope,
+             redacted_metadata->>'cityId' as city_id
+      from audit_logs
+      where actor_account_id = ${adminAccountId}
+        and event_type = 'DASHBOARD_EXPORT'
+      order by occurred_at desc`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.target_type).toBe("stores");
+    expect(rows[0]?.outcome).toBe("SUCCESS");
+    expect(rows[0]?.actor_account_id).toBe(adminAccountId);
+    expect(rows[0]?.resource).toBe("stores");
+    expect(rows[0]?.endpoint).toBe("/api/v1/dashboard/stores/export");
+    expect(rows[0]?.export_type).toBe("xlsx");
+    expect(rows[0]?.permission).toBe("stores.export");
+    expect(rows[0]?.filename).toBe("stores.xlsx");
+    expect(rows[0]?.row_count).toBe(
+      xlsxRowCount(new Uint8Array(await exported.arrayBuffer())),
+    );
+    expect(rows[0]?.scope).toBe("CITY");
+    expect(rows[0]?.city_id).toBe(cityA);
+  });
+
+  test("list and export share filters across dashboard resources", async () => {
+    const cases = [
+      {
+        list: "/api/v1/dashboard/stores?search=evil&limit=1",
+        exp: "/api/v1/dashboard/stores/export?search=evil",
+        token: adminToken,
+      },
+      {
+        list: "/api/v1/dashboard/stores?status=ACTIVE&limit=1",
+        exp: "/api/v1/dashboard/stores/export?status=ACTIVE",
+        token: adminToken,
+      },
+      {
+        list: "/api/v1/dashboard/store-commissions?status=ACTIVE&limit=1",
+        exp: "/api/v1/dashboard/store-commissions/export?status=ACTIVE",
+        token: adminToken,
+      },
+      {
+        list: "/api/v1/dashboard/zones?limit=1",
+        exp: "/api/v1/dashboard/zones/export",
+        token: adminToken,
+      },
+      {
+        list: "/api/v1/dashboard/orders?limit=1",
+        exp: "/api/v1/dashboard/orders/export",
+        token: adminToken,
+      },
+      {
+        list: "/api/v1/dashboard/main-categories?limit=1",
+        exp: "/api/v1/dashboard/main-categories/export",
+        token: adminToken,
+      },
+      {
+        list: "/api/v1/dashboard/governorates?status=ACTIVE&limit=1",
+        exp: "/api/v1/dashboard/governorates/export?status=ACTIVE",
+        token: superToken,
+      },
+      {
+        list: `/api/v1/dashboard/cities?status=ACTIVE&limit=1`,
+        exp: "/api/v1/dashboard/cities/export?status=ACTIVE",
+        token: superToken,
+      },
+    ];
+    for (const item of cases) {
+      const listed = await h.app.handle(
+        jsonRequest(item.list, { token: item.token }),
+      );
+      expect(listed.status).toBe(200);
+      const total = ((await listed.json()) as { total: number }).total;
+      const exported = await h.app.handle(
+        jsonRequest(item.exp, { token: item.token }),
+      );
+      expect(exported.status).toBe(200);
+      const bytes = new Uint8Array(await exported.arrayBuffer());
+      expect(reopenExcelWorkbook(bytes).dataRowCount).toBe(total);
+    }
+  });
+
+  test("create order races with commission update without mixed snapshots", async () => {
+    await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/store-commissions/${storeId}`, {
+        method: "PATCH",
+        token: adminToken,
+        headers: { "Idempotency-Key": crypto.randomUUID() },
+        body: { platformCommissionRate: 12, reason: "قبل السباق" },
+      }),
+    );
+    const [orderResult, rateResult] = await Promise.allSettled([
+      h.orders.create(customerId, cityA, {
+        storeId,
+        addressId,
+        paymentMethod: "CASH",
+        items: [{ productId, quantity: 1 }],
+        idempotencyKey: crypto.randomUUID(),
+      }),
+      h.app.handle(
+        jsonRequest(`/api/v1/dashboard/store-commissions/${storeId}`, {
+          method: "PATCH",
+          token: adminToken,
+          headers: { "Idempotency-Key": crypto.randomUUID() },
+          body: { platformCommissionRate: 33, reason: "أثناء السباق" },
+        }),
+      ),
+    ]);
+    expect(orderResult.status).toBe("fulfilled");
+    expect(rateResult.status).toBe("fulfilled");
+    if (rateResult.status === "fulfilled")
+      expect(rateResult.value.status).toBe(200);
+    if (orderResult.status !== "fulfilled") throw new Error("order failed");
+    const snapshot = await snapshotOf(h, orderResult.value.id);
+    expect([12, 33]).toContain(snapshot);
+    const [storeRate] = await h.client<{ platform_commission_rate: number }[]>`
+      select platform_commission_rate from stores where id = ${storeId}`;
+    expect([12, 33]).toContain(Number(storeRate?.platform_commission_rate));
+    const history = await h.client<{ previous_rate: number; new_rate: number }[]>`
+      select previous_rate, new_rate from store_commission_rate_history
+      where store_id = ${storeId} order by changed_at asc, id asc`;
+    for (const row of history) {
+      expect(Number(row.previous_rate)).toBeGreaterThanOrEqual(0);
+      expect(Number(row.new_rate)).toBeLessThanOrEqual(100);
+    }
+    const later = await snapshotOf(h, orderResult.value.id);
+    expect(later).toBe(snapshot);
+    const [item] = await h.client<{ id: string }[]>`
+      select id::text from order_items where order_id = ${orderResult.value.id} limit 1`;
+    const itemId = item!.id;
+    const mutated = await h.app.handle(
+      jsonRequest(
+        `/api/v1/dashboard/orders/${orderResult.value.id}/items/${itemId}/quantity`,
+        {
+          method: "POST",
+          token: adminToken,
+          headers: { "Idempotency-Key": crypto.randomUUID() },
+          body: { quantity: 2, reason: "تعديل كمية" },
+        },
+      ),
+    );
+    expect(mutated.status).toBe(200);
+    expect(await snapshotOf(h, orderResult.value.id)).toBe(snapshot);
+  });
+
+  test("export permission matrix, city isolation, and no generic endpoint", async () => {
+    const cityCases = [
+      {
+        path: "/api/v1/dashboard/zones/export",
+        read: "zones.read",
+        exp: "zones.export",
+      },
+      {
+        path: "/api/v1/dashboard/stores/export",
+        read: "stores.read",
+        exp: "stores.export",
+      },
+      {
+        path: "/api/v1/dashboard/orders/export",
+        read: "orders.read",
+        exp: "orders.export",
+      },
+      {
+        path: "/api/v1/dashboard/main-categories/export",
+        read: "main_categories.read",
+        exp: "main_categories.export",
+      },
+    ];
+    for (const item of cityCases) {
+      await revoke(h, adminToken, employeeId, item.read).catch(() => undefined);
+      await revoke(h, adminToken, employeeId, item.exp).catch(() => undefined);
+      await grant(h, adminToken, employeeId, [item.read]);
+      expect(
+        (
+          await h.app.handle(
+            jsonRequest(item.path, { token: employeeToken }),
+          )
+        ).status,
+      ).toBe(403);
+      await revoke(h, adminToken, employeeId, item.read);
+      await grant(h, adminToken, employeeId, [item.exp]);
+      expect(
+        (
+          await h.app.handle(
+            jsonRequest(item.path, { token: employeeToken }),
+          )
+        ).status,
+      ).toBe(403);
+      await grant(h, adminToken, employeeId, [item.read, item.exp]);
+      expect(
+        (
+          await h.app.handle(
+            jsonRequest(item.path, { token: employeeToken }),
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await h.app.handle(jsonRequest(item.path, { token: superToken }))
+        ).status,
+      ).toBe(403);
+      await revoke(h, adminToken, employeeId, item.exp);
+      expect(
+        (
+          await h.app.handle(
+            jsonRequest(item.path, { token: employeeToken }),
+          )
+        ).status,
+      ).toBe(403);
+    }
+    expect(
+      (
+        await h.app.handle(
+          jsonRequest("/api/v1/dashboard/stores/export", {
+            token: adminBToken,
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await h.app.handle(
+          jsonRequest("/api/v1/dashboard/export?table=orders", {
+            token: adminToken,
+          }),
+        )
+      ).status,
+    ).toBe(404);
   });
 });
 

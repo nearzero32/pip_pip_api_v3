@@ -26,6 +26,7 @@ export const GRANTABLE_PERMISSION_CODES = [
   "stores.commission.read",
   "stores.commission.update",
   "stores.commission.export",
+  "stores.commission.history.export",
   "store_categories.read",
   "store_categories.create",
   "store_categories.update",
@@ -76,6 +77,27 @@ const grantableSet = new Set<string>(GRANTABLE_PERMISSION_CODES);
 export const isGrantablePermissionCode = (
   value: string,
 ): value is GrantablePermissionCode => grantableSet.has(value);
+
+/**
+ * Global Excel-export catalog codes. Not grantable to city employees.
+ * SUPER_ADMIN does not receive account_permission_grants; endpoints still
+ * require the matching export code via requireSuperAdminExport so read ≠ export.
+ */
+export const SUPER_ADMIN_EXPORT_PERMISSION_CODES = [
+  "governorates.export",
+  "cities.export",
+  "admins.export",
+  "delivery_pricing.versions.export",
+] as const;
+
+export type SuperAdminExportPermissionCode =
+  (typeof SUPER_ADMIN_EXPORT_PERMISSION_CODES)[number];
+
+const superAdminExportSet = new Set<string>(SUPER_ADMIN_EXPORT_PERMISSION_CODES);
+
+export const isSuperAdminExportPermissionCode = (
+  value: string,
+): value is SuperAdminExportPermissionCode => superAdminExportSet.has(value);
 
 export const EMPLOYEE_ROLE_CODES = [
   "OPERATIONS",

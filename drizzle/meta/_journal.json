@@ -267,6 +267,13 @@
       "when": 1786477000000,
       "tag": "0037_store_commission_and_dashboard_export",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786479000000,
+      "tag": "0038_export_permission_closure",
+      "breakpoints": true
     }
   ]
 }

@@ -102,14 +102,18 @@ describe("PostgreSQL identity foundation", () => {
           >`select count(*)::text as count from permissions`
         )[0]?.count,
       ),
-    ).toBe(68);
+    ).toBe(73);
     const permissionCodes = await client<
       { code: string }[]
     >`select code from permissions order by code`;
     expect(permissionCodes.map((row) => row.code)).toEqual([
+      "admins.export",
+      "cities.export",
       "city_driver_pricing.manage",
       "city_driver_pricing.read",
+      "delivery_pricing.versions.export",
       "drivers.export",
+      "governorates.export",
       "main_categories.archive",
       "main_categories.create",
       "main_categories.export",
@@ -159,6 +163,7 @@ describe("PostgreSQL identity foundation", () => {
       "store_categories.update",
       "stores.archive",
       "stores.commission.export",
+      "stores.commission.history.export",
       "stores.commission.read",
       "stores.commission.update",
       "stores.create",

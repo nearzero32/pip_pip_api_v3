@@ -3,7 +3,9 @@ import { AppError } from "../../../errors/app-error";
 import type { AuthIdentity } from "../sessions/session-service";
 import {
   isGrantablePermissionCode,
+  isSuperAdminExportPermissionCode,
   type GrantablePermissionCode,
+  type SuperAdminExportPermissionCode,
 } from "./permissions";
 
 export const requireSuperAdmin = (identity: AuthIdentity): void => {
@@ -63,6 +65,26 @@ export const requireCityPermission = async (
     limit 1`;
   if (!grant) throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
   return identity.cityId;
+};
+
+/**
+ * Global export gate. SUPER_ADMIN is authorized by role (grants are not used
+ * for SUPER_ADMIN), but the caller must pass a dedicated export permission —
+ * listing/reading the same resource via requireSuperAdmin is not sufficient.
+ */
+export const requireSuperAdminExport = async (
+  client: SQL,
+  identity: AuthIdentity,
+  permission: SuperAdminExportPermissionCode,
+): Promise<void> => {
+  requireSuperAdmin(identity);
+  if (!isSuperAdminExportPermissionCode(permission))
+    throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
+  const [row] = await client<{ id: string }[]>`
+    select id::text from permissions
+    where code = ${permission} and status = 'ACTIVE'
+    limit 1`;
+  if (!row) throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
 };
 
 /** Export requires the matching read permission plus a dedicated export grant. ADMIN bypasses both. */

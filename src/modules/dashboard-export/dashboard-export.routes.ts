@@ -25,11 +25,11 @@ export const dashboardExportRoutes = (
   return new Elysia({ name: "dashboard-export-routes" })
     .get("/api/v1/dashboard/governorates/export", async ({ request, set, query }) =>
       service.governorates(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { detail: detail("Export governorates", "SUPER_ADMIN only. Same filters as the governorates list.") },
+      { detail: detail("Export governorates", "SUPER_ADMIN plus governorates.export. Same filters as the governorates list.") },
     )
     .get("/api/v1/dashboard/cities/export", async ({ request, set, query }) =>
       service.cities(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { detail: detail("Export cities", "SUPER_ADMIN only. Same filters as the cities list.") },
+      { detail: detail("Export cities", "SUPER_ADMIN plus cities.export. Same filters as the cities list.") },
     )
     .get("/api/v1/dashboard/zones/export", async ({ request, set, query }) =>
       service.zones(await identityOf(request, set), query as Query, requestIdOf(set)),
@@ -45,7 +45,7 @@ export const dashboardExportRoutes = (
     )
     .get("/api/v1/dashboard/store-commission-history/export", async ({ request, set, query }) =>
       service.storeCommissionHistory(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { detail: detail("Export store commission history", "Requires stores.commission.read and stores.commission.export.") },
+      { detail: detail("Export store commission history", "Requires stores.commission.read and stores.commission.history.export.") },
     )
     .get("/api/v1/dashboard/main-categories/export", async ({ request, set, query }) =>
       service.mainCategories(await identityOf(request, set), query as Query, requestIdOf(set)),
@@ -113,10 +113,10 @@ export const dashboardExportRoutes = (
     )
     .get("/api/v1/dashboard/admins/export", async ({ request, set }) =>
       service.admins(await identityOf(request, set), requestIdOf(set)),
-      { detail: detail("Export city admins", "SUPER_ADMIN only.") },
+      { detail: detail("Export city admins", "SUPER_ADMIN plus admins.export.") },
     )
     .get("/api/v1/dashboard/cities/:cityId/delivery-pricing/versions/export", async ({ request, set, params }) =>
       service.deliveryPricingVersions(await identityOf(request, set), params.cityId, requestIdOf(set)),
-      { detail: detail("Export delivery pricing versions", "SUPER_ADMIN only.") },
+      { detail: detail("Export delivery pricing versions", "SUPER_ADMIN plus delivery_pricing.versions.export.") },
     );
 };

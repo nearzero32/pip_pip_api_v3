@@ -16,6 +16,12 @@ import {
   lockCityGeography,
 } from "../geography/geography-locks";
 import { dateValue, pageOf } from "../geography/shared";
+import {
+  parseOptionalSearch,
+  parseOptionalUuid,
+  parseStoreStatusFilter,
+  STORE_LIST_WHERE_SQL,
+} from "./store-list-filters";
 import { parseCoordinate } from "../geography/zone/geometry";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
@@ -663,37 +669,23 @@ export class StoreService {
     const cityId = await this.authorize(identity, "stores.read");
     const { page, limit } = pageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = input.search?.trim() || null;
-    const status = input.status?.trim() || null;
-    const mainCategoryId = input.mainCategoryId?.trim() || null;
-    if (
-      status &&
-      !["DRAFT", "ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)
-    ) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
+    const search = parseOptionalSearch(input.search);
+    const status = parseStoreStatusFilter(input.status);
+    const mainCategoryId = parseOptionalUuid(input.mainCategoryId);
     const rows = (await this.client.unsafe(
       `select ${STORE_SELECT}
        from stores s
        join main_categories mc on mc.id = s.main_category_id and mc.city_id = s.city_id
        left join media_assets logo on logo.id = s.logo_asset_id
        left join media_assets cover on cover.id = s.cover_asset_id
-       where s.city_id = $1::uuid
-         and ($2::text is null or s.status = $2::store_status)
-         and ($2::text is not null or s.status <> 'ARCHIVED')
-         and ($3::uuid is null or s.main_category_id = $3::uuid)
-         and ($4::text is null or s.name ilike ('%' || $4 || '%'))
+       where ${STORE_LIST_WHERE_SQL}
        order by s.display_order asc, s.created_at asc, s.id asc
        limit $5::int offset $6::int`,
       [cityId, status, mainCategoryId, search, limit, offset],
     )) as StoreRow[];
     const [count] = (await this.client.unsafe(
       `select count(*)::text as total from stores s
-       where s.city_id = $1::uuid
-         and ($2::text is null or s.status = $2::store_status)
-         and ($2::text is not null or s.status <> 'ARCHIVED')
-         and ($3::uuid is null or s.main_category_id = $3::uuid)
-         and ($4::text is null or s.name ilike ('%' || $4 || '%'))`,
+       where ${STORE_LIST_WHERE_SQL}`,
       [cityId, status, mainCategoryId, search],
     )) as { total: string }[];
 

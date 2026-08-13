@@ -1,3 +1,4 @@
+const LEADING_CONTROL = /^[\u0009\u000d\u000a\u0020\u00a0]+/;
 const FORMULA_PREFIX = /^[=+\-@]/;
 
 const CRC_TABLE = (() => {
@@ -105,8 +106,47 @@ const zipStore = (files: { name: string; data: Uint8Array }[]): Uint8Array => {
 
 export const sanitizeExcelText = (value: string): string => {
   const text = value.replace(/\r\n|\r|\n/g, " ");
-  if (FORMULA_PREFIX.test(text) || text.startsWith("\t")) return `'${text}`;
+  const significant = text.replace(LEADING_CONTROL, "");
+  if (FORMULA_PREFIX.test(significant) || text.startsWith("\t"))
+    return `'${text}`;
   return text;
+};
+
+export const readZipStoreFiles = (
+  bytes: Uint8Array,
+): Record<string, Uint8Array> => {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const files: Record<string, Uint8Array> = {};
+  const decoder = new TextDecoder();
+  let offset = 0;
+  while (offset + 30 <= bytes.length) {
+    if (view.getUint32(offset, true) !== 0x04034b50) break;
+    const method = view.getUint16(offset + 8, true);
+    const size = view.getUint32(offset + 18, true);
+    const nameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
+    const nameStart = offset + 30;
+    const name = decoder.decode(bytes.subarray(nameStart, nameStart + nameLen));
+    const dataStart = nameStart + nameLen + extraLen;
+    if (method !== 0)
+      throw new Error("compressed workbook parts are not supported");
+    files[name] = bytes.subarray(dataStart, dataStart + size);
+    offset = dataStart + size;
+  }
+  return files;
+};
+
+export const reopenExcelWorkbook = (bytes: Uint8Array) => {
+  const files = readZipStoreFiles(bytes);
+  const sheet = files["xl/worksheets/sheet1.xml"];
+  const workbook = files["xl/workbook.xml"];
+  if (!sheet || !workbook) throw new Error("invalid Excel workbook");
+  const sheetXml = new TextDecoder().decode(sheet);
+  return {
+    files,
+    sheetXml,
+    dataRowCount: Math.max(0, (sheetXml.match(/<row r="/g) ?? []).length - 1),
+  };
 };
 
 export const percentFromInteger = (rate: number): number => rate / 100;

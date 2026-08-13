@@ -10,6 +10,11 @@ import {
   requireOrderIdempotencyKey,
 } from "../orders/order-command-idempotency";
 import { dateValue, pageOf } from "../geography/shared";
+import {
+  COMMISSION_STORE_WHERE_SQL,
+  parseOptionalSearch,
+  parseStoreStatusFilter,
+} from "./store-list-filters";
 
 const STORE_COMMISSION_UPDATE_SCOPE = "v1:stores.commission.update";
 
@@ -98,15 +103,10 @@ export class StoreCommissionService {
     search?: string;
     status?: string;
   }) {
-    const search = input.search?.trim() || null;
-    const status = input.status?.trim() || null;
-    if (
-      status &&
-      !["DRAFT", "ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)
-    ) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
-    return { search, status };
+    return {
+      search: parseOptionalSearch(input.search),
+      status: parseStoreStatusFilter(input.status),
+    };
   }
 
   async list(
@@ -129,10 +129,7 @@ export class StoreCommissionService {
     const rows = (await this.client.unsafe(
       `select ${COMMISSION_SELECT}
        ${COMMISSION_FROM}
-       where s.city_id = $1::uuid
-         and ($2::text is null or s.status = $2::store_status)
-         and ($2::text is not null or s.status <> 'ARCHIVED')
-         and ($3::text is null or s.name ilike ('%' || $3 || '%'))
+       where ${COMMISSION_STORE_WHERE_SQL}
        order by s.display_order asc, s.created_at asc, s.id asc
        limit $4::int offset $5::int`,
       [cityId, status, search, limit, offset],
@@ -140,10 +137,7 @@ export class StoreCommissionService {
     const [count] = (await this.client.unsafe(
       `select count(*)::text as total
        from stores s
-       where s.city_id = $1::uuid
-         and ($2::text is null or s.status = $2::store_status)
-         and ($2::text is not null or s.status <> 'ARCHIVED')
-         and ($3::text is null or s.name ilike ('%' || $3 || '%'))`,
+       where ${COMMISSION_STORE_WHERE_SQL}`,
       [cityId, status, search],
     )) as { total: string }[];
     return {
