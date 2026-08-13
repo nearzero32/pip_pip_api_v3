@@ -39,6 +39,10 @@ import type { CityDriverPricingService } from "./modules/driver-offers/city-driv
 import type { OfferService } from "./modules/driver-offers/offer.service";
 import type { DriverRuntimeStoreLike } from "./modules/driver-offers/driver-runtime";
 import { driverOfferRoutes } from "./modules/driver-offers/driver-offer.routes";
+import type { StoreCommissionService } from "./modules/stores/store-commission.service";
+import { storeCommissionRoutes } from "./modules/stores/store-commission.routes";
+import type { DashboardExportService } from "./modules/dashboard-export/dashboard-export.service";
+import { dashboardExportRoutes } from "./modules/dashboard-export/dashboard-export.routes";
 
 export interface AppDependencies extends HealthDependencies {
   logger: Logger;
@@ -60,6 +64,8 @@ export interface AppDependencies extends HealthDependencies {
   orderOpsService?: OrderOpsService;
   cityDriverPricingService?: CityDriverPricingService;
   offerService?: OfferService;
+  storeCommissionService?: StoreCommissionService;
+  dashboardExportService?: DashboardExportService;
   driverRuntime?: DriverRuntimeStoreLike;
   /** Durable outbox enqueue before clearing Redis on driver logout. */
   scheduleDriverRuntimeSync?: (driverId: string) => Promise<void>;
@@ -150,6 +156,22 @@ export function createApp(dependencies: AppDependencies) {
       });
     })
     .use(healthRoutes(dependencies))
+    .use(
+      (dependencies.authModule && dependencies.dashboardExportService
+        ? dashboardExportRoutes(
+            dependencies.authModule,
+            dependencies.dashboardExportService,
+          )
+        : new Elysia()) as unknown as Parameters<Elysia["use"]>[0],
+    )
+    .use(
+      (dependencies.authModule && dependencies.storeCommissionService
+        ? storeCommissionRoutes(
+            dependencies.authModule,
+            dependencies.storeCommissionService,
+          )
+        : new Elysia()) as unknown as Parameters<Elysia["use"]>[0],
+    )
     .use(dependencies.authModule && dependencies.deliveryPricingService ? deliveryPricingRoutes(dependencies.authModule, dependencies.deliveryPricingService) : new Elysia())
     .use(
       dependencies.authModule && dependencies.orderService

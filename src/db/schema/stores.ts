@@ -57,6 +57,9 @@ export const stores = pgTable(
       .notNull()
       .default("ACCEPTING"),
     displayOrder: integer("display_order").notNull().default(0),
+    platformCommissionRate: integer("platform_commission_rate")
+      .notNull()
+      .default(0),
     createdByAccountId: uuid("created_by_account_id")
       .notNull()
       .references(() => accounts.id),
@@ -117,6 +120,10 @@ export const stores = pgTable(
     check(
       "stores_logo_cover_distinct_chk",
       sql`${table.coverAssetId} is null or ${table.logoAssetId} is null or ${table.coverAssetId} <> ${table.logoAssetId}`,
+    ),
+    check(
+      "stores_platform_commission_rate_chk",
+      sql`${table.platformCommissionRate} >= 0 and ${table.platformCommissionRate} <= 100`,
     ),
   ],
 );
@@ -319,6 +326,56 @@ export const storeCategories = pgTable(
     check(
       "store_categories_no_self_parent_chk",
       sql`${table.parentCategoryId} is null or ${table.parentCategoryId} <> ${table.id}`,
+    ),
+  ],
+);
+
+/** Append-only platform commission rate changes. No update/delete API. */
+export const storeCommissionRateHistory = pgTable(
+  "store_commission_rate_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storeId: uuid("store_id").notNull(),
+    cityId: uuid("city_id")
+      .notNull()
+      .references(() => cities.id),
+    previousRate: integer("previous_rate").notNull(),
+    newRate: integer("new_rate").notNull(),
+    reason: text("reason").notNull(),
+    note: text("note"),
+    changedByAccountId: uuid("changed_by_account_id")
+      .notNull()
+      .references(() => accounts.id),
+    changedAt: instant("changed_at").notNull().defaultNow(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "store_commission_rate_history_store_city_fk",
+      columns: [table.storeId, table.cityId],
+      foreignColumns: [stores.id, stores.cityId],
+    }),
+    index("store_commission_history_store_changed_idx").on(
+      table.storeId,
+      table.changedAt,
+      table.id,
+    ),
+    index("store_commission_history_city_changed_idx").on(
+      table.cityId,
+      table.changedAt,
+      table.id,
+    ),
+    check(
+      "store_commission_history_previous_rate_chk",
+      sql`${table.previousRate} >= 0 and ${table.previousRate} <= 100`,
+    ),
+    check(
+      "store_commission_history_new_rate_chk",
+      sql`${table.newRate} >= 0 and ${table.newRate} <= 100`,
+    ),
+    check(
+      "store_commission_history_reason_chk",
+      sql`length(btrim(${table.reason})) > 0`,
     ),
   ],
 );

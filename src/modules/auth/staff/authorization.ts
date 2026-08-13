@@ -64,3 +64,14 @@ export const requireCityPermission = async (
   if (!grant) throw new AppError(403, "FORBIDDEN", "Insufficient privileges");
   return identity.cityId;
 };
+
+/** Export requires the matching read permission plus a dedicated export grant. ADMIN bypasses both. */
+export const requireCityReadAndExport = async (
+  client: SQL,
+  identity: AuthIdentity,
+  readPermission: GrantablePermissionCode | string,
+  exportPermission: GrantablePermissionCode | string,
+): Promise<string> => {
+  await requireCityPermission(client, identity, readPermission);
+  return requireCityPermission(client, identity, exportPermission);
+};

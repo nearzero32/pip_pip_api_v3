@@ -67,6 +67,7 @@ export interface AppConfig extends DatabaseConfig, MediaConfig {
   driverRuntimeDegradedTtlMs: number;
   driverRuntimeDegradedMaxEntries: number;
   driverRuntimeHydrateAdvisoryLockTimeoutMs: number;
+  dashboardExportMaxRows: number;
 }
 
 export class ConfigurationError extends Error {
@@ -241,6 +242,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     driverRuntimeDegradedTtlMs: integerWithDefault(env, "DRIVER_RUNTIME_DEGRADED_TTL_MS", 2_000, 100, 60_000),
     driverRuntimeDegradedMaxEntries: integerWithDefault(env, "DRIVER_RUNTIME_DEGRADED_MAX_ENTRIES", 2_000, 10, 100_000),
     driverRuntimeHydrateAdvisoryLockTimeoutMs: integerWithDefault(env, "DRIVER_RUNTIME_HYDRATE_ADVISORY_LOCK_TIMEOUT_MS", 2_000, 50, 30_000),
+    dashboardExportMaxRows: integerWithDefault(env, "DASHBOARD_EXPORT_MAX_ROWS", 10_000, 1, 100_000),
     ...loadMediaConfig(env),
   };
 }

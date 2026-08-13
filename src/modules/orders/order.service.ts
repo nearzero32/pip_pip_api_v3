@@ -528,6 +528,13 @@ export class OrderService {
       deliveryFee: Number(row.delivery_fee),
       total: Number(row.total),
       currency: "IQD" as const,
+      ...(row.store_commission_rate_snapshot == null
+        ? {}
+        : {
+            storeCommissionRateSnapshot: Number(
+              row.store_commission_rate_snapshot,
+            ),
+          }),
       version: Number(row.version),
       statusChangedAt: dateValue(row.status_changed_at)!,
       deliveredAt: dateValue(row.delivered_at),
@@ -896,16 +903,27 @@ export class OrderService {
 
       const [numberRow] = await tx<{ n: string }[]>`
         select 'PP' || lpad(nextval('orders_public_number_seq')::text, 8, '0') as n`;
+      const [storeRate] = await tx<{ platform_commission_rate: number }[]>`
+        select platform_commission_rate
+        from stores
+        where id = ${input.storeId} and city_id = ${cityId}
+        for share`;
+      if (!storeRate)
+        throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
+      const storeCommissionRateSnapshot = Number(
+        storeRate.platform_commission_rate,
+      );
       const now = new Date();
       const [order] = await tx<Record<string, unknown>[]>`
         insert into orders(
           order_number, city_id, zone_id, store_id, customer_account_id, status,
           payment_method, payment_status, products_subtotal, delivery_fee, total,
-          currency, version, status_changed_at, created_at, updated_at
+          currency, store_commission_rate_snapshot, version, status_changed_at, created_at, updated_at
         ) values (
           ${numberRow!.n}, ${cityId}, ${zone.id}, ${input.storeId}, ${customerAccountId},
           'PENDING_STORE_APPROVAL', ${input.paymentMethod}, ${paymentStatus},
-          ${productsSubtotal}, ${deliveryFee}, ${total}, 'IQD', 1, ${now}, ${now}, ${now}
+          ${productsSubtotal}, ${deliveryFee}, ${total}, 'IQD', ${storeCommissionRateSnapshot},
+          1, ${now}, ${now}, ${now}
         )
         returning id::text, order_number, city_id::text, zone_id::text, store_id::text,
                   customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
@@ -1102,7 +1120,7 @@ export class OrderService {
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
              customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
-             version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
+             store_commission_rate_snapshot, version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders
       where city_id = ${cityId}
       order by created_at desc, id desc
@@ -1125,7 +1143,7 @@ export class OrderService {
       select id::text, order_number, city_id::text, zone_id::text, store_id::text,
              customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
              payment_status::text, products_subtotal, delivery_fee, total, currency,
-             store_ready_marked_at, version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
+             store_commission_rate_snapshot, store_ready_marked_at, version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
       from orders where id = ${orderId} and city_id = ${cityId}`;
     if (!row) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
     const [address] = await this.client<Record<string, unknown>[]>`

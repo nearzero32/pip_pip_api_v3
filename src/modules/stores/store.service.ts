@@ -515,6 +515,7 @@ export class StoreService {
       "isAcceptingOrders",
       "nextOpeningAt",
       "nextClosingAt",
+      "platformCommissionRate",
     ]) {
       if (forbidden in input) {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
@@ -731,6 +732,7 @@ export class StoreService {
       "isAcceptingOrders",
       "nextOpeningAt",
       "nextClosingAt",
+      "platformCommissionRate",
     ]) {
       if (forbidden in input) {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");

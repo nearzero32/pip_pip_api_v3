@@ -27,6 +27,8 @@ import { OrderOpsService } from "./modules/orders/order-ops.service";
 import { CityDriverPricingService } from "./modules/driver-offers/city-driver-pricing.service";
 import { DriverRuntimeStore } from "./modules/driver-offers/driver-runtime";
 import { OfferService } from "./modules/driver-offers/offer.service";
+import { StoreCommissionService } from "./modules/stores/store-commission.service";
+import { DashboardExportService } from "./modules/dashboard-export/dashboard-export.service";
 import { loadOfferLimits } from "./modules/driver-offers/offer-limits";
 import {
   loadRedisReconConfig,
@@ -125,6 +127,11 @@ const offerService = new OfferService(
   config.nodeEnv,
   offerLimits,
 );
+const storeCommissionService = new StoreCommissionService(database.client);
+const dashboardExportService = new DashboardExportService(
+  database.client,
+  config.dashboardExportMaxRows,
+);
 const mediaCleanup = new MediaCleanupWorker(database.client, mediaStorage, config, logger);
 mediaCleanup.start();
 const redisRecon = new RedisReconciliationWorker(
@@ -164,6 +171,8 @@ const app = createApp({
   orderOpsService,
   cityDriverPricingService,
   offerService,
+  storeCommissionService,
+  dashboardExportService,
   driverRuntime: driverRuntimeStore,
   scheduleDriverRuntimeSync: async (driverId: string) => {
     await scheduleDriverRuntimeSync(database.client, driverId);

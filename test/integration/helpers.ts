@@ -34,6 +34,8 @@ import {
 import { OfferService } from "../../src/modules/driver-offers/offer.service";
 import { DEFAULT_OFFER_LIMITS } from "../../src/modules/driver-offers/offer-limits";
 import { StoreService } from "../../src/modules/stores/store.service";
+import { StoreCommissionService } from "../../src/modules/stores/store-commission.service";
+import { DashboardExportService } from "../../src/modules/dashboard-export/dashboard-export.service";
 import { silentLogger } from "../../src/observability/logger";
 import { decodeBase64Url } from "../../src/modules/auth/shared/encoding";
 
@@ -100,6 +102,7 @@ export const integrationConfig: AppConfig = {
   driverRuntimeDegradedTtlMs: 2_000,
   driverRuntimeDegradedMaxEntries: 2_000,
   driverRuntimeHydrateAdvisoryLockTimeoutMs: 2_000,
+  dashboardExportMaxRows: 10_000,
 };
 
 export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";
@@ -257,6 +260,11 @@ export async function createIntegrationHarness(options?: {
   const mainCategories = new MainCategoryService(client, media, mediaConfig);
   const subcategories = new SubcategoryService(client, media, mediaConfig);
   const stores = new StoreService(client, media, mediaConfig);
+  const storeCommissions = new StoreCommissionService(client);
+  const dashboardExport = new DashboardExportService(
+    client,
+    integrationConfig.dashboardExportMaxRows,
+  );
   const storeCategories = new StoreCategoryService(client);
   const products = new ProductService(client, media, mediaConfig);
   const modifiers = new ModifierService(client);
@@ -313,6 +321,8 @@ export async function createIntegrationHarness(options?: {
     orderOpsService: orderOps,
     cityDriverPricingService: cityDriverPricing,
     offerService: offers,
+    storeCommissionService: storeCommissions,
+    dashboardExportService: dashboardExport,
     driverRuntime,
   });
   const result: IntegrationHarness & {

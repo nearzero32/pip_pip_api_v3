@@ -102,6 +102,7 @@ describe("configuration", () => {
       driverRuntimeDegradedTtlMs: 2000,
       driverRuntimeDegradedMaxEntries: 2000,
       driverRuntimeHydrateAdvisoryLockTimeoutMs: 2000,
+      dashboardExportMaxRows: 10000,
       r2Endpoint: "https://acct.r2.cloudflarestorage.com",
       r2Bucket: "bucket",
       r2AccessKeyId: "key",
@@ -127,6 +128,8 @@ describe("configuration", () => {
     ["PORT", "not-a-number"],
     ["DATABASE_POOL_SIZE", "0"],
     ["DATABASE_CONNECTION_TIMEOUT_MS", "99"],
+    ["DASHBOARD_EXPORT_MAX_ROWS", "0"],
+    ["DASHBOARD_EXPORT_MAX_ROWS", "100001"],
   ])("rejects invalid %s", (name, value) => {
     expect(() => loadConfig({ ...validEnv, [name]: value })).toThrow(ConfigurationError);
   });

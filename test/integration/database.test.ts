@@ -81,6 +81,9 @@ describe("PostgreSQL identity foundation", () => {
     `;
     expect(tables.map((row) => row.table_name)).toContain("accounts");
     expect(tables.map((row) => row.table_name)).toContain("audit_logs");
+    expect(tables.map((row) => row.table_name)).toContain(
+      "store_commission_rate_history",
+    );
     const roles = await client<
       { code: string }[]
     >`select code::text as code from roles order by code`;
@@ -99,57 +102,77 @@ describe("PostgreSQL identity foundation", () => {
           >`select count(*)::text as count from permissions`
         )[0]?.count,
       ),
-    ).toBe(48);
+    ).toBe(68);
     const permissionCodes = await client<
       { code: string }[]
     >`select code from permissions order by code`;
     expect(permissionCodes.map((row) => row.code)).toEqual([
       "city_driver_pricing.manage",
       "city_driver_pricing.read",
+      "drivers.export",
       "main_categories.archive",
       "main_categories.create",
+      "main_categories.export",
       "main_categories.read",
       "main_categories.update",
       "media.create",
       "media.delete",
       "media.read",
       "merchants.create",
+      "merchants.export",
       "merchants.read",
       "merchants.update",
       "modifiers.archive",
       "modifiers.create",
+      "modifiers.export",
       "modifiers.read",
       "modifiers.update",
+      "order_offers.export",
       "order_offers.manage",
       "order_offers.read",
       "orders.approve",
       "orders.assign",
+      "orders.assignments.export",
       "orders.cancel",
+      "orders.collections.export",
+      "orders.events.export",
+      "orders.export",
       "orders.handoff.manage",
+      "orders.handoffs.export",
       "orders.items.mutate",
       "orders.items.replace",
       "orders.lifecycle.override",
       "orders.read",
       "orders.reoffer",
       "orders.return.manage",
+      "orders.returns.export",
       "products.archive",
       "products.create",
+      "products.export",
       "products.read",
       "products.update",
+      "staff.export",
       "store_categories.archive",
       "store_categories.create",
+      "store_categories.export",
       "store_categories.read",
       "store_categories.update",
       "stores.archive",
+      "stores.commission.export",
+      "stores.commission.read",
+      "stores.commission.update",
       "stores.create",
+      "stores.export",
       "stores.read",
       "stores.update",
       "subcategories.archive",
       "subcategories.create",
+      "subcategories.export",
       "subcategories.read",
       "subcategories.update",
       "zones.archive",
       "zones.create",
+      "zones.export",
       "zones.read",
       "zones.update",
     ]);

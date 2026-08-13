@@ -58,6 +58,9 @@ export const orders = pgTable(
     deliveryFee: integer("delivery_fee").notNull(),
     total: integer("total").notNull(),
     currency: text("currency").notNull().default("IQD"),
+    storeCommissionRateSnapshot: integer("store_commission_rate_snapshot")
+      .notNull()
+      .default(0),
     lockedDriverFee: integer("locked_driver_fee"),
     storeReadyMarkedAt: instant("store_ready_marked_at"),
     version: integer("version").notNull().default(1),
@@ -115,6 +118,10 @@ export const orders = pgTable(
       sql`${table.total} = ${table.productsSubtotal} + ${table.deliveryFee}`,
     ),
     check("orders_currency_chk", sql`${table.currency} = 'IQD'`),
+    check(
+      "orders_store_commission_rate_snapshot_chk",
+      sql`${table.storeCommissionRateSnapshot} >= 0 and ${table.storeCommissionRateSnapshot} <= 100`,
+    ),
     check("orders_version_positive_chk", sql`${table.version} > 0`),
     check(
       "orders_cancelled_at_chk",
@@ -266,7 +273,9 @@ export const orderCustodyHistory = pgTable(
   "order_custody_history",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orderId: uuid("order_id").notNull().references(() => orders.id),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
     assignmentId: uuid("assignment_id").references(
       () => orderDriverAssignments.id,
     ),
@@ -293,7 +302,9 @@ export const orderEvents = pgTable(
   "order_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orderId: uuid("order_id").notNull().references(() => orders.id),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
     assignmentId: uuid("assignment_id").references(
       () => orderDriverAssignments.id,
     ),
@@ -330,7 +341,9 @@ export const orderItemMutations = pgTable(
   "order_item_mutations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orderId: uuid("order_id").notNull().references(() => orders.id),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
     mutationType: text("mutation_type").notNull(),
     orderItemId: uuid("order_item_id"),
     relatedOrderItemId: uuid("related_order_item_id"),
@@ -382,11 +395,15 @@ export const orderProofs = pgTable(
   "order_proofs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orderId: uuid("order_id").notNull().references(() => orders.id),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
     assignmentId: uuid("assignment_id")
       .notNull()
       .references(() => orderDriverAssignments.id),
-    cityId: uuid("city_id").notNull().references(() => cities.id),
+    cityId: uuid("city_id")
+      .notNull()
+      .references(() => cities.id),
     mediaAssetId: uuid("media_asset_id")
       .notNull()
       .references(() => mediaAssets.id),
@@ -413,8 +430,12 @@ export const orderDriverHandoffs = pgTable(
   "order_driver_handoffs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orderId: uuid("order_id").notNull().references(() => orders.id),
-    cityId: uuid("city_id").notNull().references(() => cities.id),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
+    cityId: uuid("city_id")
+      .notNull()
+      .references(() => cities.id),
     fromAssignmentId: uuid("from_assignment_id")
       .notNull()
       .references(() => orderDriverAssignments.id),
@@ -424,7 +445,9 @@ export const orderDriverHandoffs = pgTable(
     fromDriverId: uuid("from_driver_id")
       .notNull()
       .references(() => accounts.id),
-    toDriverId: uuid("to_driver_id").notNull().references(() => accounts.id),
+    toDriverId: uuid("to_driver_id")
+      .notNull()
+      .references(() => accounts.id),
     status: text("status").notNull().default("PENDING"),
     reason: text("reason").notNull(),
     startedByAccountId: uuid("started_by_account_id")
@@ -467,12 +490,18 @@ export const orderReturnWorkflows = pgTable(
   "order_return_workflows",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orderId: uuid("order_id").notNull().references(() => orders.id),
-    cityId: uuid("city_id").notNull().references(() => cities.id),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id),
+    cityId: uuid("city_id")
+      .notNull()
+      .references(() => cities.id),
     assignmentId: uuid("assignment_id")
       .notNull()
       .references(() => orderDriverAssignments.id),
-    driverId: uuid("driver_id").notNull().references(() => accounts.id),
+    driverId: uuid("driver_id")
+      .notNull()
+      .references(() => accounts.id),
     status: text("status").notNull().default("WAITING_FOR_DRIVER_RETURN"),
     reason: text("reason").notNull(),
     startedByAccountId: uuid("started_by_account_id")
@@ -678,7 +707,10 @@ export const orderCollections = pgTable(
     foreignKey({
       name: "order_collections_assignment_order_fk",
       columns: [table.assignmentId, table.orderId],
-      foreignColumns: [orderDriverAssignments.id, orderDriverAssignments.orderId],
+      foreignColumns: [
+        orderDriverAssignments.id,
+        orderDriverAssignments.orderId,
+      ],
     }),
     foreignKey({
       name: "order_collections_assignment_driver_fk",
