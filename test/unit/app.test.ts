@@ -3,6 +3,7 @@ import { createApp } from "../../src/app";
 import { silentLogger } from "../../src/observability/logger";
 import type { AuthModule } from "../../src/modules/auth/auth-module";
 import { AppError } from "../../src/errors/app-error";
+import { RateLimiterUnavailableError } from "../../src/errors/rate-limiter-unavailable-error";
 import type { GeographyService } from "../../src/modules/geography/service";
 
 function appWith(readinessCheck: () => Promise<void> = async () => undefined) {
@@ -99,6 +100,55 @@ describe("API foundation", () => {
     expect(responseRequestId).not.toBeNull();
     expect(body.request_id).toBe(responseRequestId!);
     expect(JSON.stringify(body)).not.toContain("sensitive database detail");
+  });
+
+  test("maps rate limiter unavailability to 503 without leaking Redis", async () => {
+    const records: Array<{ event?: string; [key: string]: unknown }> = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (record: { event?: string }) => {
+        records.push(record);
+      },
+      error: () => undefined,
+    };
+    const dashboard = new Proxy(
+      {
+        login: async () => {
+          throw new RateLimiterUnavailableError("consume", "CONNECTION_CLOSED");
+        },
+      },
+      { get: (target, property) => Reflect.get(target, property) ?? (async () => ({})) },
+    );
+    const app = createApp({
+      logger,
+      production: true,
+      readinessCheck: async () => undefined,
+      authModule: fakeModule({ dashboard } as unknown as Partial<AuthModule>),
+    });
+    const response = await app.handle(
+      new Request("http://localhost/api/v1/dashboard/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "staff@example.com",
+          password: "a sufficiently long password",
+          device_name: "browser",
+        }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    const body = (await response.json()) as {
+      error: { code: string; message: string };
+      retryable?: boolean;
+    };
+    expect(body.error).toEqual({
+      code: "RATE_LIMITER_UNAVAILABLE",
+      message: "Authentication service is temporarily unavailable",
+    });
+    expect(body.retryable).toBeTrue();
+    expect(JSON.stringify(body)).not.toMatch(/redis|6379|localhost/i);
+    expect(records.some((record) => record.event === "rate_limiter_unavailable")).toBeTrue();
   });
 
   test("publishes the raw OpenAPI document", async () => {
@@ -427,10 +477,16 @@ describe("API foundation", () => {
     }
     expect(document.paths["/api/v1/mobile/customer/auth/otp/request"]?.post?.requestBody).toBeDefined();
     expect(document.paths["/api/v1/mobile/driver/auth/otp/request"]).toBeUndefined();
+    expect(Object.keys(document.paths["/api/v1/dashboard/auth/login"]!.post!.responses ?? {})).toContain("503");
+    expect(Object.keys(document.paths["/api/v1/dashboard/auth/token/refresh"]!.post!.responses ?? {})).toContain("503");
+    expect(Object.keys(document.paths["/api/v1/mobile/driver/auth/login"]!.post!.responses ?? {})).toContain("503");
+    expect(Object.keys(document.paths["/api/v1/mobile/merchant/auth/login"]!.post!.responses ?? {})).toContain("503");
+    expect(Object.keys(document.paths["/api/v1/mobile/customer/auth/otp/request"]!.post!.responses ?? {})).toContain("503");
     expect(document.paths["/api/v1/mobile/customer/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
     expect(document.paths["/api/v1/mobile/driver/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
     expect(document.paths["/api/v1/dashboard/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
     expect(document.paths["/api/v1/mobile/merchant/auth/sessions"]?.get?.security).toEqual([{bearerAuth:[]}]);
+    expect(document.paths["/api/v1/dashboard/auth/login"]?.post?.responses).toBeDefined();
     expect(document.paths["/api/v1/mobile/merchant/auth/login"]?.post?.requestBody).toBeDefined();
     expect(document.paths["/api/v1/mobile/merchant/auth/me"]?.get?.security).toEqual([{bearerAuth:[]}]);
     const openApiText=JSON.stringify(document);

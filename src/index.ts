@@ -39,7 +39,7 @@ import {
 const config = loadConfig();
 const logger = createLogger(config.logLevel);
 const database = createDatabaseClient(config);
-const rateLimiter = new RedisRateLimiter(config.redisUrl);
+const rateLimiter = new RedisRateLimiter(config.redisUrl, { logger });
 const delivery = config.otpDeliveryAdapter === "test" ? new TestOtpDelivery() : new DevelopmentOtpDelivery();
 const authModule = createAuthModule(database.client, rateLimiter, delivery, config);
 const geographyService = new GeographyService(database.client, authModule.sessions);
@@ -181,7 +181,7 @@ const app = createApp({
   openapiServerUrl: config.openapiServerUrl ?? (config.nodeEnv === "production" ? null : `http://localhost:${config.port}`),
   readinessCheck: () => database.ping(),
   redisReadinessCheck: async () => {
-    await rateLimiter.client.ping();
+    await rateLimiter.healthCheck();
   },
 });
 

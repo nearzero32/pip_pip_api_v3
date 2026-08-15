@@ -16,6 +16,31 @@ describe("graceful shutdown", () => {
     expect(events).toEqual(["server", "database", "exit:0"]);
   });
 
+  test("closes Redis clients during shutdown even if close is repeated", async () => {
+    const events: string[] = [];
+    let closes = 0;
+    const limiter = {
+      close: async () => {
+        closes++;
+        events.push("redis");
+      },
+    };
+    const shutdown = createShutdownHandler({
+      stopServer: async () => { events.push("server"); },
+      closeDatabase: async () => {
+        await limiter.close();
+        await limiter.close();
+        events.push("database");
+      },
+      logger: silentLogger,
+      timeoutMs: 1_000,
+      exit: (code) => { events.push(`exit:${code}`); },
+    });
+    await shutdown("SIGTERM");
+    expect(closes).toBe(2);
+    expect(events).toEqual(["server", "redis", "redis", "database", "exit:0"]);
+  });
+
   test("signal registration can be removed without leaving duplicate test handlers", () => {
     const before = process.listenerCount("SIGTERM");
     const unregister = registerSignalHandlers(async () => undefined);

@@ -1,4 +1,5 @@
 import { RedisClient } from "bun";
+import { createLongLivedRedisClient } from "../../infra/redis/options";
 import type { SQL } from "bun";
 import type { Logger } from "../../observability/logger";
 import type { NodeEnvironment } from "../../config/env";
@@ -238,10 +239,7 @@ export class DriverRuntimeStore {
       sql?: SQL;
     },
   ) {
-    this.client = new RedisClient(url, {
-      connectionTimeout: 3000,
-      idleTimeout: 30,
-    });
+    this.client = createLongLivedRedisClient(url);
     this.hydration = { ...DEFAULT_HYDRATION_LOCK, ...options?.hydration };
     this.degraded = { ...DEFAULT_DEGRADED_HYDRATION, ...options?.degraded };
     this.locationFreshSeconds =
@@ -750,7 +748,10 @@ export class DriverRuntimeStore {
     return "STALE";
   }
 
+  private closed = false;
   async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
     this.client.close();
   }
 }

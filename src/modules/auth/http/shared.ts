@@ -1,5 +1,7 @@
 import { t } from "elysia";
 import { AppError } from "../../../errors/app-error";
+import { document } from "../../../openapi/document";
+import { SAMPLE } from "../../../openapi/samples";
 
 export const errorResponse = t.Object({
   error: t.Object({
@@ -22,12 +24,20 @@ export const sessionResponse = t.Object({
     t.Literal("MERCHANT_APP"),
   ]),
 });
+export const rateLimiterUnavailableExample = {
+  error: {
+    code: "RATE_LIMITER_UNAVAILABLE",
+    message: "Authentication service is temporarily unavailable",
+  },
+  request_id: SAMPLE.requestId,
+  retryable: true,
+};
 export const standardErrors = {
   401: errorResponse,
   422: errorResponse,
   429: errorResponse,
   500: errorResponse,
-  503: errorResponse,
+  503: document(errorResponse, rateLimiterUnavailableExample),
 };
 export const deviceFields = {
   device_id: t.Optional(t.String({ maxLength: 256 })),

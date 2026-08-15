@@ -1,6 +1,7 @@
 import { cors } from "@elysiajs/cors";
 import { Elysia, status } from "elysia";
 import { AppError } from "./errors/app-error";
+import { RateLimiterUnavailableError } from "./errors/rate-limiter-unavailable-error";
 import { healthRoutes, type HealthDependencies } from "./health/routes";
 import type { Logger } from "./observability/logger";
 import { toOpenAPISchema } from "@elysiajs/openapi";
@@ -116,12 +117,31 @@ export function createApp(dependencies: AppDependencies) {
       if (error instanceof AppError) {
         if (error.retryAfterSeconds)
           set.headers["retry-after"] = String(error.retryAfterSeconds);
-        dependencies.logger.warn({
-          event: "request_error",
-          code: error.publicCode,
-          path,
-          request_id: requestId,
-        });
+        if (
+          error instanceof RateLimiterUnavailableError ||
+          error.publicCode === "RATE_LIMITER_UNAVAILABLE"
+        ) {
+          dependencies.logger.warn({
+            event: "rate_limiter_unavailable",
+            path,
+            request_id: requestId,
+            operation:
+              error instanceof RateLimiterUnavailableError
+                ? error.operation
+                : undefined,
+            error_code:
+              error instanceof RateLimiterUnavailableError
+                ? error.causeCode
+                : undefined,
+          });
+        } else {
+          dependencies.logger.warn({
+            event: "request_error",
+            code: error.publicCode,
+            path,
+            request_id: requestId,
+          });
+        }
         return status(error.statusCode, {
           error: {
             code: error.publicCode,

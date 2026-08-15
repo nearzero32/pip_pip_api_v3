@@ -1,4 +1,5 @@
 import { RedisClient } from "bun";
+import { createLongLivedRedisClient } from "../../infra/redis/options";
 
 export const ACTIVE_PRICING_CACHE_PREFIX = "delivery-pricing:active:v1:";
 
@@ -45,10 +46,7 @@ return 1`;
 export class RedisActivePricingCache implements ActivePricingCache {
   readonly client: RedisClient;
   constructor(url: string) {
-    this.client = new RedisClient(url, {
-      connectionTimeout: 3000,
-      idleTimeout: 30,
-    });
+    this.client = createLongLivedRedisClient(url);
   }
   get(cityId: string) {
     return this.client.get(`${ACTIVE_PRICING_CACHE_PREFIX}${cityId}`);
@@ -64,7 +62,10 @@ export class RedisActivePricingCache implements ActivePricingCache {
     ]);
     return Number(result) === 1;
   }
+  private closed = false;
   close() {
+    if (this.closed) return;
+    this.closed = true;
     this.client.close();
   }
 }
