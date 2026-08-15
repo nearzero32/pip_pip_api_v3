@@ -19,6 +19,8 @@ import {
   requestIdOf,
 } from "../shared";
 import type { ZoneService } from "./zone.service";
+import { document } from "../../../openapi/document";
+import { geographyExamples } from "../../../openapi/examples/catalog";
 
 const geoJsonPolygon = t.Object(
   {
@@ -131,12 +133,16 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
           body,
         ),
       {
-        body: t.Object(
-          {
-            name: t.String({ minLength: 1, maxLength: 200 }),
-            boundary: geoJsonPolygon,
-          },
-          { additionalProperties: false },
+        parse: "json",
+        body: document(
+          t.Object(
+            {
+              name: t.String({ minLength: 1, maxLength: 200 }),
+              boundary: geoJsonPolygon,
+            },
+            { additionalProperties: false },
+          ),
+          geographyExamples.zoneCreate,
         ),
         response: { 200: zoneDto, ...zoneCreateErrors },
         detail: {
@@ -205,6 +211,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
         ),
       {
         params: zoneIdParam,
+        parse: "json",
         body: t.Object(
           {
             name: t.Optional(t.String({ minLength: 1, maxLength: 200 })),

@@ -142,6 +142,7 @@ export const subcategoryRoutes = (
           requestIdOf(set),
         ),
       {
+        parse: "json",
         body: t.Object(
           {
             mainCategoryId: t.String({ format: "uuid" }),
@@ -224,6 +225,7 @@ export const subcategoryRoutes = (
         ),
       {
         params: subcategoryIdParam,
+        parse: "json",
         body: t.Object(
           {
             mainCategoryId: t.Optional(t.String({ format: "uuid" })),

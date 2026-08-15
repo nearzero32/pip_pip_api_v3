@@ -167,6 +167,7 @@ export const orderLifecycleRoutes = (
       },
       {
         params: t.Object({ orderId: uuid }),
+        parse: "json",
         body: proofIntentBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -214,6 +215,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object({}, { additionalProperties: false }),
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -243,6 +245,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: confirmation,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -272,6 +275,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           { note: t.Optional(t.String({ maxLength: 1000 })) },
           { additionalProperties: false },
@@ -310,6 +314,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: driverDeliveryBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -339,6 +344,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: override,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -378,6 +384,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
@@ -413,6 +420,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: override,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -442,6 +450,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: override,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -480,6 +489,7 @@ export const orderLifecycleRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: dashboardDeliveryBody,
         response: { 200: t.Any(), ...errors },
         detail: {

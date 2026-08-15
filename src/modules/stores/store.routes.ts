@@ -19,6 +19,8 @@ import {
   requestIdOf,
 } from "../geography/shared";
 import type { StoreService } from "./store.service";
+import { document } from "../../openapi/document";
+import { catalogExamples } from "../../openapi/examples/catalog";
 
 const storeStatus = t.Union([
   t.Literal("DRAFT"),
@@ -221,26 +223,30 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
           requestIdOf(set),
         ),
       {
-        body: t.Object(
-          {
-            mainCategoryId: t.String({ format: "uuid" }),
-            name: t.String({ minLength: 1, maxLength: 100 }),
-            phone: t.String({ minLength: 8, maxLength: 20 }),
-            address: t.String({ minLength: 1, maxLength: 500 }),
-            latitude: t.Number({ minimum: -90, maximum: 90 }),
-            longitude: t.Number({ minimum: -180, maximum: 180 }),
-            logoAssetId: t.String({ format: "uuid" }),
-            coverAssetId: t.Optional(t.String({ format: "uuid" })),
-            status: t.Optional(mutableStoreStatus),
-            orderAcceptanceStatus: t.Optional(orderAcceptance),
-            displayOrder: t.Optional(t.Integer({ minimum: 0 })),
-            zoneIds: t.Array(t.String({ format: "uuid" }), { minItems: 1 }),
-            subcategoryIds: t.Array(t.String({ format: "uuid" }), {
-              minItems: 1,
-            }),
-            workingHours: t.Optional(t.Array(workingHourPeriod)),
-          },
-          { additionalProperties: false },
+        parse: "json",
+        body: document(
+          t.Object(
+            {
+              mainCategoryId: t.String({ format: "uuid" }),
+              name: t.String({ minLength: 1, maxLength: 100 }),
+              phone: t.String({ minLength: 8, maxLength: 20 }),
+              address: t.String({ minLength: 1, maxLength: 500 }),
+              latitude: t.Number({ minimum: -90, maximum: 90 }),
+              longitude: t.Number({ minimum: -180, maximum: 180 }),
+              logoAssetId: t.String({ format: "uuid" }),
+              coverAssetId: t.Optional(t.String({ format: "uuid" })),
+              status: t.Optional(mutableStoreStatus),
+              orderAcceptanceStatus: t.Optional(orderAcceptance),
+              displayOrder: t.Optional(t.Integer({ minimum: 0 })),
+              zoneIds: t.Array(t.String({ format: "uuid" }), { minItems: 1 }),
+              subcategoryIds: t.Array(t.String({ format: "uuid" }), {
+                minItems: 1,
+              }),
+              workingHours: t.Optional(t.Array(workingHourPeriod)),
+            },
+            { additionalProperties: false },
+          ),
+          catalogExamples.storeCreate,
         ),
         response: { 200: storeDto, ...createErrors },
         detail: {
@@ -309,6 +315,7 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
         ),
       {
         params: storeIdParam,
+        parse: "json",
         body: t.Object(
           {
             mainCategoryId: t.Optional(t.String({ format: "uuid" })),

@@ -14,6 +14,10 @@ import {
   sessionsResponse,
   standardErrors,
 } from "../http/shared";
+import { document } from "../../../openapi/document";
+import { authExamples, sessionExamples } from "../../../openapi/examples/auth";
+import { SAMPLE } from "../../../openapi/samples";
+
 const tag = ["Dashboard — Authentication"];
 
 export const dashboardAuthRoutes = (auth: AuthModule) =>
@@ -31,15 +35,19 @@ export const dashboardAuthRoutes = (auth: AuthModule) =>
           requestId: requestIdOf(set),
         }),
       {
-        body: t.Object(
-          {
-            email: t.String({ maxLength: 254 }),
-            password: t.String({ minLength: 12, maxLength: 128 }),
-            ...deviceFields,
-          },
-          { additionalProperties: false },
+        parse: "json",
+        body: document(
+          t.Object(
+            {
+              email: t.String({ maxLength: 254 }),
+              password: t.String({ minLength: 12, maxLength: 128 }),
+              ...deviceFields,
+            },
+            { additionalProperties: false },
+          ),
+          authExamples.dashboardLogin,
         ),
-        response: { 200: sessionResponse, ...standardErrors },
+        response: { 200: document(sessionResponse, sessionExamples.dashboard), ...standardErrors },
         detail: { tags: tag, summary: "Dashboard password login" },
       },
     )
@@ -53,8 +61,9 @@ export const dashboardAuthRoutes = (auth: AuthModule) =>
           requestIdOf(set),
         ),
       {
-        body: refreshBody,
-        response: { 200: sessionResponse, ...standardErrors },
+        parse: "json",
+        body: document(refreshBody, authExamples.refresh),
+        response: { 200: document(sessionResponse, sessionExamples.dashboard), ...standardErrors },
         detail: { tags: tag },
       },
     )
@@ -125,7 +134,7 @@ export const dashboardAuthRoutes = (auth: AuthModule) =>
       },
       {
         params: t.Object(
-          { sessionId: t.String({ format: "uuid" }) },
+          { sessionId: t.String({ format: "uuid", examples: [SAMPLE.sessionId] }) },
           { additionalProperties: false },
         ),
         response: {

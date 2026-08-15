@@ -1,11 +1,20 @@
 import { openapi } from "@elysiajs/openapi";
+import { SAMPLE } from "./openapi/samples";
+
+export interface OpenApiPluginOptions {
+  /** Absolute origin used in generated curl. Omit in production to use the current host. */
+  serverUrl?: string | null;
+}
 
 /** Fresh plugin per app instance — Elysia OpenAPI state is not safe to reuse across createApp calls. */
-export const createOpenApiPlugin = () =>
-  openapi({
-  path: "/openapi",
-  specPath: "/openapi/json",
-  documentation: {
+export const createOpenApiDocumentation = (options: OpenApiPluginOptions = {}) => ({
+    ...(options.serverUrl
+      ? {
+          servers: [
+            { url: options.serverUrl.replace(/\/+$/, ""), description: "API" },
+          ],
+        }
+      : {}),
     info: {
       title: "pip_pip_api_v3",
       version: "0.2.0",
@@ -189,8 +198,15 @@ export const createOpenApiPlugin = () =>
           description:
             "Canonical public/mobile City selection header. UUID of an ACTIVE City under an ACTIVE Governorate. Not an authentication credential and never overrides Dashboard signed City scope.",
           schema: { type: "string", format: "uuid" },
+          example: SAMPLE.cityId,
         },
       },
     },
-  },
 });
+
+export const createOpenApiPlugin = (options: OpenApiPluginOptions = {}) =>
+  openapi({
+    path: "/openapi",
+    specPath: "/openapi/json",
+            documentation: createOpenApiDocumentation(options) as never,
+  });

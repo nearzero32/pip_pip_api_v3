@@ -17,6 +17,8 @@ import {
   requestIdOf,
 } from "../geography/shared";
 import type { StoreCommissionService } from "./store-commission.service";
+import { document } from "../../openapi/document";
+import { orderExamples } from "../../openapi/examples/orders";
 
 const uuid = t.String({ format: "uuid" });
 const errors = {
@@ -154,13 +156,17 @@ export const storeCommissionRoutes = (
       },
       {
         params: t.Object({ storeId: uuid }, { additionalProperties: false }),
-        body: t.Object(
-          {
-            platformCommissionRate: t.Integer({ minimum: 0, maximum: 100 }),
-            reason: t.String({ minLength: 1, maxLength: 1000 }),
-            note: t.Optional(t.String({ maxLength: 1000 })),
-          },
-          { additionalProperties: true },
+        parse: "json",
+        body: document(
+          t.Object(
+            {
+              platformCommissionRate: t.Integer({ minimum: 0, maximum: 100 }),
+              reason: t.String({ minLength: 1, maxLength: 1000 }),
+              note: t.Optional(t.String({ maxLength: 1000 })),
+            },
+            { additionalProperties: true },
+          ),
+          orderExamples.commission,
         ),
         response: { 200: commissionDto, ...errors },
         detail: {

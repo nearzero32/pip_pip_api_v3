@@ -18,6 +18,8 @@ import {
   paginated,
   requestIdOf,
 } from "../geography/shared";
+import { document } from "../../openapi/document";
+import { catalogExamples } from "../../openapi/examples/catalog";
 import type { ModifierService } from "./modifier.service";
 import type { ProductService } from "./product.service";
 
@@ -280,7 +282,9 @@ export const productRoutes = (
         ),
       {
         params: storeIdParam,
-        body: t.Object(
+        parse: "json",
+        body: document(
+          t.Object(
           {
             name: t.String({ minLength: 1, maxLength: 100 }),
             description: t.Optional(t.Union([t.String({ maxLength: 2000 }), t.Null()])),
@@ -301,6 +305,18 @@ export const productRoutes = (
             availability: t.Optional(t.Array(availabilityInput)),
           },
           { additionalProperties: false },
+        ),
+          catalogExamples.productBasePrice,
+          {
+            "Base-price product": {
+              summary: "Positive basePrice and no sizes",
+              value: catalogExamples.productBasePrice,
+            },
+            "Sized product": {
+              summary: "Null basePrice with sizes",
+              value: catalogExamples.productSized,
+            },
+          },
         ),
         response: { 200: productDto, ...createErrors },
         detail: {
@@ -374,6 +390,7 @@ export const productRoutes = (
         ),
       {
         params: productParams,
+        parse: "json",
         body: t.Object(
           {
             name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
@@ -438,6 +455,7 @@ export const productRoutes = (
         ),
       {
         params: productParams,
+        parse: "json",
         body: t.Object(
           {
             images: t.Array(imageInput, { minItems: 1 }),
@@ -466,6 +484,7 @@ export const productRoutes = (
         ),
       {
         params: productParams,
+        parse: "json",
         body: t.Object(
           {
             name: t.String({ minLength: 1, maxLength: 100 }),
@@ -501,6 +520,7 @@ export const productRoutes = (
         ),
       {
         params: sizeParams,
+        parse: "json",
         body: t.Object(
           {
             name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
@@ -536,6 +556,7 @@ export const productRoutes = (
         ),
       {
         params: sizeParams,
+        parse: "json",
         body: t.Optional(
           t.Object(
             {
@@ -569,6 +590,7 @@ export const productRoutes = (
         ),
       {
         params: productParams,
+        parse: "json",
         body: t.Object(
           {
             windows: t.Array(availabilityInput),

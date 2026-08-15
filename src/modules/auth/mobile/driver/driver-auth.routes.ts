@@ -2,6 +2,8 @@ import { Elysia, t } from "elysia";
 import type { AuthModule } from "../../auth-module";
 import { driverContext } from "../../core/context";
 import { bearer, deviceFields, errorResponse, ipOf, parseAuthenticationBody, refreshBody, requestIdOf, revokedResponse, sessionResponse, sessionsResponse, standardErrors } from "../../http/shared";
+import { document } from "../../../../openapi/document";
+import { authExamples, sessionExamples } from "../../../../openapi/examples/auth";
 
 const tag = ["Mobile — Driver Authentication"];
 
@@ -28,7 +30,9 @@ export const driverAuthRoutes = (
           requestId: requestIdOf(set),
         }),
       {
-        body: t.Object(
+        parse: "json",
+        body: document(
+          t.Object(
           {
             phone: t.String({ maxLength: 32 }),
             code: t.String({
@@ -40,7 +44,9 @@ export const driverAuthRoutes = (
           },
           { additionalProperties: false },
         ),
-        response: { 200: sessionResponse, ...standardErrors },
+          authExamples.driverLogin,
+        ),
+        response: { 200: document(sessionResponse, sessionExamples.driver), ...standardErrors },
         detail: { tags: tag, summary: "Driver phone and access-code login" },
       },
     )
@@ -54,8 +60,9 @@ export const driverAuthRoutes = (
           requestIdOf(set),
         ),
       {
-        body: refreshBody,
-        response: { 200: sessionResponse, ...standardErrors },
+        parse: "json",
+        body: document(refreshBody, authExamples.refresh),
+        response: { 200: document(sessionResponse, sessionExamples.driver), ...standardErrors },
         detail: { tags: tag },
       },
     )

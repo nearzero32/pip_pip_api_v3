@@ -3,7 +3,9 @@ import { Elysia, status } from "elysia";
 import { AppError } from "./errors/app-error";
 import { healthRoutes, type HealthDependencies } from "./health/routes";
 import type { Logger } from "./observability/logger";
-import { createOpenApiPlugin } from "./openapi";
+import { toOpenAPISchema } from "@elysiajs/openapi";
+import { createOpenApiDocumentation, createOpenApiPlugin } from "./openapi";
+import { enrichOpenApiDocument } from "./openapi/enrich";
 import { resolveRequestId } from "./shared/request-id";
 import type { AuthModule } from "./modules/auth/auth-module";
 import { authRoutes } from "./modules/auth/routes";
@@ -70,10 +72,13 @@ export interface AppDependencies extends HealthDependencies {
   driverRuntime?: DriverRuntimeStoreLike;
   /** Durable outbox enqueue before clearing Redis on driver logout. */
   scheduleDriverRuntimeSync?: (driverId: string) => Promise<void>;
+  openapiServerUrl?: string | null;
 }
 
 export function createApp(dependencies: AppDependencies) {
-  return new Elysia({ name: "pip-pip-api-v3" })
+  const openapiServerUrl =
+    dependencies.openapiServerUrl ?? (dependencies.production ? null : "http://localhost:3000");
+  const app = new Elysia({ name: "pip-pip-api-v3" })
     .use(
       cors({
         origin: true,
@@ -83,7 +88,7 @@ export function createApp(dependencies: AppDependencies) {
         exposeHeaders: ["X-Request-Id", "Retry-After"],
       }),
     )
-    .use(createOpenApiPlugin())
+    .use(createOpenApiPlugin({ serverUrl: openapiServerUrl }))
     .derive(({ request, set }) => {
       const requestId = resolveRequestId(request.headers.get("x-request-id"));
       set.headers["x-request-id"] = requestId;
@@ -339,5 +344,30 @@ export function createApp(dependencies: AppDependencies) {
             media: dependencies.mediaService,
           })
         : new Elysia(),
+    )
+    .get(
+      "/openapi/json",
+      () => {
+        const generated = toOpenAPISchema(app);
+        const documentation = createOpenApiDocumentation({
+          serverUrl: openapiServerUrl,
+        });
+        return enrichOpenApiDocument(
+          {
+            openapi: "3.0.3",
+            ...documentation,
+            paths: generated.paths,
+            components: {
+              ...documentation.components,
+              schemas: {
+                ...generated.components?.schemas,
+              },
+            },
+          } as Parameters<typeof enrichOpenApiDocument>[0],
+          openapiServerUrl,
+        );
+      },
+      { detail: { hide: true } },
     );
+  return app;
 }

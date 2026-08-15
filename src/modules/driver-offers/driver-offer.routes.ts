@@ -158,6 +158,7 @@ export const driverOfferRoutes = (
       },
       {
         params: t.Object({ cityId: uuid }),
+        parse: "json",
         body: pricingBody,
         headers: idempotencyHeaders,
         response: { 200: pricingResponse, ...errors },
@@ -218,6 +219,7 @@ export const driverOfferRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
@@ -253,6 +255,7 @@ export const driverOfferRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
@@ -312,6 +315,7 @@ export const driverOfferRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             driverId: uuid,

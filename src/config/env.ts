@@ -68,6 +68,7 @@ export interface AppConfig extends DatabaseConfig, MediaConfig {
   driverRuntimeDegradedMaxEntries: number;
   driverRuntimeHydrateAdvisoryLockTimeoutMs: number;
   dashboardExportMaxRows: number;
+  openapiServerUrl: string | null;
 }
 
 export class ConfigurationError extends Error {
@@ -165,6 +166,21 @@ export function loadMediaConfig(
   };
 }
 
+function optionalHttpUrl(env: Record<string, string | undefined>, name: string): string | null {
+  const raw = env[name]?.trim();
+  if (!raw) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new ConfigurationError(`${name} must be a valid URL`);
+  }
+  if (!new Set(["http:", "https:"]).has(parsed.protocol) || !parsed.hostname) {
+    throw new ConfigurationError(`${name} must use http:// or https:// and include a host`);
+  }
+  return raw.replace(/\/+$/, "");
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
   const rawNodeEnv = required(env, "NODE_ENV");
   if (!nodeEnvironments.has(rawNodeEnv as NodeEnvironment)) {
@@ -243,6 +259,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     driverRuntimeDegradedMaxEntries: integerWithDefault(env, "DRIVER_RUNTIME_DEGRADED_MAX_ENTRIES", 2_000, 10, 100_000),
     driverRuntimeHydrateAdvisoryLockTimeoutMs: integerWithDefault(env, "DRIVER_RUNTIME_HYDRATE_ADVISORY_LOCK_TIMEOUT_MS", 2_000, 50, 30_000),
     dashboardExportMaxRows: integerWithDefault(env, "DASHBOARD_EXPORT_MAX_ROWS", 10_000, 1, 100_000),
+    openapiServerUrl: (() => {
+      const url = optionalHttpUrl(env, "OPENAPI_SERVER_URL");
+      if (rawNodeEnv === "production" && url && /^(localhost|127\.0\.0\.1)$/i.test(new URL(url).hostname)) {
+        throw new ConfigurationError("OPENAPI_SERVER_URL must not use localhost in production");
+      }
+      return url;
+    })(),
     ...loadMediaConfig(env),
   };
 }

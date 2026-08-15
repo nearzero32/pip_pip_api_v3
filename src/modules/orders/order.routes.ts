@@ -18,6 +18,8 @@ import {
 } from "../geography/shared";
 import type { OrderService } from "./order.service";
 import type { OrderOpsService } from "./order-ops.service";
+import { document } from "../../openapi/document";
+import { orderExamples } from "../../openapi/examples/orders";
 
 const uuid = t.String({ format: "uuid" });
 const errors = {
@@ -67,15 +69,18 @@ const createItem = t.Object(
   },
   { additionalProperties: false },
 );
-const createBody = t.Object(
-  {
-    storeId: uuid,
-    addressId: uuid,
-    paymentMethod: t.Union([t.Literal("CASH"), t.Literal("ONLINE")]),
-    items: t.Array(createItem, { minItems: 1 }),
-    idempotencyKey: t.String({ minLength: 1, maxLength: 128 }),
-  },
-  { additionalProperties: false },
+const createBody = document(
+  t.Object(
+    {
+      storeId: uuid,
+      addressId: uuid,
+      paymentMethod: t.Union([t.Literal("CASH"), t.Literal("ONLINE")]),
+      items: t.Array(createItem, { minItems: 1 }),
+      idempotencyKey: t.String({ minLength: 1, maxLength: 128 }),
+    },
+    { additionalProperties: false },
+  ),
+  orderExamples.create,
 );
 
 const orderStatus = t.Union([
@@ -170,9 +175,12 @@ const replaceBody = t.Object(
   { additionalProperties: false },
 );
 
-const cancelBody = t.Object(
-  { reason: t.String({ minLength: 1, maxLength: 1000 }) },
-  { additionalProperties: false },
+const cancelBody = document(
+  t.Object(
+    { reason: t.String({ minLength: 1, maxLength: 1000 }) },
+    { additionalProperties: false },
+  ),
+  orderExamples.cancel,
 );
 const mutationReasonBody = t.Object(
   { reason: t.String({ minLength: 1, maxLength: 1000 }) },
@@ -215,6 +223,7 @@ export const orderRoutes = (
         }) as any;
       },
       {
+        parse: "json",
         body: createBody,
         response: { 200: customerOrderDetail, ...errors },
         detail: {
@@ -301,6 +310,7 @@ export const orderRoutes = (
       },
       {
         params: t.Object({ orderId: uuid }),
+        parse: "json",
         body: cancelBody,
         response: { 200: customerOrderDetail, ...errors },
         detail: {
@@ -379,6 +389,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
@@ -444,6 +455,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: replaceBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -549,6 +561,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: replaceBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -572,6 +585,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: addItemBody,
         response: { 200: t.Any(), ...errors },
         detail: { tags: ["Mobile — Merchant Orders"], summary: "Add order item", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
@@ -590,6 +604,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: mutationReasonBody,
         response: { 200: t.Any(), ...errors },
         detail: { tags: ["Mobile — Merchant Orders"], summary: "Remove order item", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
@@ -608,6 +623,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: quantityBody,
         response: { 200: t.Any(), ...errors },
         detail: { tags: ["Mobile — Merchant Orders"], summary: "Change order item quantity", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
@@ -625,6 +641,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: addItemBody,
         response: { 200: t.Any(), ...errors },
         detail: { tags: ["Dashboard — Orders"], summary: "Add order item", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
@@ -642,6 +659,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: mutationReasonBody,
         response: { 200: t.Any(), ...errors },
         detail: { tags: ["Dashboard — Orders"], summary: "Remove order item", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },
@@ -659,6 +677,7 @@ export const orderRoutes = (
       {
         params: t.Object({ orderId: uuid, itemId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: quantityBody,
         response: { 200: t.Any(), ...errors },
         detail: { tags: ["Dashboard — Orders"], summary: "Change order item quantity", parameters: [idempotencyHeader], security: [{ bearerAuth: [] }] },

@@ -138,6 +138,7 @@ export const mainCategoryRoutes = (
           requestIdOf(set),
         ),
       {
+        parse: "json",
         body: t.Object(
           {
             name: t.String({ minLength: 1, maxLength: 100 }),
@@ -218,6 +219,7 @@ export const mainCategoryRoutes = (
         ),
       {
         params: mainCategoryIdParam,
+        parse: "json",
         body: t.Object(
           {
             name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),

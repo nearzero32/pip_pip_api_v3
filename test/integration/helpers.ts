@@ -103,6 +103,7 @@ export const integrationConfig: AppConfig = {
   driverRuntimeDegradedMaxEntries: 2_000,
   driverRuntimeHydrateAdvisoryLockTimeoutMs: 2_000,
   dashboardExportMaxRows: 10_000,
+  openapiServerUrl: null,
 };
 
 export const seededGovernorateId = "11111111-1111-4111-8111-000000000001";

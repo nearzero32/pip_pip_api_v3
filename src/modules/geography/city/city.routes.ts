@@ -18,6 +18,8 @@ import {
   requestIdOf,
 } from "../shared";
 import type { CityService } from "./city.service";
+import { document } from "../../../openapi/document";
+import { geographyExamples } from "../../../openapi/examples/catalog";
 
 const govSummary = t.Object({
   id: t.String({ format: "uuid" }),
@@ -110,16 +112,20 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
           body,
         ),
       {
-        body: t.Object(
-          {
-            governorateId: t.String({ format: "uuid" }),
-            nameAr: t.String({ minLength: 1, maxLength: 200 }),
-            nameEn: t.String({ minLength: 1, maxLength: 200 }),
-            latitude: t.Number({ minimum: -90, maximum: 90 }),
-            longitude: t.Number({ minimum: -180, maximum: 180 }),
-            displayOrder: t.Integer({ minimum: 0 }),
-          },
-          { additionalProperties: false },
+        parse: "json",
+        body: document(
+          t.Object(
+            {
+              governorateId: t.String({ format: "uuid" }),
+              nameAr: t.String({ minLength: 1, maxLength: 200 }),
+              nameEn: t.String({ minLength: 1, maxLength: 200 }),
+              latitude: t.Number({ minimum: -90, maximum: 90 }),
+              longitude: t.Number({ minimum: -180, maximum: 180 }),
+              displayOrder: t.Integer({ minimum: 0 }),
+            },
+            { additionalProperties: false },
+          ),
+          geographyExamples.cityCreate,
         ),
         response: { 200: cityDto, ...cityCreateErrors },
         detail: {
@@ -182,6 +188,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
         ),
       {
         params: cityIdParam,
+        parse: "json",
         body: t.Object(
           {
             governorateId: t.Optional(t.String({ format: "uuid" })),

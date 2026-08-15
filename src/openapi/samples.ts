@@ -1,0 +1,45 @@
+/** Stable documentation-only identifiers. Not production data. */
+export const SAMPLE = {
+  cityId: "11111111-1111-4111-8111-111111111111",
+  governorateId: "11111111-1111-4111-8111-000000000001",
+  zoneId: "22222222-2222-4222-8222-222222222222",
+  storeId: "33333333-3333-4333-8333-333333333333",
+  productId: "44444444-4444-4444-8444-444444444444",
+  sizeId: "55555555-5555-4555-8555-555555555555",
+  categoryId: "66666666-6666-4666-8666-666666666666",
+  subcategoryId: "77777777-7777-4777-8777-777777777777",
+  mainCategoryId: "88888888-8888-4888-8888-888888888888",
+  storeCategoryId: "99999999-9999-4999-8999-999999999999",
+  modifierGroupId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+  modifierOptionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+  mediaAssetId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+  logoAssetId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
+  coverAssetId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3",
+  accountId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  adminId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+  employeeId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc2",
+  sessionId: "123e4567-e89b-42d3-a456-426614174000",
+  challengeId: "11111111-1111-4111-8111-111111111111",
+  orderId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  orderItemId: "dddddddd-dddd-4ddd-8ddd-ddddddddddd1",
+  cartItemId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  addressId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  offerId: "12121212-1212-4121-8121-121212121212",
+  assignmentId: "13131313-1313-4131-8131-131313131313",
+  driverId: "14141414-1414-4141-8141-141414141414",
+  pricingVersionId: "15151515-1515-4151-8151-151515151515",
+  idempotencyKey: "550e8400-e29b-41d4-a716-446655440000",
+  requestId: "dashboard-test-001",
+  phone: "+9647700000000",
+  accessToken: "replace-with-access-token",
+  refreshToken: "replace-with-refresh-token-min-43-characters",
+  password: "StrongPassword123!",
+  instant: "2026-08-15T13:27:57.674Z",
+  baghdadLat: 33.3152,
+  baghdadLng: 44.3661,
+} as const;
+
+export const cityHeaderExample = SAMPLE.cityId;
+export const idempotencyHeaderExample = SAMPLE.idempotencyKey;
+export const uuidParam = (example: string) =>
+  ({ format: "uuid" as const, examples: [example] });

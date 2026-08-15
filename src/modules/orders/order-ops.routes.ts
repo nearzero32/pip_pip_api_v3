@@ -68,6 +68,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
@@ -106,6 +107,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: reasonBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -133,6 +135,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             driverId: uuid,
@@ -167,6 +170,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             driverId: uuid,
@@ -201,6 +205,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid, handoffId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: reasonBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -231,6 +236,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid, handoffId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
@@ -265,6 +271,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: reasonBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -294,6 +301,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: reasonBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -323,6 +331,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: reasonBody,
         response: { 200: t.Any(), ...errors },
         detail: {
@@ -350,6 +359,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             reason: t.String({ minLength: 1, maxLength: 1000 }),
@@ -414,6 +424,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid, handoffId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             fileId: uuid,
@@ -450,6 +461,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             fileId: uuid,
@@ -482,6 +494,7 @@ export const orderOpsRoutes = (
       },
       {
         params: t.Object({ orderId: uuid }),
+        parse: "json",
         body: t.Object(
           {
             assignmentId: uuid,
@@ -557,6 +570,7 @@ export const orderOpsRoutes = (
       {
         params: t.Object({ orderId: uuid }),
         headers: idempotencyHeaders,
+        parse: "json",
         body: t.Object(
           {
             note: t.Optional(t.String({ maxLength: 1000 })),

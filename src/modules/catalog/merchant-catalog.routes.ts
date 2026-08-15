@@ -134,6 +134,7 @@ export const merchantCatalogRoutes = (
         return deps.stores.updateMerchantOrderAcceptance(identity, body, id);
       },
       {
+        parse: "json",
         body: t.Object(
           {
             orderAcceptanceStatus: t.Union([
@@ -163,6 +164,7 @@ export const merchantCatalogRoutes = (
         return deps.media.createUploadIntent(identity, body, id);
       },
       {
+        parse: "json",
         body: t.Object(
           {
             purpose: t.Literal("PRODUCT_IMAGE"),
@@ -241,6 +243,7 @@ export const merchantCatalogRoutes = (
         return deps.products.create(identity, storeId, body, id);
       },
       {
+        parse: "json",
         body: t.Any(),
         response: { 200: productDto, ...errors },
         detail: {
@@ -284,6 +287,7 @@ export const merchantCatalogRoutes = (
           { productId: t.String({ format: "uuid" }) },
           { additionalProperties: false },
         ),
+        parse: "json",
         body: t.Any(),
         response: { 200: productDto, ...errors },
         detail: { tags: tag, security: [{ bearerAuth: [] }] },
@@ -332,6 +336,7 @@ export const merchantCatalogRoutes = (
         return deps.storeCategories.create(identity, storeId, body, id);
       },
       {
+        parse: "json",
         body: t.Any(),
         response: { 200: storeCategoryDto, ...errors },
         detail: { tags: tag, security: [{ bearerAuth: [] }] },
@@ -371,6 +376,7 @@ export const merchantCatalogRoutes = (
           { categoryId: t.String({ format: "uuid" }) },
           { additionalProperties: false },
         ),
+        parse: "json",
         body: t.Any(),
         response: { 200: storeCategoryDto, ...errors },
         detail: { tags: tag, security: [{ bearerAuth: [] }] },
@@ -426,6 +432,7 @@ export const merchantCatalogRoutes = (
         return deps.modifiers.createGroup(identity, storeId, body, id);
       },
       {
+        parse: "json",
         body: t.Any(),
         response: { 200: groupDto, ...errors },
         detail: { tags: tag, security: [{ bearerAuth: [] }] },
@@ -465,6 +472,7 @@ export const merchantCatalogRoutes = (
           { groupId: t.String({ format: "uuid" }) },
           { additionalProperties: false },
         ),
+        parse: "json",
         body: t.Any(),
         response: { 200: groupDto, ...errors },
         detail: { tags: tag, security: [{ bearerAuth: [] }] },
@@ -533,6 +541,7 @@ export const merchantCatalogRoutes = (
           },
           { additionalProperties: false },
         ),
+        parse: "json",
         body: t.Any(),
         response: { 200: t.Any(), ...errors },
         detail: { tags: tag, security: [{ bearerAuth: [] }] },

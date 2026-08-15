@@ -256,6 +256,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         ),
       {
         params: storeIdParam,
+        parse: "json",
         body: t.Object(
           {
             name: t.String({ minLength: 1, maxLength: 100 }),
@@ -333,6 +334,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         ),
       {
         params: groupParams,
+        parse: "json",
         body: t.Object(
           {
             name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
@@ -404,6 +406,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         ),
       {
         params: groupParams,
+        parse: "json",
         body: optionInput,
         response: { 200: groupDto, ...createErrors },
         detail: {
@@ -428,6 +431,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         ),
       {
         params: optionParams,
+        parse: "json",
         body: t.Object(
           {
             name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
@@ -520,6 +524,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         ),
       {
         params: productOptionParams,
+        parse: "json",
         body: t.Object(
           {
             price: t.Optional(t.Integer({ minimum: 0 })),

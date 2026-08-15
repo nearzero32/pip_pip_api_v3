@@ -129,6 +129,7 @@ export const storeCategoryRoutes = (
         ),
       {
         params: storeIdParam,
+        parse: "json",
         body: t.Object(
           {
             name: t.String({ minLength: 1, maxLength: 100 }),
@@ -209,6 +210,7 @@ export const storeCategoryRoutes = (
         ),
       {
         params: categoryParams,
+        parse: "json",
         body: t.Object(
           {
             name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),

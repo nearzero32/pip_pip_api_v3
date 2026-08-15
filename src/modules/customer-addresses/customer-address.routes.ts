@@ -125,6 +125,7 @@ export const customerAddressRoutes = (
         return service.create(identity.accountId, city.id, body);
       },
       {
+        parse: "json",
         body: createBody,
         response: { 200: addressResponse, ...errors },
         detail: {
@@ -208,6 +209,7 @@ export const customerAddressRoutes = (
       },
       {
         params: addressIdParam,
+        parse: "json",
         body: updateBody,
         response: { 200: addressResponse, ...errors },
         detail: {

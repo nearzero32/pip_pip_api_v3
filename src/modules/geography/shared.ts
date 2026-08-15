@@ -44,10 +44,10 @@ export const numberOrNull = (value: unknown): number | null => {
 export const dateSchema = t.String({ format: "date-time" });
 
 export const pageQuery = {
-  page: t.Optional(t.Numeric({ minimum: 1 })),
-  limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
-  search: t.Optional(t.String({ maxLength: 100 })),
-  status: t.Optional(t.String({ maxLength: 20 })),
+  page: t.Optional(t.Numeric({ minimum: 1, examples: [1] })),
+  limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100, examples: [20] })),
+  search: t.Optional(t.String({ maxLength: 100, examples: ["baghdad"] })),
+  status: t.Optional(t.String({ maxLength: 20, examples: ["ACTIVE"] })),
 };
 
 export const paginated = (item: any) =>

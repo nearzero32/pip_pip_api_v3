@@ -97,6 +97,7 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
           requestIdOf(set),
         ),
       {
+        parse: "json",
         body: t.Object(
           {
             purpose: mediaPurpose,

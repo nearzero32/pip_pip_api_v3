@@ -113,6 +113,7 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
           body,
         ),
       {
+        parse: "json",
         body: t.Object(
           {
             email: t.String({ maxLength: 254 }),
@@ -191,6 +192,7 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
           { adminId: t.String({ format: "uuid" }) },
           { additionalProperties: false },
         ),
+        parse: "json",
         body: t.Object(
           {
             displayName: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
@@ -227,6 +229,7 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
           },
         ),
       {
+        parse: "json",
         body: t.Object(
           {
             email: t.String({ maxLength: 254 }),
@@ -305,6 +308,7 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
           { employeeId: t.String({ format: "uuid" }) },
           { additionalProperties: false },
         ),
+        parse: "json",
         body: t.Object(
           {
             displayName: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
@@ -338,6 +342,7 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
           { employeeId: t.String({ format: "uuid" }) },
           { additionalProperties: false },
         ),
+        parse: "json",
         body: t.Object(
           { permission: permissionLiteral },
           { additionalProperties: false },

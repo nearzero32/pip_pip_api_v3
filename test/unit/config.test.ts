@@ -103,6 +103,7 @@ describe("configuration", () => {
       driverRuntimeDegradedMaxEntries: 2000,
       driverRuntimeHydrateAdvisoryLockTimeoutMs: 2000,
       dashboardExportMaxRows: 10000,
+      openapiServerUrl: null,
       r2Endpoint: "https://acct.r2.cloudflarestorage.com",
       r2Bucket: "bucket",
       r2AccessKeyId: "key",
@@ -140,6 +141,18 @@ describe("configuration", () => {
 
   test("rejects development placeholder credentials in production", () => {
     expect(() => loadConfig({ ...validEnv, NODE_ENV: "production", DATABASE_URL: "postgresql://user:dev_only@db/prod" })).toThrow(ConfigurationError);
+  });
+
+  test("rejects localhost OpenAPI server URLs in production", () => {
+    expect(() =>
+      loadConfig({
+        ...validEnv,
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:a-strong-nonplaceholder@db/pip_pip",
+        OTP_DELIVERY_ADAPTER: "development",
+        OPENAPI_SERVER_URL: "http://localhost:3000",
+      }),
+    ).toThrow(ConfigurationError);
   });
 
   test("requires a valid Redis URL", () => {

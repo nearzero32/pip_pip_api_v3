@@ -99,6 +99,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
           requestIdOf(set),
         ),
       {
+        parse: "json",
         body: t.Object(
           {
             phone: t.String({ maxLength: 32 }),
@@ -189,6 +190,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
         ),
       {
         params: accountParam,
+        parse: "json",
         body: t.Object(
           {
             displayName: t.Optional(t.Nullable(t.String({ maxLength: 100 }))),
@@ -220,6 +222,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
         ),
       {
         params: accountParam,
+        parse: "json",
         body: t.Object(
           {
             password: t.String({ minLength: 12, maxLength: 128 }),
@@ -255,6 +258,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
         ),
       {
         params: accountParam,
+        parse: "json",
         body: t.Object(
           {
             storeId: t.String({ format: "uuid" }),

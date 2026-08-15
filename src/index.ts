@@ -178,6 +178,7 @@ const app = createApp({
     await scheduleDriverRuntimeSync(database.client, driverId);
   },
   production: config.nodeEnv === "production",
+  openapiServerUrl: config.openapiServerUrl ?? (config.nodeEnv === "production" ? null : `http://localhost:${config.port}`),
   readinessCheck: () => database.ping(),
   redisReadinessCheck: async () => {
     await rateLimiter.client.ping();

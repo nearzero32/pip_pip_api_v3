@@ -14,6 +14,8 @@ import {
   sessionsResponse,
   standardErrors,
 } from "../http/shared";
+import { document } from "../../../openapi/document";
+import { authExamples, sessionExamples } from "../../../openapi/examples/auth";
 
 const tag = ["Mobile — Merchant Authentication"];
 
@@ -50,7 +52,9 @@ export const merchantAuthRoutes = (auth: AuthModule) =>
           requestId: requestIdOf(set),
         }),
       {
-        body: t.Object(
+        parse: "json",
+        body: document(
+          t.Object(
           {
             phone: t.String({ maxLength: 32 }),
             password: t.String({ minLength: 12, maxLength: 128 }),
@@ -58,7 +62,9 @@ export const merchantAuthRoutes = (auth: AuthModule) =>
           },
           { additionalProperties: false },
         ),
-        response: { 200: sessionResponse, ...standardErrors },
+          authExamples.merchantLogin,
+        ),
+        response: { 200: document(sessionResponse, sessionExamples.merchant), ...standardErrors },
         detail: {
           tags: tag,
           summary: "Merchant phone + password login",
@@ -77,8 +83,9 @@ export const merchantAuthRoutes = (auth: AuthModule) =>
           requestIdOf(set),
         ),
       {
-        body: refreshBody,
-        response: { 200: sessionResponse, ...standardErrors },
+        parse: "json",
+        body: document(refreshBody, authExamples.refresh),
+        response: { 200: document(sessionResponse, sessionExamples.merchant), ...standardErrors },
         detail: { tags: tag },
       },
     )
@@ -192,12 +199,16 @@ export const merchantAuthRoutes = (auth: AuthModule) =>
           requestIdOf(set),
         ),
       {
-        body: t.Object(
+        parse: "json",
+        body: document(
+          t.Object(
           {
             currentPassword: t.String({ minLength: 12, maxLength: 128 }),
             newPassword: t.String({ minLength: 12, maxLength: 128 }),
           },
           { additionalProperties: false },
+        ),
+          authExamples.merchantPassword,
         ),
         response: {
           200: t.Object({

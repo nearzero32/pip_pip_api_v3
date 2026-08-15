@@ -87,6 +87,7 @@ export const governorateRoutes = (
       },
       {
         params: idParam,
+        parse: "json",
         body: t.Object(
           {
             status: t.Optional(
