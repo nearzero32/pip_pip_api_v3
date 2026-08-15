@@ -23,6 +23,28 @@ const fakeModule = (overrides: Partial<AuthModule> = {}): AuthModule => {
 };
 
 describe("API foundation", () => {
+  test("responds to CORS preflight and reflects the request origin", async () => {
+    const origin = "http://localhost:3000";
+    const preflight = await appWith().handle(
+      new Request("http://localhost/health/live", {
+        method: "OPTIONS",
+        headers: {
+          origin,
+          "access-control-request-method": "GET",
+          "access-control-request-headers": "authorization,x-city-id",
+        },
+      }),
+    );
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(origin);
+    expect(preflight.headers.get("access-control-allow-credentials")).toBe("true");
+
+    const actual = await appWith().handle(
+      new Request("http://localhost/health/live", { headers: { origin } }),
+    );
+    expect(actual.headers.get("access-control-allow-origin")).toBe(origin);
+  });
+
   test("liveness has a stable response and does not call PostgreSQL", async () => {
     let called = false;
     const app = appWith(async () => { called = true; });

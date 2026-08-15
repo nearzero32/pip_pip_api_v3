@@ -1,3 +1,4 @@
+import { cors } from "@elysiajs/cors";
 import { Elysia, status } from "elysia";
 import { AppError } from "./errors/app-error";
 import { healthRoutes, type HealthDependencies } from "./health/routes";
@@ -73,6 +74,15 @@ export interface AppDependencies extends HealthDependencies {
 
 export function createApp(dependencies: AppDependencies) {
   return new Elysia({ name: "pip-pip-api-v3" })
+    .use(
+      cors({
+        origin: true,
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        allowedHeaders: true,
+        exposeHeaders: ["X-Request-Id", "Retry-After"],
+      }),
+    )
     .use(createOpenApiPlugin())
     .derive(({ request, set }) => {
       const requestId = resolveRequestId(request.headers.get("x-request-id"));
