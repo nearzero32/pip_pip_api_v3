@@ -124,7 +124,9 @@ export function createApp(dependencies: AppDependencies) {
             ...(error.details ? { details: error.details } : {}),
           },
           request_id: requestId,
-          ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
+          ...(error.retryable === undefined
+            ? {}
+            : { retryable: error.retryable }),
         });
       }
       if (code === "NOT_FOUND") {
@@ -182,7 +184,14 @@ export function createApp(dependencies: AppDependencies) {
           )
         : new Elysia()) as unknown as Parameters<Elysia["use"]>[0],
     )
-    .use(dependencies.authModule && dependencies.deliveryPricingService ? deliveryPricingRoutes(dependencies.authModule, dependencies.deliveryPricingService) : new Elysia())
+    .use(
+      dependencies.authModule && dependencies.deliveryPricingService
+        ? deliveryPricingRoutes(
+            dependencies.authModule,
+            dependencies.deliveryPricingService,
+          )
+        : new Elysia(),
+    )
     .use(
       dependencies.authModule && dependencies.orderService
         ? orderRoutes(

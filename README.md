@@ -95,6 +95,7 @@ Liveness is process-only. Readiness checks PostgreSQL and Redis independently an
 | `bun run db:migrate:prod` | Apply generated migrations from the production bundle |
 | `bun run db:seed` | Idempotently insert the 18 initial Iraqi Governorates |
 | `bun run db:seed:prod` | Run the Governorate seed from the production bundle |
+| `bun run db:create-super-admin -- --email you@example.com --password 'at least 12 chars'` | Insert an ACTIVE SUPER_ADMIN (use `--update` to reset an existing email) |
 | `bun run db:check` | Check Drizzle migration snapshot consistency |
 
 Integration tests require explicit local PostgreSQL and Redis URLs:
