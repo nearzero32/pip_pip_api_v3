@@ -6,6 +6,10 @@ import { errorResponse, standardErrors } from "../auth/http/shared";
 import { authIdentity, requestIdOf } from "../geography/shared";
 import { document } from "../../openapi/document";
 import { orderExamples } from "../../openapi/examples/orders";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { DeliveryPricingService } from "./delivery-pricing.service";
 
 const uuid=t.String({format:"uuid"});
@@ -20,7 +24,7 @@ const estimateResponse=t.Object({store:t.Object({id:uuid,name:t.String(),orderAc
 export const deliveryPricingRoutes=(auth:AuthModule,service:DeliveryPricingService)=>new Elysia({name:"delivery-pricing-routes"})
   .post("/api/v1/dashboard/cities/:cityId/delivery-pricing/versions",async({request,set,params,body})=>service.create(await authIdentity(auth,request,dashboardContext,requestIdOf(set)),params.cityId,body,requestIdOf(set)),{params:t.Object({cityId:uuid}),parse:"json",body:document(pricingInput,orderExamples.deliveryPricingCreate),response:{200:pricing,...errors},detail:{tags:["Dashboard — Delivery Pricing"],summary:"Create immutable DRAFT pricing version",security:[{bearerAuth:[]}]}})
   .post("/api/v1/dashboard/cities/:cityId/delivery-pricing/versions/:versionId/activate",async({request,set,params})=>service.activate(await authIdentity(auth,request,dashboardContext,requestIdOf(set)),params.cityId,params.versionId,requestIdOf(set)),{params,response:{200:pricing,...errors},detail:{tags:["Dashboard — Delivery Pricing"],summary:"Atomically activate pricing version",description:"SUPER_ADMIN only. INACTIVE versions cannot be reactivated. Redis is updated after commit using activation-revision CAS.",security:[{bearerAuth:[]}]}})
-  .get("/api/v1/dashboard/cities/:cityId/delivery-pricing/versions",async({request,set,params})=>service.list(await authIdentity(auth,request,dashboardContext,requestIdOf(set)),params.cityId),{params:t.Object({cityId:uuid}),response:{200:t.Array(pricing),...errors},detail:{tags:["Dashboard — Delivery Pricing"],summary:"List City pricing history",security:[{bearerAuth:[]}]}})
+  .get("/api/v1/dashboard/cities/:cityId/delivery-pricing/versions",async({request,set,params,query})=>service.list(await authIdentity(auth,request,dashboardContext,requestIdOf(set)),params.cityId,query),{params:t.Object({cityId:uuid}),query:t.Object({...dashboardListQuery,status:t.Optional(t.String()),createdByAccountId:t.Optional(uuid),createdFrom:t.Optional(t.String()),createdTo:t.Optional(t.String()),activatedFrom:t.Optional(t.String()),activatedTo:t.Optional(t.String())},{additionalProperties:false}),response:{200:dashboardPaginated(pricing),...errors},detail:{tags:["Dashboard — Delivery Pricing"],summary:"List City pricing history",security:[{bearerAuth:[]}]}})
   .get("/api/v1/dashboard/cities/:cityId/delivery-pricing/versions/:versionId",async({request,set,params})=>service.getSuper(await authIdentity(auth,request,dashboardContext,requestIdOf(set)),params.cityId,params.versionId),{params,response:{200:pricing,...errors},detail:{tags:["Dashboard — Delivery Pricing"],summary:"Get pricing version",security:[{bearerAuth:[]}]}})
   .get("/api/v1/dashboard/cities/:cityId/delivery-pricing/active",async({request,set,params})=>service.activeForSuper(await authIdentity(auth,request,dashboardContext,requestIdOf(set)),params.cityId),{params:t.Object({cityId:uuid}),response:{200:activePricing,...errors},detail:{tags:["Dashboard — Delivery Pricing"],summary:"Get active City pricing",security:[{bearerAuth:[]}]}})
   .get("/api/v1/dashboard/delivery-pricing/active",async({request,set})=>service.activeForAdmin(await authIdentity(auth,request,dashboardContext,requestIdOf(set))),{response:{200:activePricing,...errors},detail:{tags:["Dashboard — Delivery Pricing"],summary:"Get active pricing for signed ADMIN City",security:[{bearerAuth:[]}]}})

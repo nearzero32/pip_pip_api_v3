@@ -15,6 +15,13 @@ import {
   dashboardListResult,
   dashboardPageOf,
   likeContains,
+  parseAllowlistedSort,
+  parseOptionalDateRange,
+  parseOptionalSearch,
+  parseOptionalUuid,
+  parseSortOrder,
+  searchUuid,
+  sqlDir,
 } from "../dashboard-lists/query";
 import {
   normalizeArabicCategoryName,
@@ -404,7 +411,17 @@ export class ModifierService {
   async listGroups(
     identity: AuthIdentity,
     storeId: string,
-    input: { status?: string; search?: string; page?: number; limit?: number },
+    input: {
+      status?: string;
+      search?: string;
+      productId?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
+      page?: number;
+      limit?: number;
+    },
   ) {
     const cityId = await this.authorize(identity, "modifiers.read", storeId);
     const [store] = await this.client<{ id: string }[]>`
@@ -414,35 +431,45 @@ export class ModifierService {
 
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const searchRaw = input.search?.trim() || null;
-    const search = searchRaw ? likeContains(searchRaw) : null;
+    const searchRaw = parseOptionalSearch(input.search);
+    const pattern = searchRaw ? likeContains(searchRaw) : null;
+    const uuid = searchUuid(searchRaw);
     const status = input.status?.trim() || null;
     if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
-
+    const productId = parseOptionalUuid(input.productId);
+    const created = parseOptionalDateRange({
+      from: input.createdFrom,
+      to: input.createdTo,
+    });
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["name", "createdAt"] as const,
+      "createdAt",
+    );
+    const sortOrder = parseSortOrder(input.sortOrder, "asc");
+    const orderSql = {
+      name: `g.name ${sqlDir(sortOrder)}, g.id ${sqlDir(sortOrder)}`,
+      createdAt: `g.created_at ${sqlDir(sortOrder)}, g.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
+    const where = `
+      g.store_id = $1::uuid and g.city_id = $2::uuid
+      and ($3::text is null or g.status = $3::product_status)
+      and ($3::text is not null or g.status <> 'ARCHIVED')
+      and ($4::text is null or g.name ilike $4 escape '\\' or ($5::uuid is not null and g.id = $5::uuid))
+      and ($6::uuid is null or exists (select 1 from products p where p.modifier_group_id = g.id and p.id = $6::uuid))
+      and ($7::timestamptz is null or g.created_at >= $7)
+      and ($8::timestamptz is null or g.created_at <= $8)`;
+    const base = [storeId, cityId, status, pattern, uuid, productId, created.from, created.to];
     const rows = (await this.client.unsafe(
-      `select ${GROUP_SELECT}
-       from modifier_groups g
-       where g.store_id = $1::uuid
-         and g.city_id = $2::uuid
-         and ($3::text is null or g.status = $3::product_status)
-         and ($3::text is not null or g.status <> 'ARCHIVED')
-         and ($4::text is null or g.name ilike $4 escape '\\')
-       order by g.created_at asc, g.id asc
-       limit $5::int offset $6::int`,
-      [storeId, cityId, status, search, limit, offset],
+      `select ${GROUP_SELECT} from modifier_groups g where ${where}
+       order by ${orderSql} limit $9::int offset $10::int`,
+      [...base, limit, offset],
     )) as GroupRow[];
-
     const [count] = (await this.client.unsafe(
-      `select count(*)::text as total
-       from modifier_groups g
-       where g.store_id = $1::uuid
-         and g.city_id = $2::uuid
-         and ($3::text is null or g.status = $3::product_status)
-         and ($3::text is not null or g.status <> 'ARCHIVED')
-         and ($4::text is null or g.name ilike $4 escape '\\')`,
-      [storeId, cityId, status, search],
+      `select count(*)::text as total from modifier_groups g where ${where}`,
+      base,
     )) as { total: string }[];
 
     const groupIds = rows.map((row) => row.id);

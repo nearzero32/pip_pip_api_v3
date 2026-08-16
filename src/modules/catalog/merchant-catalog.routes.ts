@@ -315,7 +315,7 @@ export const merchantCatalogRoutes = (
       async ({ request, set }) => {
         const id = requestIdOf(set);
         const { identity, storeId } = await trustedStore(auth, request, id);
-        return deps.storeCategories.list(identity, storeId, {});
+        return { data: (await deps.storeCategories.list(identity, storeId, { unpaged: true })).data };
       },
       {
         response: {

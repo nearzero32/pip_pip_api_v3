@@ -9,6 +9,10 @@ import {
   standardErrors,
 } from "../http/shared";
 import { assertAllowedBodyKeys } from "../../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../../dashboard-lists/query";
 
 const tag = ["Dashboard — Merchants"];
 
@@ -64,12 +68,7 @@ const merchantDto = t.Object({
   statusChangedAt: t.String({ format: "date-time" }),
 });
 
-const listResponse = t.Object({
-  data: t.Array(merchantDto),
-  page: t.Integer(),
-  limit: t.Integer(),
-  total: t.Integer(),
-});
+const listResponse = dashboardPaginated(merchantDto);
 
 const merchantErrors = {
   ...standardErrors,
@@ -138,11 +137,11 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
       {
         query: t.Object(
           {
+            ...dashboardListQuery,
             status: t.Optional(merchantStatus),
             storeId: t.Optional(t.String({ format: "uuid" })),
-            search: t.Optional(t.String({ maxLength: 100 })),
-            page: t.Optional(t.Integer({ minimum: 1 })),
-            limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
+            createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
+            createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
           },
           { additionalProperties: false },
         ),

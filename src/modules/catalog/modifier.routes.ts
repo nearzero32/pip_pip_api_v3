@@ -292,7 +292,10 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         query: t.Object(
           {
             ...dashboardListQuery,
+            productId: t.Optional(t.String({ format: "uuid" })),
             status: t.Optional(catalogStatus),
+            createdFrom: t.Optional(t.String()),
+            createdTo: t.Optional(t.String()),
           },
           { additionalProperties: false },
         ),

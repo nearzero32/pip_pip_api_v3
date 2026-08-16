@@ -14,8 +14,12 @@ import { dateValue, pageOf } from "../geography/shared";
 import {
   dashboardListResult,
   dashboardPageOf,
-  likeContains,
 } from "../dashboard-lists/query";
+import {
+  parseProductListQuery,
+  PRODUCT_LIST_WHERE_SQL,
+  productListParams,
+} from "../dashboard-lists/product-list-query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import {
@@ -900,6 +904,13 @@ export class ProductService {
       status?: string;
       categoryId?: string;
       search?: string;
+      isAvailable?: string | boolean;
+      hasSizes?: string | boolean;
+      modifierGroupId?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
       page?: number;
       limit?: number;
     },
@@ -910,30 +921,13 @@ export class ProductService {
       where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
 
+    const filters = parseProductListQuery(input);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const searchRaw = input.search?.trim() || null;
-    const search = searchRaw ? likeContains(searchRaw) : null;
-    const status = input.status?.trim() || null;
-    if (
-      status &&
-      !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)
-    ) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
-    const categoryId =
-      input.categoryId === undefined ||
-      input.categoryId === "null" ||
-      input.categoryId === ""
-        ? input.categoryId === "null"
-          ? "NULL"
-          : null
-        : input.categoryId;
-
-    if (categoryId && categoryId !== "NULL") {
+    if (filters.categoryId && filters.categoryId !== "NULL") {
       const [category] = await this.client<{ id: string }[]>`
         select id::text as id from store_categories
-        where id = ${categoryId}
+        where id = ${filters.categoryId}
           and store_id = ${storeId}
           and city_id = ${cityId}`;
       if (!category) {
@@ -944,39 +938,21 @@ export class ProductService {
         );
       }
     }
-
+    const params = productListParams(storeId, cityId, filters);
     const rows = (await this.client.unsafe(
       `select ${PRODUCT_SELECT}
        from products p
-       where p.store_id = $1::uuid
-         and p.city_id = $2::uuid
-         and ($3::text is null or p.status = $3::product_status)
-         and ($3::text is not null or p.status <> 'ARCHIVED')
-         and (
-           $4::text is null
-           or ($4::text = 'NULL' and p.category_id is null)
-           or p.category_id = $4::uuid
-         )
-         and ($5::text is null or p.name ilike $5 escape '\\')
-       order by p.display_order asc, p.created_at asc, p.id asc
-       limit $6::int offset $7::int`,
-      [storeId, cityId, status, categoryId, search, limit, offset],
+       where ${PRODUCT_LIST_WHERE_SQL}
+       order by ${filters.orderSql}
+       limit $12::int offset $13::int`,
+      [...params, limit, offset],
     )) as ProductRow[];
 
     const [count] = (await this.client.unsafe(
       `select count(*)::text as total
        from products p
-       where p.store_id = $1::uuid
-         and p.city_id = $2::uuid
-         and ($3::text is null or p.status = $3::product_status)
-         and ($3::text is not null or p.status <> 'ARCHIVED')
-         and (
-           $4::text is null
-           or ($4::text = 'NULL' and p.category_id is null)
-           or p.category_id = $4::uuid
-         )
-         and ($5::text is null or p.name ilike $5 escape '\\')`,
-      [storeId, cityId, status, categoryId, search],
+       where ${PRODUCT_LIST_WHERE_SQL}`,
+      params,
     )) as { total: string }[];
 
     const productIds = rows.map((row) => row.id);

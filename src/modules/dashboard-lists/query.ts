@@ -54,8 +54,7 @@ export const dashboardListQuery = {
   ),
   sortOrder: t.Optional(
     t.Union([t.Literal("asc"), t.Literal("desc")], {
-      default: "desc",
-      description: "Sort direction. Default desc unless the resource uses displayOrder.",
+      description: "Sort direction. Resource-specific default when omitted.",
     }),
   ),
 };
@@ -163,6 +162,50 @@ export function parseAllowlistedSort<T extends string>(
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function parseOptionalBool(
+  value?: string | boolean | null,
+): boolean | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (value === true || value === "true" || value === "1") return true;
+  if (value === false || value === "false" || value === "0") return false;
+  throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+}
+
+export function parseOptionalIntRange(
+  min?: string | number | null,
+  max?: string | number | null,
+): { min: number | null; max: number | null } {
+  const lo = parseOptionalInt(min);
+  const hi = parseOptionalInt(max);
+  if (lo != null && hi != null && lo > hi) {
+    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+  }
+  return { min: lo, max: hi };
+}
+
+export function parseOptionalInt(
+  value?: string | number | null,
+  bounds?: { min?: number; max?: number },
+): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(n)) {
+    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+  }
+  if (bounds?.min != null && n < bounds.min) {
+    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+  }
+  if (bounds?.max != null && n > bounds.max) {
+    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+  }
+  return n;
+}
+
+export function searchUuid(search: string | null): string | null {
+  if (!search) return null;
+  return UUID_RE.test(search) ? search : null;
+}
 
 export function parseOptionalUuid(value?: string | null): string | null {
   const trimmed = value?.trim() || null;

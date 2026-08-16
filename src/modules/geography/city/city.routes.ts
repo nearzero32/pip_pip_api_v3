@@ -161,6 +161,8 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
                 t.Literal("ARCHIVED"),
               ]),
             ),
+            createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
+            createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
           },
           { additionalProperties: false },
         ),

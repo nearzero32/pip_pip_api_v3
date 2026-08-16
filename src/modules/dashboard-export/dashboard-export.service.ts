@@ -9,9 +9,50 @@ import {
 } from "../auth/staff/authorization";
 import {
   likeContains,
+  parseAllowlistedSort,
+  parseOptionalDateRange,
+  parseOptionalSearch,
+  parseOptionalUuid,
+  parseSortOrder,
+  searchUuid,
+  sqlDir,
   dashboardPageOf,
   dashboardListResult,
 } from "../dashboard-lists/query";
+import {
+  ASSIGNMENT_LIST_WHERE_SQL,
+  assignmentListParams,
+  COLLECTION_LIST_WHERE_SQL,
+  collectionListParams,
+  EVENT_LIST_WHERE_SQL,
+  eventListParams,
+  HANDOFF_LIST_WHERE_SQL,
+  handoffListParams,
+  OFFER_ROUND_LIST_WHERE_SQL,
+  offerRoundListParams,
+  opsPublicFilters,
+  parseAssignmentListQuery,
+  parseCollectionListQuery,
+  parseEventListQuery,
+  parseHandoffListQuery,
+  parseOfferRoundListQuery,
+  parseReturnListQuery,
+  RETURN_LIST_WHERE_SQL,
+  returnListParams,
+  type OpsListInput,
+} from "../dashboard-lists/ops-list-query";
+import {
+  DELIVERY_PRICING_LIST_WHERE_SQL,
+  deliveryPricingListParams,
+  parseCandidateListQuery,
+  parseDeliveryPricingListQuery,
+  parseProductListQuery,
+  parseStoreCategoryListQuery,
+  PRODUCT_LIST_WHERE_SQL,
+  productListParams,
+  STORE_CATEGORY_LIST_WHERE_SQL,
+  storeCategoryListParams,
+} from "../dashboard-lists/product-list-query";
 import {
   parseOrderListQuery,
   ORDER_LIST_WHERE_SQL,
@@ -20,12 +61,13 @@ import {
   type OrderListQuery,
 } from "../dashboard-lists/order-list-query";
 import {
-  COMMISSION_STORE_WHERE_SQL,
-  parseOptionalSearch,
-  parseOptionalUuid,
-  parseStoreStatusFilter,
+  parseStoreListQuery,
+  storeListParams,
+  storeListPublicFilters,
   STORE_LIST_WHERE_SQL,
-} from "../stores/store-list-filters";
+  COMMISSION_STORE_WHERE_SQL,
+  commissionStoreParams,
+} from "../dashboard-lists/store-list-query";
 import {
   buildExcelWorkbook,
   excelFileResponse,
@@ -277,20 +319,18 @@ export class DashboardExportService {
 
   async stores(
     identity: AuthIdentity,
-    query: { search?: string; status?: string; mainCategoryId?: string },
+    query: Record<string, string | undefined>,
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "stores.read", "stores.export",
     );
-    const search = parseOptionalSearch(query.search);
-    const pattern = search ? likeContains(search) : null;
-    const status = parseStoreStatusFilter(query.status);
-    const mainCategoryId = parseOptionalUuid(query.mainCategoryId);
+    const filters = parseStoreListQuery(query);
+    const params = storeListParams(cityId, filters);
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from stores s
        where ${STORE_LIST_WHERE_SQL}`,
-      [cityId, status, mainCategoryId, pattern],
+      params,
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
@@ -300,15 +340,15 @@ export class DashboardExportService {
        from stores s
        join main_categories mc on mc.id = s.main_category_id and mc.city_id = s.city_id
        where ${STORE_LIST_WHERE_SQL}
-       order by s.display_order asc, s.created_at asc, s.id asc`,
-      [cityId, status, mainCategoryId, pattern],
+       order by ${filters.orderSql}`,
+      params,
     )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "stores",
       endpoint: "/api/v1/dashboard/stores/export",
       permission: "stores.export",
       filename: "stores.xlsx",
-      filters: { search, status, mainCategoryId },
+      filters: storeListPublicFilters(filters),
       cityId: cityId,
     }, "المتاجر", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -331,19 +371,18 @@ export class DashboardExportService {
 
   async storeCommissions(
     identity: AuthIdentity,
-    query: { search?: string; status?: string },
+    query: Record<string, string | undefined>,
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "stores.commission.read", "stores.commission.export",
     );
-    const search = parseOptionalSearch(query.search);
-    const pattern = search ? likeContains(search) : null;
-    const status = parseStoreStatusFilter(query.status);
+    const filters = parseStoreListQuery(query);
+    const params = commissionStoreParams(cityId, filters);
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from stores s
        where ${COMMISSION_STORE_WHERE_SQL}`,
-      [cityId, status, pattern],
+      params,
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
@@ -361,15 +400,15 @@ export class DashboardExportService {
        ) h on true
        left join account_emails e on e.account_id = h.changed_by_account_id and e.is_primary = true
        where ${COMMISSION_STORE_WHERE_SQL}
-       order by s.display_order asc, s.created_at asc, s.id asc`,
-      [cityId, status, pattern],
+       order by ${filters.orderSql}`,
+      params,
     )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "store-commissions",
       endpoint: "/api/v1/dashboard/store-commissions/export",
       permission: "stores.commission.export",
       filename: "store-commissions.xlsx",
-      filters: { search, status },
+      filters: storeListPublicFilters(filters),
       cityId: cityId,
     }, "نسب الاستقطاع", [
       { key: "storeId", header: "معرف المتجر", type: "text", width: 38 },
@@ -549,7 +588,7 @@ export class DashboardExportService {
   async storeCategories(
     identity: AuthIdentity,
     storeId: string,
-    query: { status?: string; parentCategoryId?: string },
+    query: Record<string, string | undefined>,
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
@@ -558,40 +597,28 @@ export class DashboardExportService {
     const [store] = await this.client<{ id: string }[]>`
       select id::text from stores where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
-    const status = query.status?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status))
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    const parentFilter =
-      query.parentCategoryId === undefined
-        ? null
-        : query.parentCategoryId === "null" || query.parentCategoryId === ""
-          ? "ROOT"
-          : query.parentCategoryId;
+    const filters = parseStoreCategoryListQuery(query);
+    const params = storeCategoryListParams(storeId, cityId, filters);
     const [count] = (await this.client.unsafe(
-      `select count(*)::int as total from store_categories c
-       where c.store_id = $1::uuid and c.city_id = $2::uuid
-         and ($3::text is null or c.status = $3::main_category_status)
-         and ($3::text is not null or c.status <> 'ARCHIVED')
-         and ($4::text is null or ($4::text = 'ROOT' and c.parent_category_id is null) or c.parent_category_id = $4::uuid)`,
-      [storeId, cityId, status, parentFilter],
+      `select count(*)::int as total from store_categories c where ${STORE_CATEGORY_LIST_WHERE_SQL}`,
+      params,
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
       `select c.id::text, c.name, c.status::text, c.display_order, c.parent_category_id::text, c.created_at
        from store_categories c
-       where c.store_id = $1::uuid and c.city_id = $2::uuid
-         and ($3::text is null or c.status = $3::main_category_status)
-         and ($3::text is not null or c.status <> 'ARCHIVED')
-         and ($4::text is null or ($4::text = 'ROOT' and c.parent_category_id is null) or c.parent_category_id = $4::uuid)
-       order by c.display_order asc, c.created_at asc, c.id asc`,
-      [storeId, cityId, status, parentFilter],
+       left join store_categories p
+         on p.id = c.parent_category_id and p.store_id = c.store_id
+       where ${STORE_CATEGORY_LIST_WHERE_SQL}
+       order by ${filters.orderSql}`,
+      params,
     )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "store-categories",
       endpoint: "/api/v1/dashboard/stores/:storeId/categories/export",
       permission: "store_categories.export",
       filename: "store-categories.xlsx",
-      filters: { storeId, status, parentCategoryId: parentFilter },
+      filters: { storeId, ...opsPublicFilters(filters as unknown as Record<string, unknown>) },
       cityId: cityId,
     }, "تصنيفات المتجر", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -609,7 +636,7 @@ export class DashboardExportService {
   async products(
     identity: AuthIdentity,
     storeId: string,
-    query: { status?: string; categoryId?: string; search?: string },
+    query: Record<string, string | undefined>,
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
@@ -618,43 +645,26 @@ export class DashboardExportService {
     const [store] = await this.client<{ id: string }[]>`
       select id::text from stores where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
-    const search = query.search?.trim() || null;
-    const status = query.status?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status))
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    const categoryId =
-      query.categoryId === undefined || query.categoryId === ""
-        ? null
-        : query.categoryId === "null"
-          ? "NULL"
-          : query.categoryId;
+    const filters = parseProductListQuery(query);
+    const params = productListParams(storeId, cityId, filters);
     const [count] = (await this.client.unsafe(
-      `select count(*)::int as total from products p
-       where p.store_id = $1::uuid and p.city_id = $2::uuid
-         and ($3::text is null or p.status = $3::product_status)
-         and ($3::text is not null or p.status <> 'ARCHIVED')
-         and ($4::text is null or ($4::text = 'NULL' and p.category_id is null) or p.category_id = $4::uuid)
-         and ($5::text is null or p.name ilike ('%' || $5 || '%'))`,
-      [storeId, cityId, status, categoryId, search],
+      `select count(*)::int as total from products p where ${PRODUCT_LIST_WHERE_SQL}`,
+      params,
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
       `select p.id::text, p.name, p.status::text, p.base_price, p.display_order, p.created_at
        from products p
-       where p.store_id = $1::uuid and p.city_id = $2::uuid
-         and ($3::text is null or p.status = $3::product_status)
-         and ($3::text is not null or p.status <> 'ARCHIVED')
-         and ($4::text is null or ($4::text = 'NULL' and p.category_id is null) or p.category_id = $4::uuid)
-         and ($5::text is null or p.name ilike ('%' || $5 || '%'))
-       order by p.display_order asc, p.created_at asc, p.id asc`,
-      [storeId, cityId, status, categoryId, search],
+       where ${PRODUCT_LIST_WHERE_SQL}
+       order by ${filters.orderSql}`,
+      params,
     )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "products",
       endpoint: "/api/v1/dashboard/stores/:storeId/products/export",
       permission: "products.export",
       filename: "products.xlsx",
-      filters: { storeId, search, status, categoryId },
+      filters: { storeId, ...opsPublicFilters(filters as unknown as Record<string, unknown>) },
       cityId: cityId,
     }, "المنتجات", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -726,7 +736,15 @@ export class DashboardExportService {
 
   async merchants(
     identity: AuthIdentity,
-    query: { status?: string; storeId?: string; search?: string },
+    query: {
+      status?: string;
+      storeId?: string;
+      search?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
+    },
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
@@ -735,36 +753,79 @@ export class DashboardExportService {
     const status = query.status?.trim() || null;
     if (status && !["ACTIVE", "INACTIVE", "SUSPENDED"].includes(status))
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    const storeId = query.storeId && query.storeId !== "null" ? query.storeId : null;
-    const search = query.search?.trim() || null;
-    const rows = (await this.client.unsafe(
-      `select distinct on (m.account_id)
-         a.id::text as account_id, ph.phone_e164, m.display_name, m.status::text as merchant_status,
-         s.name as store_name, m.created_at, m.updated_at
+    const storeId =
+      !query.storeId?.trim() || query.storeId === "null"
+        ? null
+        : parseOptionalUuid(query.storeId);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const uuid = searchUuid(search);
+    const created = parseOptionalDateRange({
+      from: query.createdFrom,
+      to: query.createdTo,
+    });
+    const sortBy = parseAllowlistedSort(
+      query.sortBy,
+      ["createdAt", "displayName", "phone"] as const,
+      "createdAt",
+    );
+    const sortOrder = parseSortOrder(query.sortOrder, "desc");
+    const orderSql = {
+      createdAt: `m.created_at ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      displayName: `coalesce(m.display_name, '') ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      phone: `ph.phone_e164 ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
+    const where = `
+      m.city_id = $1::uuid
+      and ($2::text is null or m.status = $2::merchant_profile_status)
+      and ($3::uuid is null or m.store_id = $3::uuid)
+      and ($4::timestamptz is null or m.created_at >= $4::timestamptz)
+      and ($5::timestamptz is null or m.created_at <= $5::timestamptz)
+      and (
+        $6::text is null
+        or ph.phone_e164 ilike $6 escape '\\'
+        or coalesce(m.display_name, '') ilike $6 escape '\\'
+        or s.name ilike $6 escape '\\'
+        or ($7::uuid is not null and (a.id = $7::uuid or m.store_id = $7::uuid))
+      )`;
+    const params = [cityId, status, storeId, created.from, created.to, pattern, uuid];
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total
        from merchant_profiles m
        join accounts a on a.id = m.account_id
        join stores s on s.id = m.store_id and s.city_id = m.city_id
-       join account_phones ph on ph.account_id = a.id and ph.verified_at is not null
-       where m.city_id = $1::uuid
-         and ($2::text is null or m.status = $2::merchant_profile_status)
-         and ($3::uuid is null or m.store_id = $3::uuid)
-         and ($4::text is null or ph.phone_e164 ilike ('%' || $4 || '%') or coalesce(m.display_name, '') ilike ('%' || $4 || '%'))
-       order by m.account_id, ph.is_primary desc, ph.created_at asc`,
-      [cityId, status, storeId, search],
+       join lateral (
+         select phone_e164 from account_phones
+         where account_id = a.id and verified_at is not null
+         order by is_primary desc, created_at asc
+         limit 1
+       ) ph on true
+       where ${where}`,
+      params,
+    )) as { total: number }[];
+    this.assertLimit(count?.total ?? 0);
+    const rows = (await this.client.unsafe(
+      `select a.id::text as account_id, ph.phone_e164, m.display_name, m.status::text as merchant_status,
+              s.name as store_name, m.created_at
+       from merchant_profiles m
+       join accounts a on a.id = m.account_id
+       join stores s on s.id = m.store_id and s.city_id = m.city_id
+       join lateral (
+         select phone_e164 from account_phones
+         where account_id = a.id and verified_at is not null
+         order by is_primary desc, created_at asc
+         limit 1
+       ) ph on true
+       where ${where}
+       order by ${orderSql}`,
+      params,
     )) as Record<string, unknown>[];
-    rows.sort((a, b) => {
-      const ac = String(a.created_at);
-      const bc = String(b.created_at);
-      if (ac !== bc) return ac < bc ? -1 : 1;
-      return String(a.account_id) < String(b.account_id) ? -1 : 1;
-    });
-    this.assertLimit(rows.length);
     return this.file(identity, {
       resource: "merchants",
       endpoint: "/api/v1/dashboard/merchants/export",
       permission: "merchants.export",
       filename: "merchants.xlsx",
-      filters: { search, status, storeId },
+      filters: { search, status, storeId, sortBy, sortOrder },
       cityId: cityId,
     }, "التجار", [
       { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
@@ -827,28 +888,31 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async orderEvents(identity: AuthIdentity, query: { orderId?: string }, requestId: string) {
+  async orderEvents(identity: AuthIdentity, query: OpsListInput, requestId: string) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "orders.read", "orders.events.export",
     );
-    const orderId = query.orderId?.trim() || null;
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_events e
-      join orders o on o.id = e.order_id
-      where o.city_id = ${cityId} and (${orderId}::uuid is null or e.order_id = ${orderId})`;
+    const filters = parseEventListQuery(query);
+    const params = eventListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_events e join orders o on o.id = e.order_id where ${EVENT_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select e.id::text, o.order_number, e.event_type::text, e.actor_type::text,
-             e.source::text, e.reason, e.created_at
-      from order_events e join orders o on o.id = e.order_id
-      where o.city_id = ${cityId} and (${orderId}::uuid is null or e.order_id = ${orderId})
-      order by e.created_at desc, e.id desc`;
+    const rows = (await this.client.unsafe(
+      `select e.id::text, o.order_number, e.event_type::text, e.actor_type::text,
+              e.source::text, e.reason, e.created_at
+       from order_events e join orders o on o.id = e.order_id
+       where ${EVENT_LIST_WHERE_SQL}
+       order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "order-events",
       endpoint: "/api/v1/dashboard/order-events/export",
       permission: "orders.events.export",
       filename: "order-events.xlsx",
-      filters: { orderId },
+      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
       cityId: cityId,
     }, "أحداث الطلبات", [
       { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
@@ -864,27 +928,31 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async orderAssignments(identity: AuthIdentity, requestId: string) {
+  async orderAssignments(identity: AuthIdentity, query: OpsListInput, requestId: string) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "orders.read", "orders.assignments.export",
     );
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_driver_assignments a
-      join orders o on o.id = a.order_id where o.city_id = ${cityId}`;
+    const filters = parseAssignmentListQuery(query);
+    const params = assignmentListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_driver_assignments a join orders o on o.id = a.order_id where ${ASSIGNMENT_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select a.id::text, o.order_number, a.driver_id::text, a.status::text,
-             a.assignment_sequence, a.assigned_at, a.completed_at, a.cancelled_at
-      from order_driver_assignments a
-      join orders o on o.id = a.order_id
-      where o.city_id = ${cityId}
-      order by a.assigned_at desc, a.id desc`;
+    const rows = (await this.client.unsafe(
+      `select a.id::text, o.order_number, a.driver_id::text, a.status::text,
+              a.assignment_sequence, a.assigned_at, a.completed_at
+       from order_driver_assignments a join orders o on o.id = a.order_id
+       where ${ASSIGNMENT_LIST_WHERE_SQL}
+       order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "order-assignments",
       endpoint: "/api/v1/dashboard/order-assignments/export",
       permission: "orders.assignments.export",
       filename: "order-assignments.xlsx",
-      filters: {},
+      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
       cityId: cityId,
     }, "التعيينات", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -901,35 +969,35 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async orderOfferRounds(
-    identity: AuthIdentity,
-    query: { orderId?: string },
-    requestId: string,
-  ) {
+  async orderOfferRounds(identity: AuthIdentity, query: OpsListInput, requestId: string) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "order_offers.read", "order_offers.export",
     );
-    const orderId = query.orderId?.trim() || null;
-    if (orderId) {
+    const filters = parseOfferRoundListQuery(query);
+    if (filters.orderId) {
       const [order] = await this.client<{ id: string }[]>`
-        select id::text from orders where id = ${orderId} and city_id = ${cityId}`;
+        select id::text from orders where id = ${filters.orderId} and city_id = ${cityId}`;
       if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
     }
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_offer_rounds
-      where city_id = ${cityId} and (${orderId}::uuid is null or order_id = ${orderId})`;
+    const params = offerRoundListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_offer_rounds r join orders o on o.id = r.order_id where ${OFFER_ROUND_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select r.id::text, o.order_number, r.status::text, r.opened_at, r.closed_at, r.final_driver_fee
-      from order_offer_rounds r join orders o on o.id = r.order_id
-      where r.city_id = ${cityId} and (${orderId}::uuid is null or r.order_id = ${orderId})
-      order by r.opened_at desc, r.id desc`;
+    const rows = (await this.client.unsafe(
+      `select r.id::text, o.order_number, r.status::text, r.opened_at, r.closed_at, r.final_driver_fee
+       from order_offer_rounds r join orders o on o.id = r.order_id
+       where ${OFFER_ROUND_LIST_WHERE_SQL}
+       order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "order-offer-rounds",
       endpoint: "/api/v1/dashboard/order-offer-rounds/export",
       permission: "order_offers.export",
       filename: "order-offer-rounds.xlsx",
-      filters: { orderId },
+      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
       cityId: cityId,
     }, "جولات العروض", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -944,26 +1012,31 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async orderHandoffs(identity: AuthIdentity, requestId: string) {
+  async orderHandoffs(identity: AuthIdentity, query: OpsListInput, requestId: string) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "orders.read", "orders.handoffs.export",
     );
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_driver_handoffs h
-      join orders o on o.id = h.order_id where o.city_id = ${cityId}`;
+    const filters = parseHandoffListQuery(query);
+    const params = handoffListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_driver_handoffs h join orders o on o.id = h.order_id where ${HANDOFF_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select h.id::text, o.order_number, h.status::text, h.from_driver_id::text,
-             h.to_driver_id::text, h.created_at, h.completed_at
-      from order_driver_handoffs h join orders o on o.id = h.order_id
-      where o.city_id = ${cityId}
-      order by h.created_at desc, h.id desc`;
+    const rows = (await this.client.unsafe(
+      `select h.id::text, o.order_number, h.status::text, h.from_driver_id::text,
+              h.to_driver_id::text, h.created_at, h.completed_at
+       from order_driver_handoffs h join orders o on o.id = h.order_id
+       where ${HANDOFF_LIST_WHERE_SQL}
+       order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "order-handoffs",
       endpoint: "/api/v1/dashboard/order-handoffs/export",
       permission: "orders.handoffs.export",
       filename: "order-handoffs.xlsx",
-      filters: {},
+      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
       cityId: cityId,
     }, "تسليم السائقين", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -980,25 +1053,30 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async orderReturns(identity: AuthIdentity, requestId: string) {
+  async orderReturns(identity: AuthIdentity, query: OpsListInput, requestId: string) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "orders.read", "orders.returns.export",
     );
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_return_workflows w
-      join orders o on o.id = w.order_id where o.city_id = ${cityId}`;
+    const filters = parseReturnListQuery(query);
+    const params = returnListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_return_workflows w join orders o on o.id = w.order_id where ${RETURN_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select w.id::text, o.order_number, w.status::text, w.created_at, w.completed_at
-      from order_return_workflows w join orders o on o.id = w.order_id
-      where o.city_id = ${cityId}
-      order by w.created_at desc, w.id desc`;
+    const rows = (await this.client.unsafe(
+      `select w.id::text, o.order_number, w.status::text, w.created_at, w.completed_at
+       from order_return_workflows w join orders o on o.id = w.order_id
+       where ${RETURN_LIST_WHERE_SQL}
+       order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "order-returns",
       endpoint: "/api/v1/dashboard/order-returns/export",
       permission: "orders.returns.export",
       filename: "order-returns.xlsx",
-      filters: {},
+      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
       cityId: cityId,
     }, "الإرجاع", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -1012,26 +1090,31 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async orderCollections(identity: AuthIdentity, requestId: string) {
+  async orderCollections(identity: AuthIdentity, query: OpsListInput, requestId: string) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "orders.read", "orders.collections.export",
     );
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_collections c
-      join orders o on o.id = c.order_id where o.city_id = ${cityId}`;
+    const filters = parseCollectionListQuery(query);
+    const params = collectionListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_collections c join orders o on o.id = c.order_id where ${COLLECTION_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select c.id::text, o.order_number, c.collecting_driver_id::text,
-             c.expected_amount, c.collected_amount, c.difference_amount, c.collected_at
-      from order_collections c join orders o on o.id = c.order_id
-      where o.city_id = ${cityId}
-      order by c.collected_at desc, c.id desc`;
+    const rows = (await this.client.unsafe(
+      `select c.id::text, o.order_number, c.collecting_driver_id::text,
+              c.expected_amount, c.collected_amount, c.difference_amount, c.collected_at
+       from order_collections c join orders o on o.id = c.order_id
+       where ${COLLECTION_LIST_WHERE_SQL}
+       order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "order-collections",
       endpoint: "/api/v1/dashboard/order-collections/export",
       permission: "orders.collections.export",
       filename: "order-collections.xlsx",
-      filters: {},
+      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
       cityId: cityId,
     }, "التحصيلات", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -1048,33 +1131,44 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async drivers(identity: AuthIdentity, requestId: string) {
+  async drivers(identity: AuthIdentity, query: OpsListInput & { activeOrderCount?: string }, requestId: string) {
     await requireCityPermission(this.client, identity, "orders.assign");
     const cityId = await requireCityPermission(this.client, identity, "drivers.export");
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int as total
-      from driver_profiles dp join accounts a on a.id = dp.account_id
-      where dp.city_id = ${cityId}
-        and dp.approval_status = 'APPROVED'
-        and dp.operational_status = 'ACTIVE'
-        and a.status = 'ACTIVE'`;
+    const filters = parseCandidateListQuery(query);
+    const where = `
+      dp.city_id = $1::uuid and dp.approval_status = 'APPROVED'
+      and dp.operational_status = 'ACTIVE' and a.status = 'ACTIVE'
+      and ($2::text is null or coalesce(ph.phone_e164,'') ilike $2 escape '\\' or ($3::uuid is not null and dp.account_id = $3::uuid))
+      and ($4::int is null or (select count(*)::int from order_driver_assignments oda where oda.driver_id = dp.account_id and oda.completed_at is null and oda.cancelled_at is null) = $4::int)`;
+    const params = [cityId, filters.pattern, filters.searchUuid, filters.activeOrderCount];
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total from driver_profiles dp join accounts a on a.id = dp.account_id
+       left join lateral (select phone_e164 from account_phones where account_id = dp.account_id order by is_primary desc limit 1) ph on true
+       where ${where}`,
+      params,
+    )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select dp.account_id::text, dp.approval_status::text, dp.operational_status::text,
-             coalesce((select ap.phone_e164 from account_phones ap
-                       where ap.account_id = dp.account_id and ap.is_primary = true limit 1), '') as phone
-      from driver_profiles dp join accounts a on a.id = dp.account_id
-      where dp.city_id = ${cityId}
-        and dp.approval_status = 'APPROVED'
-        and dp.operational_status = 'ACTIVE'
-        and a.status = 'ACTIVE'
-      order by dp.account_id asc`;
+    const rows = (await this.client.unsafe(
+      `select dp.account_id::text, dp.approval_status::text, dp.operational_status::text,
+              coalesce(ph.phone_e164,'') as phone,
+              coalesce(ph.phone_e164,'Driver') as display_name,
+              dp.created_at,
+              (
+                select count(*)::int from order_driver_assignments oda
+                where oda.driver_id = dp.account_id and oda.completed_at is null and oda.cancelled_at is null
+              ) as active_order_count
+       from driver_profiles dp join accounts a on a.id = dp.account_id
+       left join lateral (select phone_e164 from account_phones where account_id = dp.account_id order by is_primary desc limit 1) ph on true
+       where ${where}
+       order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "drivers",
       endpoint: "/api/v1/dashboard/drivers/assignment-candidates/export",
       permission: "drivers.export",
       filename: "drivers.xlsx",
-      filters: {},
+      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
       cityId: cityId,
     }, "السائقون", [
       { key: "driverId", header: "معرف السائق", type: "text", width: 38 },
@@ -1087,28 +1181,51 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async employees(identity: AuthIdentity, requestId: string) {
+  async employees(identity: AuthIdentity, query: { search?: string; status?: string; role?: string; permission?: string; createdFrom?: string; createdTo?: string; sortBy?: string; sortOrder?: string }, requestId: string) {
     requireCityAdmin(identity);
     const cityId = await requireCityPermission(this.client, identity, "staff.export");
-    const rows = await this.client<Record<string, unknown>[]>`
-      select a.id::text as account_id, e.email_normalized, sp.display_name,
-             sp.status::text as staff_status, sp.created_at
-      from staff_profiles sp
-      join accounts a on a.id = sp.account_id
-      join account_emails e on e.account_id = a.id and e.is_primary = true
-      join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
-      join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
-      where sp.managed_by_account_id = ${identity.accountId}
-        and s.scope_reference_id = ${cityId}
-      order by e.email_normalized asc, a.id asc`;
-    this.assertLimit(rows.length);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const uuid = searchUuid(search);
+    const created = parseOptionalDateRange({ from: query.createdFrom, to: query.createdTo });
+    const status = query.status?.trim() || null;
+    const role = query.role?.trim() || null;
+    const permission = query.permission?.trim() || null;
+    const sortBy = parseAllowlistedSort(query.sortBy, ["createdAt", "displayName", "email"] as const, "email");
+    const sortOrder = parseSortOrder(query.sortOrder, "asc");
+    const orderSql = {
+      createdAt: `sp.created_at ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      displayName: `coalesce(sp.display_name,'') ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      email: `e.email_normalized ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
+    const where = `sp.managed_by_account_id = $1::uuid and s.scope_reference_id = $2::uuid
+      and ($3::text is null or e.email_normalized ilike $3 escape '\\' or coalesce(sp.display_name,'') ilike $3 escape '\\' or ($4::uuid is not null and a.id = $4::uuid))
+      and ($5::text is null or sp.status = $5::staff_profile_status)
+      and ($6::text is null or exists (select 1 from account_roles ar3 join roles r3 on r3.id = ar3.role_id where ar3.account_id = a.id and ar3.revoked_at is null and r3.code = $6::staff_role_code))
+      and ($7::text is null or exists (select 1 from account_permission_grants g join permissions p on p.id = g.permission_id where g.account_id = a.id and g.revoked_at is null and p.code = $7))
+      and ($8::timestamptz is null or sp.created_at >= $8) and ($9::timestamptz is null or sp.created_at <= $9)`;
+    const params = [identity.accountId, cityId, pattern, uuid, status, role, permission, created.from, created.to];
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total from staff_profiles sp join accounts a on a.id = sp.account_id
+       join account_emails e on e.account_id = a.id and e.is_primary = true
+       join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
+       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
+       where ${where}`,
+      params,
+    )) as { total: number }[];
+    this.assertLimit(count?.total ?? 0);
+    const rows = (await this.client.unsafe(
+      `select a.id::text as account_id, e.email_normalized, sp.display_name, sp.status::text as staff_status, sp.created_at
+       from staff_profiles sp join accounts a on a.id = sp.account_id
+       join account_emails e on e.account_id = a.id and e.is_primary = true
+       join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
+       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
+       where ${where} order by ${orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
-      resource: "employees",
-      endpoint: "/api/v1/dashboard/employees/export",
-      permission: "staff.export",
-      filename: "employees.xlsx",
-      filters: {},
-      cityId: cityId,
+      resource: "employees", endpoint: "/api/v1/dashboard/employees/export", permission: "staff.export",
+      filename: "employees.xlsx", filters: { search, status, role, permission, sortBy, sortOrder }, cityId: cityId,
     }, "الموظفون", [
       { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
       { key: "email", header: "البريد", type: "text", width: 28 },
@@ -1117,32 +1234,54 @@ export class DashboardExportService {
       { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
     ], rows.map((row) => ({
       accountId: text(row.account_id), email: text(row.email_normalized),
-      displayName: text(row.display_name), status: text(row.staff_status),
-      createdAt: iso(row.created_at),
+      displayName: text(row.display_name), status: text(row.staff_status), createdAt: iso(row.created_at),
     })), requestId);
   }
 
-  async admins(identity: AuthIdentity, requestId: string) {
+  async admins(identity: AuthIdentity, query: { search?: string; cityId?: string; status?: string; createdFrom?: string; createdTo?: string; sortBy?: string; sortOrder?: string }, requestId: string) {
     await requireSuperAdminExport(this.client, identity, "admins.export");
-    const rows = await this.client<Record<string, unknown>[]>`
-      select a.id::text as account_id, e.email_normalized, sp.display_name,
-             sp.status::text as staff_status, s.scope_reference_id::text as city_id, sp.created_at
-      from staff_profiles sp
-      join accounts a on a.id = sp.account_id
-      join account_emails e on e.account_id = a.id and e.is_primary = true
-      join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
-      join roles r on r.id = ar.role_id and r.code = 'ADMIN'
-      join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
-      where sp.managed_by_account_id is null
-      order by e.email_normalized asc, a.id asc`;
-    this.assertLimit(rows.length);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const uuid = searchUuid(search);
+    const cityId = parseOptionalUuid(query.cityId);
+    const status = query.status?.trim() || null;
+    const created = parseOptionalDateRange({ from: query.createdFrom, to: query.createdTo });
+    const sortBy = parseAllowlistedSort(query.sortBy, ["createdAt", "displayName", "email"] as const, "email");
+    const sortOrder = parseSortOrder(query.sortOrder, "asc");
+    const orderSql = {
+      createdAt: `sp.created_at ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      displayName: `coalesce(sp.display_name,'') ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      email: `e.email_normalized ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
+    const where = `sp.managed_by_account_id is null
+      and ($1::text is null or e.email_normalized ilike $1 escape '\\' or coalesce(sp.display_name,'') ilike $1 escape '\\' or ($2::uuid is not null and a.id = $2::uuid))
+      and ($3::uuid is null or s.scope_reference_id = $3::uuid)
+      and ($4::text is null or sp.status = $4::staff_profile_status)
+      and ($5::timestamptz is null or sp.created_at >= $5) and ($6::timestamptz is null or sp.created_at <= $6)`;
+    const params = [pattern, uuid, cityId, status, created.from, created.to];
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total from staff_profiles sp join accounts a on a.id = sp.account_id
+       join account_emails e on e.account_id = a.id and e.is_primary = true
+       join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
+       join roles r on r.id = ar.role_id and r.code = 'ADMIN'
+       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
+       where ${where}`,
+      params,
+    )) as { total: number }[];
+    this.assertLimit(count?.total ?? 0);
+    const rows = (await this.client.unsafe(
+      `select a.id::text as account_id, e.email_normalized, sp.display_name, sp.status::text as staff_status, s.scope_reference_id::text as city_id, sp.created_at
+       from staff_profiles sp join accounts a on a.id = sp.account_id
+       join account_emails e on e.account_id = a.id and e.is_primary = true
+       join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
+       join roles r on r.id = ar.role_id and r.code = 'ADMIN'
+       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
+       where ${where} order by ${orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
-      resource: "admins",
-      endpoint: "/api/v1/dashboard/admins/export",
-      permission: "admins.export",
-      filename: "admins.xlsx",
-      filters: {},
-      cityId: null,
+      resource: "admins", endpoint: "/api/v1/dashboard/admins/export", permission: "admins.export",
+      filename: "admins.xlsx", filters: { search, cityId, status, sortBy, sortOrder }, cityId: null,
     }, "مديرو المدن", [
       { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
       { key: "email", header: "البريد", type: "text", width: 28 },
@@ -1157,25 +1296,26 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async deliveryPricingVersions(
-    identity: AuthIdentity,
-    cityId: string,
-    requestId: string,
-  ) {
+  async deliveryPricingVersions(identity: AuthIdentity, cityId: string, query: Record<string, string | undefined>, requestId: string) {
     await requireSuperAdminExport(this.client, identity, "delivery_pricing.versions.export");
-    const rows = await this.client<Record<string, unknown>[]>`
-      select id::text, version, status::text, base_fee, included_distance_meters,
-             price_per_km, rounding_step, created_at, activated_at
-      from city_delivery_pricing_versions
-      where city_id = ${cityId}
-      order by version desc`;
-    this.assertLimit(rows.length);
+    const filters = parseDeliveryPricingListQuery(query);
+    const params = deliveryPricingListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total from city_delivery_pricing_versions where ${DELIVERY_PRICING_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    this.assertLimit(count?.total ?? 0);
+    const rows = (await this.client.unsafe(
+      `select id::text, version, status::text, base_fee, included_distance_meters, price_per_km, rounding_step, created_at, activated_at
+       from city_delivery_pricing_versions where ${DELIVERY_PRICING_LIST_WHERE_SQL} order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "delivery-pricing-versions",
       endpoint: "/api/v1/dashboard/cities/:cityId/delivery-pricing/versions/export",
       permission: "delivery_pricing.versions.export",
       filename: "delivery-pricing-versions.xlsx",
-      filters: { cityId },
+      filters: { cityId, ...opsPublicFilters(filters as unknown as Record<string, unknown>) },
       cityId: null,
     }, "تسعير التوصيل", [
       { key: "id", header: "المعرف", type: "text", width: 38 },
@@ -1195,66 +1335,42 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async listOrderEvents(
-    identity: AuthIdentity,
-    query: { search?: string; orderId?: string; page?: number; limit?: number },
-  ) {
+  async listOrderEvents(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
     const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const filters = parseEventListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
-    const offset = (p.page - 1) * p.limit;
-    const orderId = parseOptionalUuid(query.orderId);
-    const search = parseOptionalSearch(query.search);
-    const pattern = search ? likeContains(search) : null;
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_events e
-      join orders o on o.id = e.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or e.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
-    const rows = await this.client<Record<string, unknown>[]>`
-      select e.id::text, o.order_number, e.event_type::text, e.actor_type::text,
-             e.source::text, e.reason, e.created_at
-      from order_events e join orders o on o.id = e.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or e.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
-      order by e.created_at desc, e.id desc
-      limit ${p.limit} offset ${offset}`;
+    const params = eventListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_events e join orders o on o.id = e.order_id where ${EVENT_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    const rows = (await this.client.unsafe(
+      `select e.id::text, o.order_number, e.event_type::text, e.actor_type::text, e.source::text, e.reason, e.created_at
+       from order_events e join orders o on o.id = e.order_id
+       where ${EVENT_LIST_WHERE_SQL} order by ${filters.orderSql} limit $10::int offset $11::int`,
+      [...params, p.limit, (p.page - 1) * p.limit],
+    )) as Record<string, unknown>[];
     return dashboardListResult(rows.map((row) => ({
       id: text(row.id), orderNumber: text(row.order_number), eventType: text(row.event_type),
-      actorType: text(row.actor_type), source: text(row.source), reason: text(row.reason),
-      createdAt: iso(row.created_at),
+      actorType: text(row.actor_type), source: text(row.source), reason: text(row.reason), createdAt: iso(row.created_at),
     })), p.page, p.limit, count?.total ?? 0);
   }
 
-  async listOrderAssignments(
-    identity: AuthIdentity,
-    query: { search?: string; orderId?: string; driverId?: string; page?: number; limit?: number },
-  ) {
+  async listOrderAssignments(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
     const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const filters = parseAssignmentListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
-    const offset = (p.page - 1) * p.limit;
-    const orderId = parseOptionalUuid(query.orderId);
-    const driverId = parseOptionalUuid(query.driverId);
-    const search = parseOptionalSearch(query.search);
-    const pattern = search ? likeContains(search) : null;
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_driver_assignments a
-      join orders o on o.id = a.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or a.order_id = ${orderId})
-        and (${driverId}::uuid is null or a.driver_id = ${driverId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
-    const rows = await this.client<Record<string, unknown>[]>`
-      select a.id::text, o.order_number, a.driver_id::text, a.status::text,
-             a.assignment_sequence, a.assigned_at, a.completed_at
-      from order_driver_assignments a join orders o on o.id = a.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or a.order_id = ${orderId})
-        and (${driverId}::uuid is null or a.driver_id = ${driverId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
-      order by a.assigned_at desc, a.id desc
-      limit ${p.limit} offset ${offset}`;
+    const params = assignmentListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_driver_assignments a join orders o on o.id = a.order_id where ${ASSIGNMENT_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    const rows = (await this.client.unsafe(
+      `select a.id::text, o.order_number, a.driver_id::text, a.status::text, a.assignment_sequence, a.assigned_at, a.completed_at
+       from order_driver_assignments a join orders o on o.id = a.order_id
+       where ${ASSIGNMENT_LIST_WHERE_SQL} order by ${filters.orderSql} limit $11::int offset $12::int`,
+      [...params, p.limit, (p.page - 1) * p.limit],
+    )) as Record<string, unknown>[];
     return dashboardListResult(rows.map((row) => ({
       id: text(row.id), orderNumber: text(row.order_number), driverId: text(row.driver_id),
       status: text(row.status), sequence: int(row.assignment_sequence),
@@ -1262,61 +1378,42 @@ export class DashboardExportService {
     })), p.page, p.limit, count?.total ?? 0);
   }
 
-  async listOrderOfferRounds(
-    identity: AuthIdentity,
-    query: { search?: string; orderId?: string; page?: number; limit?: number },
-  ) {
+  async listOrderOfferRounds(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
     const cityId = await requireCityPermission(this.client, identity, "order_offers.read");
+    const filters = parseOfferRoundListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
-    const offset = (p.page - 1) * p.limit;
-    const orderId = parseOptionalUuid(query.orderId);
-    const search = parseOptionalSearch(query.search);
-    const pattern = search ? likeContains(search) : null;
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_offer_rounds r
-      join orders o on o.id = r.order_id
-      where r.city_id = ${cityId}
-        and (${orderId}::uuid is null or r.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
-    const rows = await this.client<Record<string, unknown>[]>`
-      select r.id::text, o.order_number, r.status::text, r.opened_at, r.closed_at, r.final_driver_fee
-      from order_offer_rounds r join orders o on o.id = r.order_id
-      where r.city_id = ${cityId}
-        and (${orderId}::uuid is null or r.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
-      order by r.opened_at desc, r.id desc
-      limit ${p.limit} offset ${offset}`;
+    const params = offerRoundListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_offer_rounds r join orders o on o.id = r.order_id where ${OFFER_ROUND_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    const rows = (await this.client.unsafe(
+      `select r.id::text, o.order_number, r.status::text, r.opened_at, r.closed_at, r.final_driver_fee
+       from order_offer_rounds r join orders o on o.id = r.order_id
+       where ${OFFER_ROUND_LIST_WHERE_SQL} order by ${filters.orderSql} limit $10::int offset $11::int`,
+      [...params, p.limit, (p.page - 1) * p.limit],
+    )) as Record<string, unknown>[];
     return dashboardListResult(rows.map((row) => ({
       id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
       finalDriverFee: int(row.final_driver_fee), openedAt: iso(row.opened_at), closedAt: iso(row.closed_at),
     })), p.page, p.limit, count?.total ?? 0);
   }
 
-  async listOrderHandoffs(
-    identity: AuthIdentity,
-    query: { search?: string; orderId?: string; page?: number; limit?: number },
-  ) {
+  async listOrderHandoffs(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
     const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const filters = parseHandoffListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
-    const offset = (p.page - 1) * p.limit;
-    const orderId = parseOptionalUuid(query.orderId);
-    const search = parseOptionalSearch(query.search);
-    const pattern = search ? likeContains(search) : null;
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_driver_handoffs h
-      join orders o on o.id = h.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or h.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
-    const rows = await this.client<Record<string, unknown>[]>`
-      select h.id::text, o.order_number, h.status::text, h.from_driver_id::text,
-             h.to_driver_id::text, h.created_at, h.completed_at
-      from order_driver_handoffs h join orders o on o.id = h.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or h.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
-      order by h.created_at desc, h.id desc
-      limit ${p.limit} offset ${offset}`;
+    const params = handoffListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_driver_handoffs h join orders o on o.id = h.order_id where ${HANDOFF_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    const rows = (await this.client.unsafe(
+      `select h.id::text, o.order_number, h.status::text, h.from_driver_id::text, h.to_driver_id::text, h.created_at, h.completed_at
+       from order_driver_handoffs h join orders o on o.id = h.order_id
+       where ${HANDOFF_LIST_WHERE_SQL} order by ${filters.orderSql} limit $10::int offset $11::int`,
+      [...params, p.limit, (p.page - 1) * p.limit],
+    )) as Record<string, unknown>[];
     return dashboardListResult(rows.map((row) => ({
       id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
       fromDriverId: text(row.from_driver_id), toDriverId: text(row.to_driver_id),
@@ -1324,61 +1421,42 @@ export class DashboardExportService {
     })), p.page, p.limit, count?.total ?? 0);
   }
 
-  async listOrderReturns(
-    identity: AuthIdentity,
-    query: { search?: string; orderId?: string; page?: number; limit?: number },
-  ) {
+  async listOrderReturns(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
     const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const filters = parseReturnListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
-    const offset = (p.page - 1) * p.limit;
-    const orderId = parseOptionalUuid(query.orderId);
-    const search = parseOptionalSearch(query.search);
-    const pattern = search ? likeContains(search) : null;
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_return_workflows w
-      join orders o on o.id = w.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or w.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
-    const rows = await this.client<Record<string, unknown>[]>`
-      select w.id::text, o.order_number, w.status::text, w.created_at, w.completed_at
-      from order_return_workflows w join orders o on o.id = w.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or w.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
-      order by w.created_at desc, w.id desc
-      limit ${p.limit} offset ${offset}`;
+    const params = returnListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_return_workflows w join orders o on o.id = w.order_id where ${RETURN_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    const rows = (await this.client.unsafe(
+      `select w.id::text, o.order_number, w.status::text, w.created_at, w.completed_at
+       from order_return_workflows w join orders o on o.id = w.order_id
+       where ${RETURN_LIST_WHERE_SQL} order by ${filters.orderSql} limit $9::int offset $10::int`,
+      [...params, p.limit, (p.page - 1) * p.limit],
+    )) as Record<string, unknown>[];
     return dashboardListResult(rows.map((row) => ({
       id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
       createdAt: iso(row.created_at), completedAt: iso(row.completed_at),
     })), p.page, p.limit, count?.total ?? 0);
   }
 
-  async listOrderCollections(
-    identity: AuthIdentity,
-    query: { search?: string; orderId?: string; page?: number; limit?: number },
-  ) {
+  async listOrderCollections(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
     const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const filters = parseCollectionListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
-    const offset = (p.page - 1) * p.limit;
-    const orderId = parseOptionalUuid(query.orderId);
-    const search = parseOptionalSearch(query.search);
-    const pattern = search ? likeContains(search) : null;
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from order_collections c
-      join orders o on o.id = c.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or c.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
-    const rows = await this.client<Record<string, unknown>[]>`
-      select c.id::text, o.order_number, c.collecting_driver_id::text,
-             c.expected_amount, c.collected_amount, c.difference_amount, c.collected_at
-      from order_collections c join orders o on o.id = c.order_id
-      where o.city_id = ${cityId}
-        and (${orderId}::uuid is null or c.order_id = ${orderId})
-        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
-      order by c.collected_at desc, c.id desc
-      limit ${p.limit} offset ${offset}`;
+    const params = collectionListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from order_collections c join orders o on o.id = c.order_id where ${COLLECTION_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    const rows = (await this.client.unsafe(
+      `select c.id::text, o.order_number, c.collecting_driver_id::text, c.expected_amount, c.collected_amount, c.difference_amount, c.collected_at
+       from order_collections c join orders o on o.id = c.order_id
+       where ${COLLECTION_LIST_WHERE_SQL} order by ${filters.orderSql} limit $16::int offset $17::int`,
+      [...params, p.limit, (p.page - 1) * p.limit],
+    )) as Record<string, unknown>[];
     return dashboardListResult(rows.map((row) => ({
       id: text(row.id), orderNumber: text(row.order_number), driverId: text(row.collecting_driver_id),
       expectedAmount: int(row.expected_amount), collectedAmount: int(row.collected_amount),

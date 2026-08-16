@@ -15,6 +15,15 @@ import {
   lockCityGeography,
 } from "../geography/geography-locks";
 import { dateValue } from "../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+} from "../dashboard-lists/query";
+import {
+  parseStoreCategoryListQuery,
+  STORE_CATEGORY_LIST_WHERE_SQL,
+  storeCategoryListParams,
+} from "../dashboard-lists/product-list-query";
 
 type CategoryStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -314,7 +323,18 @@ export class StoreCategoryService {
   async list(
     identity: AuthIdentity,
     storeId: string,
-    input: { status?: string; parentCategoryId?: string },
+    input: {
+      status?: string;
+      parentCategoryId?: string;
+      search?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
+      page?: number;
+      limit?: number;
+      unpaged?: boolean;
+    },
   ) {
     const cityId = await this.authorize(identity, "store_categories.read", storeId);
     const [store] = await this.client<{ id: string }[]>`
@@ -322,46 +342,33 @@ export class StoreCategoryService {
       where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
 
-    const status = input.status?.trim() || null;
-    if (
-      status &&
-      !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)
-    ) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
-    const parentFilter =
-      input.parentCategoryId === undefined
-        ? null
-        : input.parentCategoryId === "null" || input.parentCategoryId === ""
-          ? "ROOT"
-          : input.parentCategoryId;
-
+    const filters = parseStoreCategoryListQuery(input);
+    const baseParams = storeCategoryListParams(storeId, cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total from store_categories c where ${STORE_CATEGORY_LIST_WHERE_SQL}`,
+      baseParams,
+    )) as { total: number }[];
+    const total = count?.total ?? 0;
+    const paging = input.unpaged
+      ? { page: 1, limit: Math.max(total, 1) }
+      : dashboardPageOf(input.page, input.limit);
+    const offset = (paging.page - 1) * paging.limit;
     const rows = (await this.client.unsafe(
       `select ${CATEGORY_SELECT}
        from store_categories c
        left join store_categories p
          on p.id = c.parent_category_id and p.store_id = c.store_id
-       where c.store_id = $1::uuid
-         and c.city_id = $2::uuid
-         and ($3::text is null or c.status = $3::main_category_status)
-         and ($3::text is not null or c.status <> 'ARCHIVED')
-         and (
-           $4::text is null
-           or ($4::text = 'ROOT' and c.parent_category_id is null)
-           or c.parent_category_id = $4::uuid
-         )
-       order by
-         coalesce(p.display_order, c.display_order) asc,
-         coalesce(p.created_at, c.created_at) asc,
-         coalesce(p.id, c.id) asc,
-         (c.parent_category_id is not null) asc,
-         c.display_order asc,
-         c.created_at asc,
-         c.id asc`,
-      [storeId, cityId, status, parentFilter],
+       where ${STORE_CATEGORY_LIST_WHERE_SQL}
+       order by ${filters.orderSql}
+       limit $9::int offset $10::int`,
+      [...baseParams, paging.limit, offset],
     )) as StoreCategoryRow[];
-
-    return { data: rows.map(storeCategoryDto) };
+    return dashboardListResult(
+      rows.map(storeCategoryDto),
+      paging.page,
+      paging.limit,
+      total,
+    );
   }
 
   async get(identity: AuthIdentity, storeId: string, categoryId: string) {

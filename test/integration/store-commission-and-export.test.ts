@@ -216,7 +216,7 @@ describe("store commission rates and dashboard Excel export", () => {
       fallbackExtraDistanceMeters: 300,
     });
     const versions = await h.deliveryPricing.list(superIdentity, cityA);
-    await h.deliveryPricing.activate(superIdentity, cityA, versions[0]!.id);
+    await h.deliveryPricing.activate(superIdentity, cityA, versions.data[0]!.id);
     h.routingProvider.setResult({ distanceMeters: 1000, durationSeconds: 120 });
     const [cust] = await h.client<{ id: string }[]>`insert into accounts default values returning id`;
     customerId = cust!.id;

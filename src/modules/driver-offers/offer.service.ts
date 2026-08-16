@@ -10,6 +10,12 @@ import type { AuthIdentity } from "../auth/sessions/session-service";
 import { requireCityPermission } from "../auth/staff/authorization";
 import { dateValue } from "../geography/shared";
 import { dashboardListResult, dashboardPageOf } from "../dashboard-lists/query";
+import {
+  OFFER_ROUND_LIST_WHERE_SQL,
+  offerRoundListParams,
+  parseOfferRoundListQuery,
+} from "../dashboard-lists/ops-list-query";
+import { parseCandidateListQuery } from "../dashboard-lists/product-list-query";
 import type { OrderService } from "../orders/order.service";
 import { insertOrderEvent } from "../orders/order-events";
 import type { OrderStatus } from "../orders/order-state-machine";
@@ -563,7 +569,22 @@ export class OfferService {
     return this.openRound(identity, orderId, requestId, `${key}:open`);
   }
 
-  async listRounds(identity: AuthIdentity, orderId: string) {
+  async listRounds(
+    identity: AuthIdentity,
+    orderId: string,
+    input: {
+      search?: string;
+      status?: string;
+      roundKind?: string;
+      closingReason?: string;
+      openedFrom?: string;
+      openedTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ) {
     const cityId = await requireCityPermission(
       this.client,
       identity,
@@ -572,13 +593,29 @@ export class OfferService {
     const [order] = await this.client<{ id: string }[]>`
       select id::text from orders where id = ${orderId} and city_id = ${cityId}`;
     if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+    const filters = parseOfferRoundListQuery({ ...input, orderId });
+    const p = dashboardPageOf(input.page, input.limit);
+    const offset = (p.page - 1) * p.limit;
+    const params = offerRoundListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total from order_offer_rounds r
+       join orders o on o.id = r.order_id
+       where ${OFFER_ROUND_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
     const rows = (await this.client.unsafe(
-      `select ${ROUND_SELECT} from order_offer_rounds
-       where order_id = $1 and city_id = $2
-       order by opened_at desc, id desc`,
-      [orderId, cityId],
+      `select r.id::text, r.order_id::text, r.city_id::text, r.status::text, r.opened_at, r.closed_at,
+              r.stopped_at, r.stop_reason, r.pricing_base_snapshot, r.rounding_unit_snapshot,
+              r.pricing_stages_snapshot, r.pricing_version_snapshot, r.final_driver_fee,
+              r.claimed_by_driver_id::text, r.created_by_account_id::text, r.created_at, r.updated_at
+       from order_offer_rounds r
+       join orders o on o.id = r.order_id
+       where ${OFFER_ROUND_LIST_WHERE_SQL}
+       order by ${filters.orderSql}
+       limit $10::int offset $11::int`,
+      [...params, p.limit, offset],
     )) as Record<string, unknown>[];
-    return rows.map(mapRound);
+    return dashboardListResult(rows.map(mapRound), p.page, p.limit, count?.total ?? 0);
   }
 
   private async loadOpenSummariesForCity(
@@ -1612,47 +1649,77 @@ export class OfferService {
 
   async listDriverCandidates(
     identity: AuthIdentity,
-    page?: number,
-    limit?: number,
+    input: {
+      search?: string;
+      activeOrderCount?: string | number;
+      sortBy?: string;
+      sortOrder?: string;
+      page?: number;
+      limit?: number;
+    } = {},
   ) {
     const cityId = await requireCityPermission(
       this.client,
       identity,
       "orders.assign",
     );
-    const p = dashboardPageOf(page, limit);
+    const filters = parseCandidateListQuery(input);
+    const p = dashboardPageOf(input.page, input.limit);
     const offset = (p.page - 1) * p.limit;
-
-    const [countRow] = await this.client<{ total: number }[]>`
-      select count(*)::int as total
-      from driver_profiles dp
-      join accounts a on a.id = dp.account_id
-      where dp.city_id = ${cityId}
-        and dp.approval_status = 'APPROVED'
-        and dp.operational_status = 'ACTIVE'
-        and a.status = 'ACTIVE'`;
+    const where = `
+      dp.city_id = $1::uuid
+      and dp.approval_status = 'APPROVED'
+      and dp.operational_status = 'ACTIVE'
+      and a.status = 'ACTIVE'
+      and (
+        $2::text is null
+        or coalesce(ph.phone_e164, '') ilike $2 escape '\\'
+        or ($3::uuid is not null and dp.account_id = $3::uuid)
+      )
+      and ($4::int is null or (
+        select count(*)::int from order_driver_assignments oda
+        where oda.driver_id = dp.account_id
+          and oda.completed_at is null
+          and oda.cancelled_at is null
+      ) = $4::int)`;
+    const base = [cityId, filters.pattern, filters.searchUuid, filters.activeOrderCount];
+    const [countRow] = (await this.client.unsafe(
+      `select count(*)::int as total
+       from driver_profiles dp
+       join accounts a on a.id = dp.account_id
+       left join lateral (
+         select phone_e164 from account_phones
+         where account_id = dp.account_id
+         order by is_primary desc, created_at asc
+         limit 1
+       ) ph on true
+       where ${where}`,
+      base,
+    )) as { total: number }[];
     const total = countRow?.total ?? 0;
-
-    const drivers = await this.client<
-      { account_id: string; display_name: string }[]
-    >`select dp.account_id::text,
-             coalesce(
-               (
-                 select ap.phone_e164
-                 from account_phones ap
-                 where ap.account_id = dp.account_id and ap.is_primary = true
-                 limit 1
-               ),
-               'Driver'
-             ) as display_name
-      from driver_profiles dp
-      join accounts a on a.id = dp.account_id
-      where dp.city_id = ${cityId}
-        and dp.approval_status = 'APPROVED'
-        and dp.operational_status = 'ACTIVE'
-        and a.status = 'ACTIVE'
-      order by dp.account_id asc
-      limit ${p.limit} offset ${offset}`;
+    const drivers = (await this.client.unsafe(
+      `select dp.account_id::text,
+              dp.created_at,
+              coalesce(ph.phone_e164, 'Driver') as display_name,
+              (
+                select count(*)::int from order_driver_assignments oda
+                where oda.driver_id = dp.account_id
+                  and oda.completed_at is null
+                  and oda.cancelled_at is null
+              ) as active_order_count
+       from driver_profiles dp
+       join accounts a on a.id = dp.account_id
+       left join lateral (
+         select phone_e164 from account_phones
+         where account_id = dp.account_id
+         order by is_primary desc, created_at asc
+         limit 1
+       ) ph on true
+       where ${where}
+       order by ${filters.orderSql}
+       limit $5::int offset $6::int`,
+      [...base, p.limit, offset],
+    )) as { account_id: string; display_name: string; active_order_count: number }[];
 
     const driverIds = drivers.map((d) => d.account_id);
     const assignments =

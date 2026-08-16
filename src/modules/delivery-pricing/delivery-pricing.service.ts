@@ -19,6 +19,15 @@ import {
   type PricingTerms,
 } from "./pricing";
 import {
+  dashboardListResult,
+  dashboardPageOf,
+} from "../dashboard-lists/query";
+import {
+  DELIVERY_PRICING_LIST_WHERE_SQL,
+  deliveryPricingListParams,
+  parseDeliveryPricingListQuery,
+} from "../dashboard-lists/product-list-query";
+import {
   RoutingError,
   type Coordinates,
   type RoutingContext,
@@ -258,14 +267,40 @@ export class DeliveryPricingService {
       await this.publish(this.toActive(committed.row), "activation");
     return committed.row;
   }
-  async list(identity: AuthIdentity, cityId: string) {
+  async list(
+    identity: AuthIdentity,
+    cityId: string,
+    input: {
+      search?: string;
+      status?: string;
+      createdByAccountId?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      activatedFrom?: string;
+      activatedTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ) {
     requireSuperAdmin(identity);
-    return (
-      (await this.client.unsafe(
-        `select ${columns} from city_delivery_pricing_versions where city_id=$1 order by version desc`,
-        [cityId],
-      )) as PricingRow[]
-    ).map(mapRow);
+    const filters = parseDeliveryPricingListQuery(input);
+    const p = dashboardPageOf(input.page, input.limit);
+    const offset = (p.page - 1) * p.limit;
+    const params = deliveryPricingListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total from city_delivery_pricing_versions where ${DELIVERY_PRICING_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    const rows = (await this.client.unsafe(
+      `select ${columns} from city_delivery_pricing_versions
+       where ${DELIVERY_PRICING_LIST_WHERE_SQL}
+       order by ${filters.orderSql}
+       limit $10::int offset $11::int`,
+      [...params, p.limit, offset],
+    )) as PricingRow[];
+    return dashboardListResult(rows.map(mapRow), p.page, p.limit, count?.total ?? 0);
   }
   async getSuper(identity: AuthIdentity, cityId: string, id: string) {
     requireSuperAdmin(identity);

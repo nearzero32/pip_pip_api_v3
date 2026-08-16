@@ -279,7 +279,7 @@ describe("driver arrived at store", () => {
 
     await h.deliveryPricing.create(superIdentity, city, pricingInput);
     const versions = await h.deliveryPricing.list(superIdentity, city);
-    await h.deliveryPricing.activate(superIdentity, city, versions[0]!.id);
+    await h.deliveryPricing.activate(superIdentity, city, versions.data[0]!.id);
     await h.cityDriverPricing.put(
       superIdentity,
       city,

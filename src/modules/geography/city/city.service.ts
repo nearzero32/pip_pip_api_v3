@@ -17,6 +17,7 @@ import {
   dashboardPageOf,
   likeContains,
   parseAllowlistedSort,
+  parseOptionalDateRange,
   parseOptionalSearch,
   parseSortOrder,
   sqlDir,
@@ -99,6 +100,8 @@ export class CityService {
     search?: string;
     page?: number;
     limit?: number;
+    createdFrom?: string;
+    createdTo?: string;
     sortBy?: string;
     sortOrder?: string;
   }) {
@@ -106,6 +109,10 @@ export class CityService {
     const offset = (page - 1) * limit;
     const search = parseOptionalSearch(input.search);
     const pattern = search ? likeContains(search) : null;
+    const created = parseOptionalDateRange({
+      from: input.createdFrom,
+      to: input.createdTo,
+    });
     const sortBy = parseAllowlistedSort(
       input.sortBy,
       ["displayOrder", "nameEn", "nameAr", "status", "createdAt"] as const,
@@ -128,16 +135,20 @@ export class CityService {
        where ($1::uuid is null or c.governorate_id=$1)
          and ($2::text is null or c.status=$2::city_status)
          and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
+         and ($4::timestamptz is null or c.created_at >= $4)
+         and ($5::timestamptz is null or c.created_at <= $5)
        order by ${orderSql}
-       limit $4::int offset $5::int`,
-      [input.governorateId ?? null, input.status ?? null, pattern, limit, offset],
+       limit $6::int offset $7::int`,
+      [input.governorateId ?? null, input.status ?? null, pattern, created.from, created.to, limit, offset],
     );
     const [count] = (await this.client.unsafe(
       `select count(*)::text total from cities c join governorates g on g.id=c.governorate_id
        where ($1::uuid is null or c.governorate_id=$1)
          and ($2::text is null or c.status=$2::city_status)
-         and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')`,
-      [input.governorateId ?? null, input.status ?? null, pattern],
+         and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
+         and ($4::timestamptz is null or c.created_at >= $4)
+         and ($5::timestamptz is null or c.created_at <= $5)`,
+      [input.governorateId ?? null, input.status ?? null, pattern, created.from, created.to],
     )) as { total: string }[];
     return dashboardListResult(
       (rows as Record<string, unknown>[]).map((row) => cityDto(row)),

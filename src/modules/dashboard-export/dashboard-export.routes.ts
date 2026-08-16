@@ -119,44 +119,44 @@ export const dashboardExportRoutes = (
       service.orderEvents(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export order events", "Requires orders.read and orders.events.export.") },
     )
-    .get("/api/v1/dashboard/order-assignments/export", async ({ request, set }) =>
-      service.orderAssignments(await identityOf(request, set), requestIdOf(set)),
+    .get("/api/v1/dashboard/order-assignments/export", async ({ request, set, query }) =>
+      service.orderAssignments(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export order assignments", "Requires orders.read and orders.assignments.export.") },
     )
     .get("/api/v1/dashboard/order-offer-rounds/export", async ({ request, set, query }) =>
       service.orderOfferRounds(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export order offer rounds", "Requires order_offers.read and order_offers.export.") },
     )
-    .get("/api/v1/dashboard/orders/:orderId/offer-rounds/export", async ({ request, set, params }) =>
-      service.orderOfferRounds(await identityOf(request, set), { orderId: params.orderId }, requestIdOf(set)),
+    .get("/api/v1/dashboard/orders/:orderId/offer-rounds/export", async ({ request, set, params, query }) =>
+      service.orderOfferRounds(await identityOf(request, set), { ...(query as Query), orderId: params.orderId }, requestIdOf(set)),
       { detail: detail("Export one order's offer rounds", "Requires order_offers.read and order_offers.export.") },
     )
-    .get("/api/v1/dashboard/order-handoffs/export", async ({ request, set }) =>
-      service.orderHandoffs(await identityOf(request, set), requestIdOf(set)),
+    .get("/api/v1/dashboard/order-handoffs/export", async ({ request, set, query }) =>
+      service.orderHandoffs(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export driver handoffs", "Requires orders.read and orders.handoffs.export.") },
     )
-    .get("/api/v1/dashboard/order-returns/export", async ({ request, set }) =>
-      service.orderReturns(await identityOf(request, set), requestIdOf(set)),
+    .get("/api/v1/dashboard/order-returns/export", async ({ request, set, query }) =>
+      service.orderReturns(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export return workflows", "Requires orders.read and orders.returns.export.") },
     )
-    .get("/api/v1/dashboard/order-collections/export", async ({ request, set }) =>
-      service.orderCollections(await identityOf(request, set), requestIdOf(set)),
+    .get("/api/v1/dashboard/order-collections/export", async ({ request, set, query }) =>
+      service.orderCollections(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export delivery collections", "Requires orders.read and orders.collections.export.") },
     )
-    .get("/api/v1/dashboard/drivers/assignment-candidates/export", async ({ request, set }) =>
-      service.drivers(await identityOf(request, set), requestIdOf(set)),
+    .get("/api/v1/dashboard/drivers/assignment-candidates/export", async ({ request, set, query }) =>
+      service.drivers(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export assignment-candidate drivers", "Requires orders.assign and drivers.export.") },
     )
-    .get("/api/v1/dashboard/employees/export", async ({ request, set }) =>
-      service.employees(await identityOf(request, set), requestIdOf(set)),
+    .get("/api/v1/dashboard/employees/export", async ({ request, set, query }) =>
+      service.employees(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export employees", "Requires staff.export. ADMIN-owned employees only.") },
     )
-    .get("/api/v1/dashboard/admins/export", async ({ request, set }) =>
-      service.admins(await identityOf(request, set), requestIdOf(set)),
+    .get("/api/v1/dashboard/admins/export", async ({ request, set, query }) =>
+      service.admins(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export city admins", "SUPER_ADMIN plus admins.export.") },
     )
-    .get("/api/v1/dashboard/cities/:cityId/delivery-pricing/versions/export", async ({ request, set, params }) =>
-      service.deliveryPricingVersions(await identityOf(request, set), params.cityId, requestIdOf(set)),
+    .get("/api/v1/dashboard/cities/:cityId/delivery-pricing/versions/export", async ({ request, set, params, query }) =>
+      service.deliveryPricingVersions(await identityOf(request, set), params.cityId, query as Query, requestIdOf(set)),
       { detail: detail("Export delivery pricing versions", "SUPER_ADMIN plus delivery_pricing.versions.export.") },
     );
 };

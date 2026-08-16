@@ -433,7 +433,7 @@ describe("M4-C2 closure: races, idempotency HTTP, DB constraints", () => {
 
     await h.deliveryPricing.create(bootstrapSuper, city, pricingInput);
     const versions = await h.deliveryPricing.list(bootstrapSuper, city);
-    await h.deliveryPricing.activate(bootstrapSuper, city, versions[0]!.id);
+    await h.deliveryPricing.activate(bootstrapSuper, city, versions.data[0]!.id);
     await h.cityDriverPricing.put(
       bootstrapSuper,
       city,

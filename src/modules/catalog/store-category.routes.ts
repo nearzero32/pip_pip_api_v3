@@ -16,6 +16,10 @@ import {
   dateSchema,
   requestIdOf,
 } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { StoreCategoryService } from "./store-category.service";
 
 const categoryStatus = t.Union([
@@ -38,7 +42,7 @@ const storeCategoryDto = t.Object({
   archivedAt: t.Nullable(dateSchema),
 });
 
-const listResponse = t.Object({ data: t.Array(storeCategoryDto) });
+const listResponse = dashboardPaginated(storeCategoryDto);
 
 const storeIdParam = t.Object(
   { storeId: t.String({ format: "uuid" }) },
@@ -163,8 +167,11 @@ export const storeCategoryRoutes = (
         params: storeIdParam,
         query: t.Object(
           {
+            ...dashboardListQuery,
             status: t.Optional(categoryStatus),
             parentCategoryId: t.Optional(t.String({ maxLength: 64 })),
+            createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
+            createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
           },
           { additionalProperties: false },
         ),

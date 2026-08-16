@@ -62,7 +62,7 @@ describe("M4-B Driver Offers", () => {
       adminIdentity, orderId, { kind: "DASHBOARD" }, crypto.randomUUID(),
     );
     const rounds = await h.offers.listRounds(adminIdentity, orderId);
-    return rounds[0]!;
+    return rounds.data[0]!;
   };
 
   const createEligibleDriver = async (cityId = city) => {
@@ -153,7 +153,7 @@ describe("M4-B Driver Offers", () => {
 
     await h.deliveryPricing.create(superIdentity, city, deliveryPricingInput);
     const versions = await h.deliveryPricing.list(superIdentity, city);
-    await h.deliveryPricing.activate(superIdentity, city, versions[0]!.id);
+    await h.deliveryPricing.activate(superIdentity, city, versions.data[0]!.id);
     h.routingProvider.setResult({ distanceMeters: 1000, durationSeconds: 120 });
 
     await h.cityDriverPricing.put(superIdentity, city, driverPricingInput, "pricing", crypto.randomUUID());

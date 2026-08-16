@@ -19,14 +19,13 @@ import { dateValue } from "../geography/shared";
 import {
   dashboardListResult,
   dashboardPageOf,
-  likeContains,
 } from "../dashboard-lists/query";
 import {
-  parseOptionalSearch,
-  parseOptionalUuid,
-  parseStoreStatusFilter,
+  parseStoreListQuery,
   STORE_LIST_WHERE_SQL,
-} from "./store-list-filters";
+  storeListParams,
+  type StoreListInput,
+} from "../dashboard-lists/store-list-query";
 import { parseCoordinate } from "../geography/zone/geometry";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
@@ -663,21 +662,13 @@ export class StoreService {
 
   async list(
     identity: AuthIdentity,
-    input: {
-      search?: string;
-      status?: string;
-      mainCategoryId?: string;
-      page?: number;
-      limit?: number;
-    },
+    input: StoreListInput & { page?: number; limit?: number },
   ) {
     const cityId = await this.authorize(identity, "stores.read");
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = parseOptionalSearch(input.search);
-    const pattern = search ? likeContains(search) : null;
-    const status = parseStoreStatusFilter(input.status);
-    const mainCategoryId = parseOptionalUuid(input.mainCategoryId);
+    const filters = parseStoreListQuery(input);
+    const params = storeListParams(cityId, filters);
     const rows = (await this.client.unsafe(
       `select ${STORE_SELECT}
        from stores s
@@ -685,14 +676,14 @@ export class StoreService {
        left join media_assets logo on logo.id = s.logo_asset_id
        left join media_assets cover on cover.id = s.cover_asset_id
        where ${STORE_LIST_WHERE_SQL}
-       order by s.display_order asc, s.created_at asc, s.id asc
-       limit $5::int offset $6::int`,
-      [cityId, status, mainCategoryId, pattern, limit, offset],
+       order by ${filters.orderSql}
+       limit $${params.length + 1}::int offset $${params.length + 2}::int`,
+      [...params, limit, offset],
     )) as StoreRow[];
     const [count] = (await this.client.unsafe(
       `select count(*)::text as total from stores s
        where ${STORE_LIST_WHERE_SQL}`,
-      [cityId, status, mainCategoryId, pattern],
+      params,
     )) as { total: string }[];
 
     const data = [];

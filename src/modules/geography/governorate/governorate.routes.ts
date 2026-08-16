@@ -69,6 +69,8 @@ export const governorateRoutes = (
                 examples: ["ACTIVE"],
               }),
             ),
+            createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
+            createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
           },
           { additionalProperties: false },
         ),

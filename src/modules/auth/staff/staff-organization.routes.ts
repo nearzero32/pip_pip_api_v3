@@ -147,7 +147,16 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
           query,
         ),
       {
-        query: t.Object(dashboardListQuery, { additionalProperties: true }),
+        query: t.Object(
+          {
+            ...dashboardListQuery,
+            cityId: t.Optional(t.String({ format: "uuid" })),
+            status: t.Optional(t.String()),
+            createdFrom: t.Optional(t.String()),
+            createdTo: t.Optional(t.String()),
+          },
+          { additionalProperties: false },
+        ),
         response: {
           200: dashboardPaginated(adminDto),
           ...staffErrors,
@@ -265,7 +274,17 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
           query,
         ),
       {
-        query: t.Object(dashboardListQuery, { additionalProperties: true }),
+        query: t.Object(
+          {
+            ...dashboardListQuery,
+            status: t.Optional(t.String()),
+            role: t.Optional(t.String()),
+            permission: t.Optional(t.String()),
+            createdFrom: t.Optional(t.String()),
+            createdTo: t.Optional(t.String()),
+          },
+          { additionalProperties: false },
+        ),
         response: {
           200: dashboardPaginated(employeeDto),
           ...staffErrors,

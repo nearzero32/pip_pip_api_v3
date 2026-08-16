@@ -15,8 +15,13 @@ import {
   dashboardListResult,
   dashboardPageOf,
   likeContains,
+  parseAllowlistedSort,
+  parseOptionalDateRange,
   parseOptionalSearch,
   parseOptionalUuid,
+  parseSortOrder,
+  searchUuid,
+  sqlDir,
 } from "../../dashboard-lists/query";
 
 const cleanName = (value: string, field: string) => {
@@ -124,15 +129,31 @@ export class StaffOrganizationService {
 
   async listAdmins(
     identity: AuthIdentity,
-    input: { search?: string; cityId?: string; status?: string; page?: number; limit?: number } = {},
+    input: { search?: string; cityId?: string; status?: string; createdFrom?: string; createdTo?: string; sortBy?: string; sortOrder?: string; page?: number; limit?: number } = {},
   ) {
     requireSuperAdmin(identity);
     const p = dashboardPageOf(input.page, input.limit);
     const offset = (p.page - 1) * p.limit;
     const searchRaw = parseOptionalSearch(input.search);
     const pattern = searchRaw ? likeContains(searchRaw) : null;
+    const uuid = searchUuid(searchRaw);
     const cityId = parseOptionalUuid(input.cityId);
     const status = input.status?.trim() || null;
+    const created = parseOptionalDateRange({
+      from: input.createdFrom,
+      to: input.createdTo,
+    });
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["createdAt", "displayName", "email"] as const,
+      "email",
+    );
+    const sortOrder = parseSortOrder(input.sortOrder, "asc");
+    const orderSql = {
+      createdAt: `sp.created_at ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      displayName: `coalesce(sp.display_name,'') ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      email: `e.email_normalized ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
     const rows = (await this.client.unsafe(
       `select a.id as account_id, e.email_normalized, sp.display_name, sp.status as staff_status,
         s.scope_reference_id::text as city_id, sp.created_at, sp.updated_at
@@ -143,12 +164,14 @@ export class StaffOrganizationService {
       join roles r on r.id = ar.role_id and r.code = 'ADMIN'
       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
       where sp.managed_by_account_id is null
-        and ($1::text is null or e.email_normalized ilike $1 escape '\\' or coalesce(sp.display_name,'') ilike $1 escape '\\')
+        and ($1::text is null or e.email_normalized ilike $1 escape '\\' or coalesce(sp.display_name,'') ilike $1 escape '\\' or ($6::uuid is not null and a.id = $6::uuid))
         and ($2::uuid is null or s.scope_reference_id = $2::uuid)
         and ($3::text is null or sp.status = $3::staff_profile_status)
-      order by e.email_normalized asc, a.id asc
+        and ($7::timestamptz is null or sp.created_at >= $7)
+        and ($8::timestamptz is null or sp.created_at <= $8)
+      order by ${orderSql}
       limit $4::int offset $5::int`,
-      [pattern, cityId, status, p.limit, offset],
+      [pattern, cityId, status, p.limit, offset, uuid, created.from, created.to],
     )) as Record<string, unknown>[];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total
@@ -159,10 +182,12 @@ export class StaffOrganizationService {
       join roles r on r.id = ar.role_id and r.code = 'ADMIN'
       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
       where sp.managed_by_account_id is null
-        and ($1::text is null or e.email_normalized ilike $1 escape '\\' or coalesce(sp.display_name,'') ilike $1 escape '\\')
+        and ($1::text is null or e.email_normalized ilike $1 escape '\\' or coalesce(sp.display_name,'') ilike $1 escape '\\' or ($4::uuid is not null and a.id = $4::uuid))
         and ($2::uuid is null or s.scope_reference_id = $2::uuid)
-        and ($3::text is null or sp.status = $3::staff_profile_status)`,
-      [pattern, cityId, status],
+        and ($3::text is null or sp.status = $3::staff_profile_status)
+        and ($5::timestamptz is null or sp.created_at >= $5)
+        and ($6::timestamptz is null or sp.created_at <= $6)`,
+      [pattern, cityId, status, uuid, created.from, created.to],
     )) as { total: number }[];
     return dashboardListResult(rows.map((row) => this.adminDto(row)), p.page, p.limit, count?.total ?? 0);
   }
@@ -295,15 +320,43 @@ export class StaffOrganizationService {
 
   async listEmployees(
     identity: AuthIdentity,
-    input: { search?: string; status?: string; role?: string; page?: number; limit?: number } = {},
+    input: {
+      search?: string;
+      status?: string;
+      role?: string;
+      permission?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
+      page?: number;
+      limit?: number;
+    } = {},
   ) {
     requireCityAdmin(identity);
     const p = dashboardPageOf(input.page, input.limit);
     const offset = (p.page - 1) * p.limit;
     const searchRaw = parseOptionalSearch(input.search);
     const pattern = searchRaw ? likeContains(searchRaw) : null;
+    const uuid = searchUuid(searchRaw);
     const status = input.status?.trim() || null;
     const role = input.role?.trim() || null;
+    const permission = input.permission?.trim() || null;
+    const created = parseOptionalDateRange({
+      from: input.createdFrom,
+      to: input.createdTo,
+    });
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["createdAt", "displayName", "email"] as const,
+      "email",
+    );
+    const sortOrder = parseSortOrder(input.sortOrder, "asc");
+    const orderSql = {
+      createdAt: `sp.created_at ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      displayName: `coalesce(sp.display_name,'') ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      email: `e.email_normalized ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
     const rows = (await this.client.unsafe(
       `select a.id as account_id, e.email_normalized, sp.display_name, sp.status as staff_status,
         s.scope_reference_id::text as city_id, sp.created_at, sp.updated_at,
@@ -315,15 +368,21 @@ export class StaffOrganizationService {
       join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
       where sp.managed_by_account_id = $1::uuid
-        and ($2::text is null or e.email_normalized ilike $2 escape '\\' or coalesce(sp.display_name,'') ilike $2 escape '\\')
+        and ($2::text is null or e.email_normalized ilike $2 escape '\\' or coalesce(sp.display_name,'') ilike $2 escape '\\' or ($7::uuid is not null and a.id = $7::uuid))
         and ($3::text is null or sp.status = $3::staff_profile_status)
         and ($4::text is null or exists (
           select 1 from account_roles ar3 join roles r3 on r3.id = ar3.role_id
           where ar3.account_id = a.id and ar3.revoked_at is null and r3.code = $4::staff_role_code
         ))
-      order by e.email_normalized asc, a.id asc
+        and ($8::text is null or exists (
+          select 1 from account_permission_grants g join permissions p on p.id = g.permission_id
+          where g.account_id = a.id and g.revoked_at is null and p.code = $8
+        ))
+        and ($9::timestamptz is null or sp.created_at >= $9)
+        and ($10::timestamptz is null or sp.created_at <= $10)
+      order by ${orderSql}
       limit $5::int offset $6::int`,
-      [identity.accountId, pattern, status, role, p.limit, offset],
+      [identity.accountId, pattern, status, role, p.limit, offset, uuid, permission, created.from, created.to],
     )) as Record<string, unknown>[];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total
@@ -333,13 +392,19 @@ export class StaffOrganizationService {
       join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
       where sp.managed_by_account_id = $1::uuid
-        and ($2::text is null or e.email_normalized ilike $2 escape '\\' or coalesce(sp.display_name,'') ilike $2 escape '\\')
+        and ($2::text is null or e.email_normalized ilike $2 escape '\\' or coalesce(sp.display_name,'') ilike $2 escape '\\' or ($5::uuid is not null and a.id = $5::uuid))
         and ($3::text is null or sp.status = $3::staff_profile_status)
         and ($4::text is null or exists (
           select 1 from account_roles ar3 join roles r3 on r3.id = ar3.role_id
           where ar3.account_id = a.id and ar3.revoked_at is null and r3.code = $4::staff_role_code
-        ))`,
-      [identity.accountId, pattern, status, role],
+        ))
+        and ($6::text is null or exists (
+          select 1 from account_permission_grants g join permissions p on p.id = g.permission_id
+          where g.account_id = a.id and g.revoked_at is null and p.code = $6
+        ))
+        and ($7::timestamptz is null or sp.created_at >= $7)
+        and ($8::timestamptz is null or sp.created_at <= $8)`,
+      [identity.accountId, pattern, status, role, uuid, permission, created.from, created.to],
     )) as { total: number }[];
     return dashboardListResult(rows.map((row) => this.employeeDto(row)), p.page, p.limit, count?.total ?? 0);
   }

@@ -13,13 +13,12 @@ import { dateValue } from "../geography/shared";
 import {
   dashboardListResult,
   dashboardPageOf,
-  likeContains,
 } from "../dashboard-lists/query";
 import {
   COMMISSION_STORE_WHERE_SQL,
-  parseOptionalSearch,
-  parseStoreStatusFilter,
-} from "./store-list-filters";
+  parseStoreListQuery,
+  commissionStoreParams,
+} from "../dashboard-lists/store-list-query";
 
 const STORE_COMMISSION_UPDATE_SCOPE = "v1:stores.commission.update";
 
@@ -104,21 +103,17 @@ const COMMISSION_FROM = `
 export class StoreCommissionService {
   constructor(private client: SQL) {}
 
-  private storeFilters(input: {
-    search?: string;
-    status?: string;
-  }) {
-    return {
-      search: parseOptionalSearch(input.search),
-      status: parseStoreStatusFilter(input.status),
-    };
-  }
-
   async list(
     identity: AuthIdentity,
     input: {
       search?: string;
       status?: string;
+      commissionRateMin?: string | number;
+      commissionRateMax?: string | number;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
       page?: number;
       limit?: number;
     },
@@ -130,21 +125,21 @@ export class StoreCommissionService {
     );
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const { search: searchRaw, status } = this.storeFilters(input);
-    const search = searchRaw ? likeContains(searchRaw) : null;
+    const filters = parseStoreListQuery(input);
+    const params = commissionStoreParams(cityId, filters);
     const rows = (await this.client.unsafe(
       `select ${COMMISSION_SELECT}
        ${COMMISSION_FROM}
        where ${COMMISSION_STORE_WHERE_SQL}
-       order by s.display_order asc, s.created_at asc, s.id asc
-       limit $4::int offset $5::int`,
-      [cityId, status, search, limit, offset],
+       order by ${filters.orderSql}
+       limit $${params.length + 1}::int offset $${params.length + 2}::int`,
+      [...params, limit, offset],
     )) as CommissionRow[];
     const [count] = (await this.client.unsafe(
       `select count(*)::text as total
        from stores s
        where ${COMMISSION_STORE_WHERE_SQL}`,
-      [cityId, status, search],
+      params,
     )) as { total: string }[];
     return dashboardListResult(
       rows.map(commissionDto),

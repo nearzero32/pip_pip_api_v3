@@ -110,7 +110,7 @@ describe("M4-B redis reconciliation + hydration outage", () => {
     product = p!.id;
     await h.deliveryPricing.create(superIdentity, city, deliveryPricingInput);
     const versions = await h.deliveryPricing.list(superIdentity, city);
-    await h.deliveryPricing.activate(superIdentity, city, versions[0]!.id);
+    await h.deliveryPricing.activate(superIdentity, city, versions.data[0]!.id);
     h.routingProvider.setResult({ distanceMeters: 1000, durationSeconds: 120 });
     await h.cityDriverPricing.put(
       superIdentity,
@@ -175,7 +175,7 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       adminIdentity, order.id, { kind: "DASHBOARD" }, crypto.randomUUID(),
     );
     const rounds = await h.offers.listRounds(adminIdentity, order.id);
-    const round = rounds[0]!;
+    const round = rounds.data[0]!;
     await h.offers.claim(
       {
         accountId: driverId,
@@ -820,7 +820,7 @@ describe("M4-B redis reconciliation + hydration outage", () => {
       adminIdentity, order.id, { kind: "DASHBOARD" }, crypto.randomUUID(),
     );
     const rounds = await h.offers.listRounds(adminIdentity, order.id);
-    const round = rounds[0]!;
+    const round = rounds.data[0]!;
     await h.offers.claim(
       {
         accountId: driverId,
@@ -1064,7 +1064,7 @@ describe("M4-B redis reconciliation + hydration outage", () => {
         adminIdentity, order.id, { kind: "DASHBOARD" }, crypto.randomUUID(),
       );
       const rounds = await h.offers.listRounds(adminIdentity, order.id);
-      const round = rounds[0]!;
+      const round = rounds.data[0]!;
 
       // Seed real Redis to match PG open snapshot at current city revision.
       const seed = await h.client.begin((tx: SQL) =>

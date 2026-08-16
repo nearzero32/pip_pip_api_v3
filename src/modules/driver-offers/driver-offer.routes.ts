@@ -277,18 +277,29 @@ export const driverOfferRoutes = (
     )
     .get(
       "/api/v1/dashboard/orders/:orderId/offer-rounds",
-      async ({ request, set, params }) => {
+      async ({ request, set, params, query }) => {
         const identity = await authIdentity(
           auth,
           request,
           dashboardContext,
           requestIdOf(set),
         );
-        return offers.listRounds(identity, params.orderId);
+        return offers.listRounds(identity, params.orderId, query);
       },
       {
         params: t.Object({ orderId: uuid }),
-        response: { 200: t.Array(offerRound), ...errors },
+        query: t.Object(
+          {
+            ...dashboardListQuery,
+            status: t.Optional(t.String()),
+            roundKind: t.Optional(t.String()),
+            closingReason: t.Optional(t.String()),
+            openedFrom: t.Optional(t.String()),
+            openedTo: t.Optional(t.String()),
+          },
+          { additionalProperties: false },
+        ),
+        response: { 200: dashboardPaginated(offerRound), ...errors },
         detail: {
           tags: ["Dashboard — Order Offers"],
           summary: "List offer rounds for an order",
@@ -355,14 +366,16 @@ export const driverOfferRoutes = (
           dashboardContext,
           requestIdOf(set),
         );
-        return offers.listDriverCandidates(
-          identity,
-          query.page,
-          query.limit,
-        );
+        return offers.listDriverCandidates(identity, query);
       },
       {
-        query: t.Object({ ...dashboardListQuery }, { additionalProperties: false }),
+        query: t.Object(
+          {
+            ...dashboardListQuery,
+            activeOrderCount: t.Optional(t.String()),
+          },
+          { additionalProperties: false },
+        ),
         response: {
           200: dashboardPaginated(
               t.Object({

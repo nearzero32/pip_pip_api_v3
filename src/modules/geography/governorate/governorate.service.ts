@@ -12,6 +12,7 @@ import {
   dashboardPageOf,
   likeContains,
   parseAllowlistedSort,
+  parseOptionalDateRange,
   parseOptionalSearch,
   parseSortOrder,
   sqlDir,
@@ -42,6 +43,8 @@ export class GovernorateService {
     status?: string;
     page?: number;
     limit?: number;
+    createdFrom?: string;
+    createdTo?: string;
     sortBy?: string;
     sortOrder?: string;
   }) {
@@ -49,6 +52,10 @@ export class GovernorateService {
     const offset = (page - 1) * limit;
     const search = parseOptionalSearch(input.search);
     const pattern = search ? likeContains(search) : null;
+    const created = parseOptionalDateRange({
+      from: input.createdFrom,
+      to: input.createdTo,
+    });
     const sortBy = parseAllowlistedSort(
       input.sortBy,
       ["displayOrder", "nameEn", "nameAr", "status", "createdAt"] as const,
@@ -70,15 +77,19 @@ export class GovernorateService {
        from governorates
        where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
          and ($2::text is null or status=$2::governorate_status)
+         and ($3::timestamptz is null or created_at >= $3)
+         and ($4::timestamptz is null or created_at <= $4)
        order by ${orderSql}
-       limit $3::int offset $4::int`,
-      [pattern, input.status ?? null, limit, offset],
+       limit $5::int offset $6::int`,
+      [pattern, input.status ?? null, created.from, created.to, limit, offset],
     );
     const [count] = await this.client.unsafe(
       `select count(*)::text total from governorates
        where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
-         and ($2::text is null or status=$2::governorate_status)`,
-      [pattern, input.status ?? null],
+         and ($2::text is null or status=$2::governorate_status)
+         and ($3::timestamptz is null or created_at >= $3)
+         and ($4::timestamptz is null or created_at <= $4)`,
+      [pattern, input.status ?? null, created.from, created.to],
     ) as { total: string }[];
     return dashboardListResult(
       (rows as Record<string, unknown>[]).map((row) => governorateDto(row)),

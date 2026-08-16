@@ -3,6 +3,7 @@ import {
   likeContains,
   parseAllowlistedSort,
   parseOptionalDateRange,
+  parseOptionalIntRange,
   parseOptionalSearch,
   parseOptionalUuid,
   parseSortOrder,
@@ -39,6 +40,12 @@ export type OrderListQuery = {
   cancelledTo?: string;
   hasActiveHandoff?: string | boolean;
   hasActiveReturn?: string | boolean;
+  paymentMethod?: string;
+  paymentStatus?: string;
+  totalMin?: string | number;
+  totalMax?: string | number;
+  storeCommissionRateMin?: string | number;
+  storeCommissionRateMax?: string | number;
   sortBy?: string;
   sortOrder?: string;
 };
@@ -61,6 +68,12 @@ export type OrderListFilters = {
   cancelledTo: Date | null;
   hasActiveHandoff: boolean | null;
   hasActiveReturn: boolean | null;
+  paymentMethod: string | null;
+  paymentStatus: string | null;
+  totalMin: number | null;
+  totalMax: number | null;
+  storeCommissionRateMin: number | null;
+  storeCommissionRateMax: number | null;
   sortBy: (typeof ORDER_SORT_FIELDS)[number];
   sortOrder: DashboardSortOrder;
   orderSql: string;
@@ -91,6 +104,11 @@ export function parseOrderListQuery(input: OrderListQuery): OrderListFilters {
     from: input.cancelledFrom,
     to: input.cancelledTo,
   });
+  const total = parseOptionalIntRange(input.totalMin, input.totalMax);
+  const commission = parseOptionalIntRange(
+    input.storeCommissionRateMin,
+    input.storeCommissionRateMax,
+  );
   const sortBy = parseAllowlistedSort(
     input.sortBy,
     ORDER_SORT_FIELDS,
@@ -123,6 +141,12 @@ export function parseOrderListQuery(input: OrderListQuery): OrderListFilters {
     cancelledTo: cancelled.to,
     hasActiveHandoff: boolish(input.hasActiveHandoff),
     hasActiveReturn: boolish(input.hasActiveReturn),
+    paymentMethod: input.paymentMethod?.trim() || null,
+    paymentStatus: input.paymentStatus?.trim() || null,
+    totalMin: total.min,
+    totalMax: total.max,
+    storeCommissionRateMin: commission.min,
+    storeCommissionRateMax: commission.max,
     sortBy,
     sortOrder,
     orderSql,
@@ -155,20 +179,26 @@ export const ORDER_LIST_WHERE_SQL = `
         select 1 from order_return_workflows r
         where r.order_id = o.id and r.status in ('WAITING_FOR_DRIVER_RETURN','WAITING_FOR_STORE_CONFIRMATION')
       )))
+  and ($16::text is null or o.payment_method::text = $16::text)
+  and ($17::text is null or o.payment_status::text = $17::text)
+  and ($18::int is null or o.total >= $18::int)
+  and ($19::int is null or o.total <= $19::int)
+  and ($20::int is null or o.store_commission_rate_snapshot >= $20::int)
+  and ($21::int is null or o.store_commission_rate_snapshot <= $21::int)
   and (
-    $16::text is null
-    or o.order_number ilike $16 escape '\\'
-    or ($17::uuid is not null and o.id = $17::uuid)
+    $22::text is null
+    or o.order_number ilike $22 escape '\\'
+    or ($23::uuid is not null and o.id = $23::uuid)
     or exists (
       select 1 from stores s
-      where s.id = o.store_id and s.name ilike $16 escape '\\'
+      where s.id = o.store_id and s.name ilike $22 escape '\\'
     )
     or exists (
       select 1 from order_address_snapshots addr
       where addr.order_id = o.id
         and (
-          coalesce(addr.recipient_name, '') ilike $16 escape '\\'
-          or coalesce(addr.recipient_phone, '') ilike $16 escape '\\'
+          coalesce(addr.recipient_name, '') ilike $22 escape '\\'
+          or coalesce(addr.recipient_phone, '') ilike $22 escape '\\'
         )
     )
   )
@@ -191,6 +221,12 @@ export function orderListParams(cityId: string, filters: OrderListFilters) {
     filters.cancelledTo,
     filters.hasActiveHandoff,
     filters.hasActiveReturn,
+    filters.paymentMethod,
+    filters.paymentStatus,
+    filters.totalMin,
+    filters.totalMax,
+    filters.storeCommissionRateMin,
+    filters.storeCommissionRateMax,
     filters.pattern,
     filters.searchUuid,
   ];
@@ -213,6 +249,12 @@ export function orderListPublicFilters(filters: OrderListFilters) {
     cancelledTo: filters.cancelledTo?.toISOString() ?? null,
     hasActiveHandoff: filters.hasActiveHandoff,
     hasActiveReturn: filters.hasActiveReturn,
+    paymentMethod: filters.paymentMethod,
+    paymentStatus: filters.paymentStatus,
+    totalMin: filters.totalMin,
+    totalMax: filters.totalMax,
+    storeCommissionRateMin: filters.storeCommissionRateMin,
+    storeCommissionRateMax: filters.storeCommissionRateMax,
     sortBy: filters.sortBy,
     sortOrder: filters.sortOrder,
   };

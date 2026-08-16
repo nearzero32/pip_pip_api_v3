@@ -10,7 +10,19 @@ import {
   beginWithGeographyRetry,
   lockCityGeography,
 } from "../../geography/geography-locks";
-import { dateValue, pageOf } from "../../geography/shared";
+import { dateValue } from "../../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+  parseAllowlistedSort,
+  parseOptionalDateRange,
+  parseOptionalSearch,
+  parseOptionalUuid,
+  parseSortOrder,
+  searchUuid,
+  sqlDir,
+} from "../../dashboard-lists/query";
 
 type MerchantStatus = "ACTIVE" | "INACTIVE" | "SUSPENDED";
 
@@ -257,66 +269,104 @@ export class MerchantOrganizationService {
       status?: string;
       storeId?: string;
       search?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
       page?: number;
       limit?: number;
     },
   ) {
     const cityId = await this.authorize(identity, "merchants.read");
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const status = input.status?.trim() || null;
-    if (
-      status &&
-      !["ACTIVE", "INACTIVE", "SUSPENDED"].includes(status)
-    ) {
+    if (status && !["ACTIVE", "INACTIVE", "SUSPENDED"].includes(status)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
     const storeId =
-      input.storeId && input.storeId !== "null" ? input.storeId : null;
-    const search = input.search?.trim() || null;
-
+      !input.storeId?.trim() || input.storeId === "null"
+        ? null
+        : parseOptionalUuid(input.storeId);
+    const search = parseOptionalSearch(input.search);
+    const pattern = search ? likeContains(search) : null;
+    const uuid = searchUuid(search);
+    const created = parseOptionalDateRange({
+      from: input.createdFrom,
+      to: input.createdTo,
+    });
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["createdAt", "displayName", "phone"] as const,
+      "createdAt",
+    );
+    const sortOrder = parseSortOrder(input.sortOrder, "desc");
+    const orderSql = {
+      createdAt: `m.created_at ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      displayName: `coalesce(m.display_name, '') ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+      phone: `ph.phone_e164 ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
+    const where = `
+      m.city_id = $1::uuid
+      and ($2::text is null or m.status = $2::merchant_profile_status)
+      and ($3::uuid is null or m.store_id = $3::uuid)
+      and ($4::timestamptz is null or m.created_at >= $4::timestamptz)
+      and ($5::timestamptz is null or m.created_at <= $5::timestamptz)
+      and (
+        $6::text is null
+        or ph.phone_e164 ilike $6 escape '\\'
+        or coalesce(m.display_name, '') ilike $6 escape '\\'
+        or s.name ilike $6 escape '\\'
+        or ($7::uuid is not null and (a.id = $7::uuid or m.store_id = $7::uuid))
+      )`;
+    const params = [
+      cityId,
+      status,
+      storeId,
+      created.from,
+      created.to,
+      pattern,
+      uuid,
+    ];
     const rows = await this.client.unsafe(
-      `select distinct on (m.account_id)
-         a.id::text as account_id,
-         ph.phone_e164,
-         m.display_name,
-         m.status::text as merchant_status,
-         m.store_id::text as store_id,
-         s.name as store_name,
-         m.city_id::text as city_id,
-         m.created_at,
-         m.updated_at,
-         m.status_changed_at
+      `select a.id::text as account_id, ph.phone_e164, m.display_name,
+              m.status::text as merchant_status, m.store_id::text as store_id,
+              s.name as store_name, m.city_id::text as city_id,
+              m.created_at, m.updated_at, m.status_changed_at
        from merchant_profiles m
        join accounts a on a.id = m.account_id
        join stores s on s.id = m.store_id and s.city_id = m.city_id
-       join account_phones ph on ph.account_id = a.id and ph.verified_at is not null
-       where m.city_id = $1::uuid
-         and ($2::text is null or m.status = $2::merchant_profile_status)
-         and ($3::uuid is null or m.store_id = $3::uuid)
-         and (
-           $4::text is null
-           or ph.phone_e164 ilike ('%' || $4 || '%')
-           or coalesce(m.display_name, '') ilike ('%' || $4 || '%')
-         )
-       order by m.account_id, ph.is_primary desc, ph.created_at asc`,
-      [cityId, status, storeId, search],
+       join lateral (
+         select phone_e164 from account_phones
+         where account_id = a.id and verified_at is not null
+         order by is_primary desc, created_at asc
+         limit 1
+       ) ph on true
+       where ${where}
+       order by ${orderSql}
+       limit $8::int offset $9::int`,
+      [...params, limit, offset],
     );
-
-    const sorted = (rows as Record<string, unknown>[]).sort((a, b) => {
-      const ac = String(a.created_at);
-      const bc = String(b.created_at);
-      if (ac !== bc) return ac < bc ? -1 : 1;
-      return String(a.account_id) < String(b.account_id) ? -1 : 1;
-    });
-    const total = sorted.length;
-    const pageRows = sorted.slice(offset, offset + limit);
-    return {
-      data: pageRows.map((row) => this.merchantDto(row)),
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total
+       from merchant_profiles m
+       join accounts a on a.id = m.account_id
+       join stores s on s.id = m.store_id and s.city_id = m.city_id
+       join lateral (
+         select phone_e164 from account_phones
+         where account_id = a.id and verified_at is not null
+         order by is_primary desc, created_at asc
+         limit 1
+       ) ph on true
+       where ${where}`,
+      params,
+    )) as { total: number }[];
+    return dashboardListResult(
+      (rows as Record<string, unknown>[]).map((row) => this.merchantDto(row)),
       page,
       limit,
-      total,
-    };
+      count?.total ?? 0,
+    );
   }
 
   async get(identity: AuthIdentity, accountId: string) {
