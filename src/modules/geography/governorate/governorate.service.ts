@@ -59,6 +59,8 @@ export class GovernorateService {
     const created = parseOptionalDateRange({
       from: input.createdFrom,
       to: input.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     const sortBy = parseAllowlistedSort(
       input.sortBy,

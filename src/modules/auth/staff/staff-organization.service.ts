@@ -16,6 +16,7 @@ import {
   dashboardPageOf,
   likeContains,
   parseAllowlistedSort,
+  parseOptionalAllowlisted,
   parseOptionalDateRange,
   parseOptionalSearch,
   parseOptionalUuid,
@@ -23,6 +24,13 @@ import {
   searchUuid,
   sqlDir,
 } from "../../dashboard-lists/query";
+
+const STAFF_PROFILE_STATUSES = [
+  "INVITED",
+  "ACTIVE",
+  "DISABLED",
+  "CLOSED",
+] as const;
 
 const cleanName = (value: string, field: string) => {
   const result = value.trim();
@@ -137,11 +145,17 @@ export class StaffOrganizationService {
     const searchRaw = parseOptionalSearch(input.search);
     const pattern = searchRaw ? likeContains(searchRaw) : null;
     const uuid = searchUuid(searchRaw);
-    const cityId = parseOptionalUuid(input.cityId);
-    const status = input.status?.trim() || null;
+    const cityId = parseOptionalUuid(input.cityId, "cityId");
+    const status = parseOptionalAllowlisted(
+      input.status,
+      STAFF_PROFILE_STATUSES,
+      "status",
+    );
     const created = parseOptionalDateRange({
       from: input.createdFrom,
       to: input.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     const sortBy = parseAllowlistedSort(
       input.sortBy,
@@ -339,12 +353,18 @@ export class StaffOrganizationService {
     const searchRaw = parseOptionalSearch(input.search);
     const pattern = searchRaw ? likeContains(searchRaw) : null;
     const uuid = searchUuid(searchRaw);
-    const status = input.status?.trim() || null;
+    const status = parseOptionalAllowlisted(
+      input.status,
+      STAFF_PROFILE_STATUSES,
+      "status",
+    );
     const role = input.role?.trim() || null;
     const permission = input.permission?.trim() || null;
     const created = parseOptionalDateRange({
       from: input.createdFrom,
       to: input.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     const sortBy = parseAllowlistedSort(
       input.sortBy,

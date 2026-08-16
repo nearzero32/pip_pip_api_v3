@@ -43,14 +43,21 @@ export type OpsListInput = {
 };
 
 const dates = (
-  from?: string,
-  to?: string,
+  from: string | undefined,
+  to: string | undefined,
+  fromField: string,
+  toField: string,
 ): { from: Date | null; to: Date | null } =>
-  parseOptionalDateRange({ from, to });
+  parseOptionalDateRange({ from, to, fromField, toField });
 
 export function parseEventListQuery(input: OpsListInput) {
   const search = parseOptionalSearch(input.search);
-  const created = dates(input.createdFrom, input.createdTo);
+  const created = dates(
+    input.createdFrom,
+    input.createdTo,
+    "createdFrom",
+    "createdTo",
+  );
   const sortBy = parseAllowlistedSort(
     input.sortBy,
     ["createdAt"] as const,
@@ -61,10 +68,10 @@ export function parseEventListQuery(input: OpsListInput) {
     search,
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
-    orderId: parseOptionalUuid(input.orderId),
+    orderId: parseOptionalUuid(input.orderId, "orderId"),
     eventType: input.eventType?.trim() || null,
     source: input.source?.trim() || null,
-    actorAccountId: parseOptionalUuid(input.actorAccountId),
+    actorAccountId: parseOptionalUuid(input.actorAccountId, "actorAccountId"),
     createdFrom: created.from,
     createdTo: created.to,
     sortBy,
@@ -107,7 +114,12 @@ export function eventListParams(
 
 export function parseAssignmentListQuery(input: OpsListInput) {
   const search = parseOptionalSearch(input.search);
-  const assigned = dates(input.assignedFrom, input.assignedTo);
+  const assigned = dates(
+    input.assignedFrom,
+    input.assignedTo,
+    "assignedFrom",
+    "assignedTo",
+  );
   const sortBy = parseAllowlistedSort(
     input.sortBy,
     ["assignedAt", "createdAt", "status"] as const,
@@ -123,8 +135,8 @@ export function parseAssignmentListQuery(input: OpsListInput) {
     search,
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
-    orderId: parseOptionalUuid(input.orderId),
-    driverId: parseOptionalUuid(input.driverId),
+    orderId: parseOptionalUuid(input.orderId, "orderId"),
+    driverId: parseOptionalUuid(input.driverId, "driverId"),
     status: input.status?.trim() || null,
     source: input.source?.trim() || null,
     closingReason: input.closingReason?.trim() || null,
@@ -178,7 +190,12 @@ export function assignmentListParams(
 
 export function parseOfferRoundListQuery(input: OpsListInput) {
   const search = parseOptionalSearch(input.search);
-  const opened = dates(input.openedFrom, input.openedTo);
+  const opened = dates(
+    input.openedFrom,
+    input.openedTo,
+    "openedFrom",
+    "openedTo",
+  );
   const sortBy = parseAllowlistedSort(
     input.sortBy,
     ["openedAt", "createdAt", "status"] as const,
@@ -194,7 +211,7 @@ export function parseOfferRoundListQuery(input: OpsListInput) {
     search,
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
-    orderId: parseOptionalUuid(input.orderId),
+    orderId: parseOptionalUuid(input.orderId, "orderId"),
     status: input.status?.trim() || null,
     roundKind: input.roundKind?.trim() || null,
     closingReason: input.closingReason?.trim() || null,
@@ -239,7 +256,12 @@ export function offerRoundListParams(
 
 export function parseHandoffListQuery(input: OpsListInput) {
   const search = parseOptionalSearch(input.search);
-  const created = dates(input.createdFrom, input.createdTo);
+  const created = dates(
+    input.createdFrom,
+    input.createdTo,
+    "createdFrom",
+    "createdTo",
+  );
   const sortBy = parseAllowlistedSort(
     input.sortBy,
     ["createdAt", "status"] as const,
@@ -250,9 +272,9 @@ export function parseHandoffListQuery(input: OpsListInput) {
     search,
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
-    orderId: parseOptionalUuid(input.orderId),
-    fromDriverId: parseOptionalUuid(input.fromDriverId),
-    toDriverId: parseOptionalUuid(input.toDriverId),
+    orderId: parseOptionalUuid(input.orderId, "orderId"),
+    fromDriverId: parseOptionalUuid(input.fromDriverId, "fromDriverId"),
+    toDriverId: parseOptionalUuid(input.toDriverId, "toDriverId"),
     status: input.status?.trim() || null,
     createdFrom: created.from,
     createdTo: created.to,
@@ -298,7 +320,12 @@ export function handoffListParams(
 
 export function parseReturnListQuery(input: OpsListInput) {
   const search = parseOptionalSearch(input.search);
-  const created = dates(input.createdFrom, input.createdTo);
+  const created = dates(
+    input.createdFrom,
+    input.createdTo,
+    "createdFrom",
+    "createdTo",
+  );
   const sortBy = parseAllowlistedSort(
     input.sortBy,
     ["createdAt", "status"] as const,
@@ -309,8 +336,8 @@ export function parseReturnListQuery(input: OpsListInput) {
     search,
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
-    orderId: parseOptionalUuid(input.orderId),
-    driverId: parseOptionalUuid(input.driverId),
+    orderId: parseOptionalUuid(input.orderId, "orderId"),
+    driverId: parseOptionalUuid(input.driverId, "driverId"),
     status: input.status?.trim() || null,
     createdFrom: created.from,
     createdTo: created.to,
@@ -353,15 +380,29 @@ export function returnListParams(
 
 export function parseCollectionListQuery(input: OpsListInput) {
   const search = parseOptionalSearch(input.search);
-  const collected = dates(input.collectedFrom, input.collectedTo);
-  const expected = parseOptionalIntRange(input.expectedMin, input.expectedMax);
+  const collected = dates(
+    input.collectedFrom,
+    input.collectedTo,
+    "collectedFrom",
+    "collectedTo",
+  );
+  const expected = parseOptionalIntRange(
+    input.expectedMin,
+    input.expectedMax,
+    "expectedMin",
+    "expectedMax",
+  );
   const collectedAmt = parseOptionalIntRange(
     input.collectedMin,
     input.collectedMax,
+    "collectedMin",
+    "collectedMax",
   );
   const difference = parseOptionalIntRange(
     input.differenceMin,
     input.differenceMax,
+    "differenceMin",
+    "differenceMax",
   );
   const sortBy = parseAllowlistedSort(
     input.sortBy,
@@ -384,9 +425,9 @@ export function parseCollectionListQuery(input: OpsListInput) {
     search,
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
-    orderId: parseOptionalUuid(input.orderId),
-    assignmentId: parseOptionalUuid(input.assignmentId),
-    driverId: parseOptionalUuid(input.driverId),
+    orderId: parseOptionalUuid(input.orderId, "orderId"),
+    assignmentId: parseOptionalUuid(input.assignmentId, "assignmentId"),
+    driverId: parseOptionalUuid(input.driverId, "driverId"),
     confirmationSource: input.confirmationSource?.trim() || null,
     expectedMin: expected.min,
     expectedMax: expected.max,

@@ -16,6 +16,7 @@ import {
   dashboardPageOf,
   likeContains,
   parseAllowlistedSort,
+  parseOptionalAllowlisted,
   parseOptionalDateRange,
   parseOptionalSearch,
   parseOptionalUuid,
@@ -25,6 +26,7 @@ import {
 } from "../../dashboard-lists/query";
 
 type MerchantStatus = "ACTIVE" | "INACTIVE" | "SUSPENDED";
+const MERCHANT_STATUSES = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
 
 const cleanDisplayName = (raw: unknown): string | null => {
   if (raw === null) return null;
@@ -280,20 +282,23 @@ export class MerchantOrganizationService {
     const cityId = await this.authorize(identity, "merchants.read");
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const status = input.status?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "SUSPENDED"].includes(status)) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
+    const status = parseOptionalAllowlisted(
+      input.status,
+      MERCHANT_STATUSES,
+      "status",
+    );
     const storeId =
       !input.storeId?.trim() || input.storeId === "null"
         ? null
-        : parseOptionalUuid(input.storeId);
+        : parseOptionalUuid(input.storeId, "storeId");
     const search = parseOptionalSearch(input.search);
     const pattern = search ? likeContains(search) : null;
     const uuid = searchUuid(search);
     const created = parseOptionalDateRange({
       from: input.createdFrom,
       to: input.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     const sortBy = parseAllowlistedSort(
       input.sortBy,

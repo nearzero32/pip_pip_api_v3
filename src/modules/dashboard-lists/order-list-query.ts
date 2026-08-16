@@ -1,7 +1,8 @@
-import { AppError } from "../../errors/app-error";
 import {
   likeContains,
   parseAllowlistedSort,
+  parseOptionalAllowlisted,
+  parseOptionalBool,
   parseOptionalDateRange,
   parseOptionalIntRange,
   parseOptionalSearch,
@@ -79,35 +80,42 @@ export type OrderListFilters = {
   orderSql: string;
 };
 
-const boolish = (value?: string | boolean): boolean | null => {
-  if (value === undefined || value === null || value === "") return null;
-  if (value === true || value === "true" || value === "1") return true;
-  if (value === false || value === "false" || value === "0") return false;
-  throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-};
-
 export function parseOrderListQuery(input: OrderListQuery): OrderListFilters {
   const search = parseOptionalSearch(input.search);
-  const status = input.status?.trim() || null;
-  if (status && !(ORDER_STATUSES as readonly string[]).includes(status)) {
-    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-  }
+  const status = parseOptionalAllowlisted(
+    input.status,
+    ORDER_STATUSES,
+    "status",
+  );
   const created = parseOptionalDateRange({
     from: input.createdFrom,
     to: input.createdTo,
+    fromField: "createdFrom",
+    toField: "createdTo",
   });
   const delivered = parseOptionalDateRange({
     from: input.deliveredFrom,
     to: input.deliveredTo,
+    fromField: "deliveredFrom",
+    toField: "deliveredTo",
   });
   const cancelled = parseOptionalDateRange({
     from: input.cancelledFrom,
     to: input.cancelledTo,
+    fromField: "cancelledFrom",
+    toField: "cancelledTo",
   });
-  const total = parseOptionalIntRange(input.totalMin, input.totalMax);
+  const total = parseOptionalIntRange(
+    input.totalMin,
+    input.totalMax,
+    "totalMin",
+    "totalMax",
+  );
   const commission = parseOptionalIntRange(
     input.storeCommissionRateMin,
     input.storeCommissionRateMax,
+    "storeCommissionRateMin",
+    "storeCommissionRateMax",
   );
   const sortBy = parseAllowlistedSort(
     input.sortBy,
@@ -128,10 +136,10 @@ export function parseOrderListQuery(input: OrderListQuery): OrderListFilters {
     pattern: search ? likeContains(search) : null,
     searchUuid: search && UUID_RE.test(search) ? search : null,
     status,
-    storeId: parseOptionalUuid(input.storeId),
-    customerId: parseOptionalUuid(input.customerId),
-    driverId: parseOptionalUuid(input.driverId),
-    assignmentId: parseOptionalUuid(input.assignmentId),
+    storeId: parseOptionalUuid(input.storeId, "storeId"),
+    customerId: parseOptionalUuid(input.customerId, "customerId"),
+    driverId: parseOptionalUuid(input.driverId, "driverId"),
+    assignmentId: parseOptionalUuid(input.assignmentId, "assignmentId"),
     custodyStatus: input.custodyStatus?.trim() || null,
     createdFrom: created.from,
     createdTo: created.to,
@@ -139,8 +147,8 @@ export function parseOrderListQuery(input: OrderListQuery): OrderListFilters {
     deliveredTo: delivered.to,
     cancelledFrom: cancelled.from,
     cancelledTo: cancelled.to,
-    hasActiveHandoff: boolish(input.hasActiveHandoff),
-    hasActiveReturn: boolish(input.hasActiveReturn),
+    hasActiveHandoff: parseOptionalBool(input.hasActiveHandoff, "hasActiveHandoff"),
+    hasActiveReturn: parseOptionalBool(input.hasActiveReturn, "hasActiveReturn"),
     paymentMethod: input.paymentMethod?.trim() || null,
     paymentStatus: input.paymentStatus?.trim() || null,
     totalMin: total.min,

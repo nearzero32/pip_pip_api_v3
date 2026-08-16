@@ -15,6 +15,7 @@ import {
   dashboardPageOf,
   likeContains,
   parseAllowlistedSort,
+  parseOptionalAllowlisted,
   parseOptionalDateRange,
   parseOptionalSearch,
   parseSortOrder,
@@ -250,18 +251,16 @@ export class ZoneService {
     const offset = (page - 1) * limit;
     const search = parseOptionalSearch(input.search);
     const pattern = search ? likeContains(search) : null;
-    const status = input.status?.trim() || null;
-    if (
-      status &&
-      status !== "ACTIVE" &&
-      status !== "INACTIVE" &&
-      status !== "ARCHIVED"
-    ) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
+    const status = parseOptionalAllowlisted(
+      input.status,
+      ["ACTIVE", "INACTIVE", "ARCHIVED"] as const,
+      "status",
+    );
     const created = parseOptionalDateRange({
       from: input.createdFrom,
       to: input.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     const sortBy = parseAllowlistedSort(
       input.sortBy,

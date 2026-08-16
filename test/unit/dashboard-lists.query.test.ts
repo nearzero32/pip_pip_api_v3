@@ -17,8 +17,38 @@ describe("dashboard list query primitives", () => {
   });
 
   test("rejects invalid page and limit", () => {
-    expect(() => dashboardPageOf(0, 25)).toThrow(AppError);
-    expect(() => dashboardPageOf(1, 101)).toThrow(AppError);
+    try {
+      dashboardPageOf(0, 25);
+      throw new Error("expected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AppError);
+      expect((error as AppError).details).toEqual({
+        location: "query",
+        fields: [
+          {
+            field: "page",
+            code: "TOO_SMALL",
+            message: "page must be at least 1",
+          },
+        ],
+      });
+    }
+    try {
+      dashboardPageOf(1, 101);
+      throw new Error("expected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AppError);
+      expect((error as AppError).details).toEqual({
+        location: "query",
+        fields: [
+          {
+            field: "limit",
+            code: "TOO_LARGE",
+            message: "limit must be at most 100",
+          },
+        ],
+      });
+    }
   });
 
   test("trims search and escapes ILIKE wildcards", () => {
@@ -31,9 +61,22 @@ describe("dashboard list query primitives", () => {
     expect(parseAllowlistedSort(undefined, ["createdAt", "name"] as const, "createdAt")).toBe(
       "createdAt",
     );
-    expect(() => parseAllowlistedSort("password", ["createdAt"] as const, "createdAt")).toThrow(
-      AppError,
-    );
+    try {
+      parseAllowlistedSort("password", ["createdAt"] as const, "createdAt");
+      throw new Error("expected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AppError);
+      expect((error as AppError).details).toEqual({
+        location: "query",
+        fields: [
+          {
+            field: "sortBy",
+            code: "INVALID_VALUE",
+            message: "sortBy has an invalid value",
+          },
+        ],
+      });
+    }
   });
 
   test("date-only ranges are Asia/Baghdad half-open [startOfDay, startOfNextDay)", () => {
@@ -43,6 +86,8 @@ describe("dashboard list query primitives", () => {
       const range = parseOptionalDateRange({
         from: "2026-08-01",
         to: "2026-08-01",
+        fromField: "createdFrom",
+        toField: "createdTo",
       });
       expect(range.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
       expect(range.to?.toISOString()).toBe("2026-08-01T21:00:00.000Z");
@@ -51,7 +96,12 @@ describe("dashboard list query primitives", () => {
       else process.env.TZ = previousTz;
     }
     expect(() =>
-      parseOptionalDateRange({ from: "2026-08-16", to: "2026-08-01" }),
+      parseOptionalDateRange({
+        from: "2026-08-16",
+        to: "2026-08-01",
+        fromField: "createdFrom",
+        toField: "createdTo",
+      }),
     ).toThrow(AppError);
   });
 
@@ -59,12 +109,16 @@ describe("dashboard list query primitives", () => {
     const offset = parseOptionalDateRange({
       from: "2026-08-01T00:00:00.000+03:00",
       to: "2026-08-02T00:00:00.000+03:00",
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     expect(offset.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
     expect(offset.to?.toISOString()).toBe("2026-08-01T21:00:00.000Z");
     const utc = parseOptionalDateRange({
       from: "2026-07-31T21:00:00.000Z",
       to: "2026-08-01T21:00:00.000Z",
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     expect(utc.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
     expect(utc.to?.toISOString()).toBe("2026-08-01T21:00:00.000Z");

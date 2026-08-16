@@ -16,6 +16,7 @@ import {
   dashboardPageOf,
   likeContains,
   parseAllowlistedSort,
+  parseOptionalAllowlisted,
   parseOptionalDateRange,
   parseOptionalSearch,
   parseOptionalUuid,
@@ -434,14 +435,17 @@ export class ModifierService {
     const searchRaw = parseOptionalSearch(input.search);
     const pattern = searchRaw ? likeContains(searchRaw) : null;
     const uuid = searchUuid(searchRaw);
-    const status = input.status?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
-    const productId = parseOptionalUuid(input.productId);
+    const status = parseOptionalAllowlisted(
+      input.status,
+      ["ACTIVE", "INACTIVE", "ARCHIVED"] as const,
+      "status",
+    );
+    const productId = parseOptionalUuid(input.productId, "productId");
     const created = parseOptionalDateRange({
       from: input.createdFrom,
       to: input.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     const sortBy = parseAllowlistedSort(
       input.sortBy,

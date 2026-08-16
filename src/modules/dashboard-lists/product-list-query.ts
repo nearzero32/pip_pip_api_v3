@@ -1,7 +1,7 @@
-import { AppError } from "../../errors/app-error";
 import {
   likeContains,
   parseAllowlistedSort,
+  parseOptionalAllowlisted,
   parseOptionalBool,
   parseOptionalDateRange,
   parseOptionalInt,
@@ -11,6 +11,9 @@ import {
   searchUuid,
   sqlDir,
 } from "./query";
+
+const PRODUCT_STATUSES = ["ACTIVE", "INACTIVE", "ARCHIVED"] as const;
+const DELIVERY_PRICING_STATUSES = ["DRAFT", "ACTIVE", "INACTIVE"] as const;
 
 export function parseProductListQuery(input: {
   status?: string;
@@ -25,10 +28,11 @@ export function parseProductListQuery(input: {
   sortOrder?: string;
 }) {
   const search = parseOptionalSearch(input.search);
-  const status = input.status?.trim() || null;
-  if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)) {
-    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-  }
+  const status = parseOptionalAllowlisted(
+    input.status,
+    PRODUCT_STATUSES,
+    "status",
+  );
   const categoryId =
     input.categoryId === undefined ||
     input.categoryId === "null" ||
@@ -40,6 +44,8 @@ export function parseProductListQuery(input: {
   const created = parseOptionalDateRange({
     from: input.createdFrom,
     to: input.createdTo,
+    fromField: "createdFrom",
+    toField: "createdTo",
   });
   const sortBy = parseAllowlistedSort(
     input.sortBy,
@@ -61,12 +67,12 @@ export function parseProductListQuery(input: {
     searchUuid: searchUuid(search),
     status,
     categoryId,
-    isAvailable: parseOptionalBool(input.isAvailable),
-    hasSizes: parseOptionalBool(input.hasSizes),
+    isAvailable: parseOptionalBool(input.isAvailable, "isAvailable"),
+    hasSizes: parseOptionalBool(input.hasSizes, "hasSizes"),
     modifierGroupId:
       !input.modifierGroupId?.trim() || input.modifierGroupId === "null"
         ? null
-        : parseOptionalUuid(input.modifierGroupId),
+        : parseOptionalUuid(input.modifierGroupId, "modifierGroupId"),
     createdFrom: created.from,
     createdTo: created.to,
     sortBy,
@@ -128,10 +134,11 @@ export function parseStoreCategoryListQuery(input: {
   sortBy?: string;
   sortOrder?: string;
 }) {
-  const status = input.status?.trim() || null;
-  if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)) {
-    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-  }
+  const status = parseOptionalAllowlisted(
+    input.status,
+    PRODUCT_STATUSES,
+    "status",
+  );
   const parentFilter =
     input.parentCategoryId === undefined
       ? null
@@ -142,6 +149,8 @@ export function parseStoreCategoryListQuery(input: {
   const created = parseOptionalDateRange({
     from: input.createdFrom,
     to: input.createdTo,
+    fromField: "createdFrom",
+    toField: "createdTo",
   });
   const sortBy = parseAllowlistedSort(
     input.sortBy,
@@ -217,10 +226,14 @@ export function parseDeliveryPricingListQuery(input: {
   const created = parseOptionalDateRange({
     from: input.createdFrom,
     to: input.createdTo,
+    fromField: "createdFrom",
+    toField: "createdTo",
   });
   const activated = parseOptionalDateRange({
     from: input.activatedFrom,
     to: input.activatedTo,
+    fromField: "activatedFrom",
+    toField: "activatedTo",
   });
   const sortBy = parseAllowlistedSort(
     input.sortBy,
@@ -238,8 +251,15 @@ export function parseDeliveryPricingListQuery(input: {
     search,
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
-    status: input.status?.trim() || null,
-    createdByAccountId: parseOptionalUuid(input.createdByAccountId),
+    status: parseOptionalAllowlisted(
+      input.status,
+      DELIVERY_PRICING_STATUSES,
+      "status",
+    ),
+    createdByAccountId: parseOptionalUuid(
+      input.createdByAccountId,
+      "createdByAccountId",
+    ),
     createdFrom: created.from,
     createdTo: created.to,
     activatedFrom: activated.from,
@@ -303,7 +323,9 @@ export function parseCandidateListQuery(input: {
     search,
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
-    activeOrderCount: parseOptionalInt(input.activeOrderCount, { min: 0 }),
+    activeOrderCount: parseOptionalInt(input.activeOrderCount, "activeOrderCount", {
+      min: 0,
+    }),
     sortBy,
     sortOrder,
     orderSql,

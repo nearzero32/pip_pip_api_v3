@@ -18,7 +18,8 @@ export type ValidationFieldCode =
   | "TOO_SHORT"
   | "TOO_LONG"
   | "TOO_SMALL"
-  | "TOO_LARGE";
+  | "TOO_LARGE"
+  | "INVALID_RANGE";
 
 export type ValidationFieldDetail = {
   field: string;

@@ -10,6 +10,7 @@ import {
 import {
   likeContains,
   parseAllowlistedSort,
+  parseOptionalAllowlisted,
   parseOptionalDateRange,
   parseOptionalSearch,
   parseOptionalUuid,
@@ -19,6 +20,14 @@ import {
   dashboardPageOf,
   dashboardListResult,
 } from "../dashboard-lists/query";
+
+const STAFF_PROFILE_STATUSES = [
+  "INVITED",
+  "ACTIVE",
+  "DISABLED",
+  "CLOSED",
+] as const;
+const MERCHANT_STATUSES = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
 import {
   ASSIGNMENT_LIST_WHERE_SQL,
   assignmentListParams,
@@ -314,9 +323,11 @@ export class DashboardExportService {
       "zones.export",
     );
     const search = query.search?.trim() || null;
-    const status = query.status?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status))
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    const status = parseOptionalAllowlisted(
+      query.status,
+      ["ACTIVE", "INACTIVE", "ARCHIVED"] as const,
+      "status",
+    );
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from zones z
        where z.city_id = $1::uuid
@@ -644,9 +655,11 @@ export class DashboardExportService {
       "main_categories.export",
     );
     const search = query.search?.trim() || null;
-    const status = query.status?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status))
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    const status = parseOptionalAllowlisted(
+      query.status,
+      ["ACTIVE", "INACTIVE", "ARCHIVED"] as const,
+      "status",
+    );
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from main_categories c
        where c.city_id = $1::uuid
@@ -943,9 +956,11 @@ export class DashboardExportService {
       select id::text from stores where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
     const search = query.search?.trim() || null;
-    const status = query.status?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status))
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    const status = parseOptionalAllowlisted(
+      query.status,
+      ["ACTIVE", "INACTIVE", "ARCHIVED"] as const,
+      "status",
+    );
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from modifier_groups g
        where g.store_id = $1::uuid and g.city_id = $2::uuid
@@ -1020,19 +1035,23 @@ export class DashboardExportService {
       "merchants.read",
       "merchants.export",
     );
-    const status = query.status?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "SUSPENDED"].includes(status))
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    const status = parseOptionalAllowlisted(
+      query.status,
+      MERCHANT_STATUSES,
+      "status",
+    );
     const storeId =
       !query.storeId?.trim() || query.storeId === "null"
         ? null
-        : parseOptionalUuid(query.storeId);
+        : parseOptionalUuid(query.storeId, "storeId");
     const search = parseOptionalSearch(query.search);
     const pattern = search ? likeContains(search) : null;
     const uuid = searchUuid(search);
     const created = parseOptionalDateRange({
       from: query.createdFrom,
       to: query.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     const sortBy = parseAllowlistedSort(
       query.sortBy,
@@ -1755,8 +1774,14 @@ export class DashboardExportService {
     const created = parseOptionalDateRange({
       from: query.createdFrom,
       to: query.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
-    const status = query.status?.trim() || null;
+    const status = parseOptionalAllowlisted(
+      query.status,
+      STAFF_PROFILE_STATUSES,
+      "status",
+    );
     const role = query.role?.trim() || null;
     const permission = query.permission?.trim() || null;
     const sortBy = parseAllowlistedSort(
@@ -1856,11 +1881,17 @@ export class DashboardExportService {
     const search = parseOptionalSearch(query.search);
     const pattern = search ? likeContains(search) : null;
     const uuid = searchUuid(search);
-    const cityId = parseOptionalUuid(query.cityId);
-    const status = query.status?.trim() || null;
+    const cityId = parseOptionalUuid(query.cityId, "cityId");
+    const status = parseOptionalAllowlisted(
+      query.status,
+      STAFF_PROFILE_STATUSES,
+      "status",
+    );
     const created = parseOptionalDateRange({
       from: query.createdFrom,
       to: query.createdTo,
+      fromField: "createdFrom",
+      toField: "createdTo",
     });
     const sortBy = parseAllowlistedSort(
       query.sortBy,

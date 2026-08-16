@@ -1,7 +1,11 @@
-import { AppError } from "../../errors/app-error";
+import {
+  invalidRangeFields,
+  requestValidationError,
+} from "../../errors/request-validation-error";
 import {
   likeContains,
   parseAllowlistedSort,
+  parseOptionalAllowlisted,
   parseOptionalDateRange,
   parseOptionalInt,
   parseOptionalSearch,
@@ -34,10 +38,7 @@ export type StoreListInput = {
 };
 
 export function parseStoreStatusFilter(status?: string): string | null {
-  const value = status?.trim() || null;
-  if (value && !STORE_STATUSES.includes(value as (typeof STORE_STATUSES)[number]))
-    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-  return value;
+  return parseOptionalAllowlisted(status, STORE_STATUSES, "status");
 }
 
 export function parseStoreListQuery(input: StoreListInput) {
@@ -45,11 +46,22 @@ export function parseStoreListQuery(input: StoreListInput) {
   const created = parseOptionalDateRange({
     from: input.createdFrom,
     to: input.createdTo,
+    fromField: "createdFrom",
+    toField: "createdTo",
   });
-  const rateMin = parseOptionalInt(input.commissionRateMin, { min: 0, max: 100 });
-  const rateMax = parseOptionalInt(input.commissionRateMax, { min: 0, max: 100 });
+  const rateMin = parseOptionalInt(input.commissionRateMin, "commissionRateMin", {
+    min: 0,
+    max: 100,
+  });
+  const rateMax = parseOptionalInt(input.commissionRateMax, "commissionRateMax", {
+    min: 0,
+    max: 100,
+  });
   if (rateMin != null && rateMax != null && rateMin > rateMax) {
-    throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    throw requestValidationError({
+      location: "query",
+      fields: invalidRangeFields("commissionRateMin", "commissionRateMax"),
+    });
   }
   const sortBy = parseAllowlistedSort(
     input.sortBy,
@@ -72,8 +84,8 @@ export function parseStoreListQuery(input: StoreListInput) {
     pattern: search ? likeContains(search) : null,
     searchUuid: searchUuid(search),
     status: parseStoreStatusFilter(input.status),
-    mainCategoryId: parseOptionalUuid(input.mainCategoryId),
-    zoneId: parseOptionalUuid(input.zoneId),
+    mainCategoryId: parseOptionalUuid(input.mainCategoryId, "mainCategoryId"),
+    zoneId: parseOptionalUuid(input.zoneId, "zoneId"),
     rateMin,
     rateMax,
     createdFrom: created.from,
