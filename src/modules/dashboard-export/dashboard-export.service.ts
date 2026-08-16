@@ -190,30 +190,47 @@ export class DashboardExportService {
       where (${search}::text is null or name_ar ilike ${`%${search ?? ""}%`} or name_en ilike ${`%${search ?? ""}%`})
         and (${status}::text is null or status=${status}::governorate_status)
       order by display_order asc, name_en asc, id asc`;
-    return this.file(identity, {
-      resource: "governorates",
-      endpoint: "/api/v1/dashboard/governorates/export",
-      permission: "governorates.export",
-      filename: "governorates.xlsx",
-      filters: { search, status },
-      cityId: null,
-    }, "المحافظات", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "nameAr", header: "الاسم العربي", type: "text", width: 24 },
-      { key: "nameEn", header: "الاسم الإنجليزي", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "displayOrder", header: "الترتيب", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-      { key: "updatedAt", header: "تاريخ التحديث", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id),
-      nameAr: text(row.name_ar),
-      nameEn: text(row.name_en),
-      status: text(row.status),
-      displayOrder: int(row.display_order),
-      createdAt: iso(row.created_at),
-      updatedAt: iso(row.updated_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "governorates",
+        endpoint: "/api/v1/dashboard/governorates/export",
+        permission: "governorates.export",
+        filename: "governorates.xlsx",
+        filters: { search, status },
+        cityId: null,
+      },
+      "المحافظات",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "nameAr", header: "الاسم العربي", type: "text", width: 24 },
+        { key: "nameEn", header: "الاسم الإنجليزي", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "displayOrder", header: "الترتيب", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "updatedAt",
+          header: "تاريخ التحديث",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        nameAr: text(row.name_ar),
+        nameEn: text(row.name_en),
+        status: text(row.status),
+        displayOrder: int(row.display_order),
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+      })),
+      requestId,
+    );
   }
 
   async cities(
@@ -240,32 +257,49 @@ export class DashboardExportService {
         and (${status}::text is null or c.status = ${status}::city_status)
         and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})
       order by c.display_order asc, c.name_en asc, c.id asc`;
-    return this.file(identity, {
-      resource: "cities",
-      endpoint: "/api/v1/dashboard/cities/export",
-      permission: "cities.export",
-      filename: "cities.xlsx",
-      filters: { search, status, governorateId },
-      cityId: null,
-    }, "المدن", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "nameAr", header: "الاسم العربي", type: "text", width: 24 },
-      { key: "nameEn", header: "الاسم الإنجليزي", type: "text", width: 24 },
-      { key: "governorate", header: "المحافظة", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "displayOrder", header: "الترتيب", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-      { key: "updatedAt", header: "تاريخ التحديث", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id),
-      nameAr: text(row.name_ar),
-      nameEn: text(row.name_en),
-      governorate: text(row.governorate_name_ar),
-      status: text(row.status),
-      displayOrder: int(row.display_order),
-      createdAt: iso(row.created_at),
-      updatedAt: iso(row.updated_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "cities",
+        endpoint: "/api/v1/dashboard/cities/export",
+        permission: "cities.export",
+        filename: "cities.xlsx",
+        filters: { search, status, governorateId },
+        cityId: null,
+      },
+      "المدن",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "nameAr", header: "الاسم العربي", type: "text", width: 24 },
+        { key: "nameEn", header: "الاسم الإنجليزي", type: "text", width: 24 },
+        { key: "governorate", header: "المحافظة", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "displayOrder", header: "الترتيب", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "updatedAt",
+          header: "تاريخ التحديث",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        nameAr: text(row.name_ar),
+        nameEn: text(row.name_en),
+        governorate: text(row.governorate_name_ar),
+        status: text(row.status),
+        displayOrder: int(row.display_order),
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+      })),
+      requestId,
+    );
   }
 
   async zones(
@@ -274,7 +308,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "zones.read", "zones.export",
+      this.client,
+      identity,
+      "zones.read",
+      "zones.export",
     );
     const search = query.search?.trim() || null;
     const status = query.status?.trim() || null;
@@ -297,24 +334,50 @@ export class DashboardExportService {
        order by z.name asc, z.id asc`,
       [cityId, status, search],
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "zones",
-      endpoint: "/api/v1/dashboard/zones/export",
-      permission: "zones.export",
-      filename: "zones.xlsx",
-      filters: { search, status },
-      cityId: cityId,
-    }, "المناطق", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "name", header: "الاسم", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-      { key: "updatedAt", header: "تاريخ التحديث", type: "datetime", width: 24 },
-      { key: "archivedAt", header: "تاريخ الأرشفة", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), name: text(row.name), status: text(row.status),
-      createdAt: iso(row.created_at), updatedAt: iso(row.updated_at), archivedAt: iso(row.archived_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "zones",
+        endpoint: "/api/v1/dashboard/zones/export",
+        permission: "zones.export",
+        filename: "zones.xlsx",
+        filters: { search, status },
+        cityId: cityId,
+      },
+      "المناطق",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "name", header: "الاسم", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "updatedAt",
+          header: "تاريخ التحديث",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "archivedAt",
+          header: "تاريخ الأرشفة",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        name: text(row.name),
+        status: text(row.status),
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+        archivedAt: iso(row.archived_at),
+      })),
+      requestId,
+    );
   }
 
   async stores(
@@ -323,7 +386,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "stores.read", "stores.export",
+      this.client,
+      identity,
+      "stores.read",
+      "stores.export",
     );
     const filters = parseStoreListQuery(query);
     const params = storeListParams(cityId, filters);
@@ -343,30 +409,63 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "stores",
-      endpoint: "/api/v1/dashboard/stores/export",
-      permission: "stores.export",
-      filename: "stores.xlsx",
-      filters: storeListPublicFilters(filters),
-      cityId: cityId,
-    }, "المتاجر", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "name", header: "الاسم", type: "text", width: 24 },
-      { key: "phone", header: "الهاتف", type: "text", width: 16 },
-      { key: "address", header: "العنوان", type: "text", width: 32 },
-      { key: "mainCategory", header: "التصنيف الرئيسي", type: "text", width: 20 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "orderAcceptance", header: "قبول الطلبات", type: "text", width: 16 },
-      { key: "displayOrder", header: "الترتيب", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-      { key: "updatedAt", header: "تاريخ التحديث", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), name: text(row.name), phone: text(row.phone), address: text(row.address),
-      mainCategory: text(row.main_category_name), status: text(row.status),
-      orderAcceptance: text(row.order_acceptance_status), displayOrder: int(row.display_order),
-      createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "stores",
+        endpoint: "/api/v1/dashboard/stores/export",
+        permission: "stores.export",
+        filename: "stores.xlsx",
+        filters: storeListPublicFilters(filters),
+        cityId: cityId,
+      },
+      "المتاجر",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "name", header: "الاسم", type: "text", width: 24 },
+        { key: "phone", header: "الهاتف", type: "text", width: 16 },
+        { key: "address", header: "العنوان", type: "text", width: 32 },
+        {
+          key: "mainCategory",
+          header: "التصنيف الرئيسي",
+          type: "text",
+          width: 20,
+        },
+        { key: "status", header: "الحالة", type: "text" },
+        {
+          key: "orderAcceptance",
+          header: "قبول الطلبات",
+          type: "text",
+          width: 16,
+        },
+        { key: "displayOrder", header: "الترتيب", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "updatedAt",
+          header: "تاريخ التحديث",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        name: text(row.name),
+        phone: text(row.phone),
+        address: text(row.address),
+        mainCategory: text(row.main_category_name),
+        status: text(row.status),
+        orderAcceptance: text(row.order_acceptance_status),
+        displayOrder: int(row.display_order),
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+      })),
+      requestId,
+    );
   }
 
   async storeCommissions(
@@ -375,7 +474,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "stores.commission.read", "stores.commission.export",
+      this.client,
+      identity,
+      "stores.commission.read",
+      "stores.commission.export",
     );
     const filters = parseStoreListQuery(query);
     const params = commissionStoreParams(cityId, filters);
@@ -403,29 +505,54 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "store-commissions",
-      endpoint: "/api/v1/dashboard/store-commissions/export",
-      permission: "stores.commission.export",
-      filename: "store-commissions.xlsx",
-      filters: storeListPublicFilters(filters),
-      cityId: cityId,
-    }, "نسب الاستقطاع", [
-      { key: "storeId", header: "معرف المتجر", type: "text", width: 38 },
-      { key: "storeName", header: "اسم المتجر", type: "text", width: 24 },
-      { key: "city", header: "المدينة", type: "text", width: 18 },
-      { key: "status", header: "حالة المتجر", type: "text" },
-      { key: "rate", header: "نسبة الاستقطاع", type: "percent", width: 16 },
-      { key: "lastChangedAt", header: "آخر تغيير", type: "datetime", width: 24 },
-      { key: "lastChangedBy", header: "الجهة المنفذة", type: "text", width: 28 },
-      { key: "updatedAt", header: "تحديث السجل", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      storeId: text(row.id), storeName: text(row.name), city: text(row.city_name_ar),
-      status: text(row.status), rate: int(row.platform_commission_rate),
-      lastChangedAt: iso(row.last_commission_changed_at),
-      lastChangedBy: text(row.last_changed_by_email),
-      updatedAt: iso(row.updated_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "store-commissions",
+        endpoint: "/api/v1/dashboard/store-commissions/export",
+        permission: "stores.commission.export",
+        filename: "store-commissions.xlsx",
+        filters: storeListPublicFilters(filters),
+        cityId: cityId,
+      },
+      "نسب الاستقطاع",
+      [
+        { key: "storeId", header: "معرف المتجر", type: "text", width: 38 },
+        { key: "storeName", header: "اسم المتجر", type: "text", width: 24 },
+        { key: "city", header: "المدينة", type: "text", width: 18 },
+        { key: "status", header: "حالة المتجر", type: "text" },
+        { key: "rate", header: "نسبة الاستقطاع", type: "percent", width: 16 },
+        {
+          key: "lastChangedAt",
+          header: "آخر تغيير",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "lastChangedBy",
+          header: "الجهة المنفذة",
+          type: "text",
+          width: 28,
+        },
+        {
+          key: "updatedAt",
+          header: "تحديث السجل",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        storeId: text(row.id),
+        storeName: text(row.name),
+        city: text(row.city_name_ar),
+        status: text(row.status),
+        rate: int(row.platform_commission_rate),
+        lastChangedAt: iso(row.last_commission_changed_at),
+        lastChangedBy: text(row.last_changed_by_email),
+        updatedAt: iso(row.updated_at),
+      })),
+      requestId,
+    );
   }
 
   async storeCommissionHistory(
@@ -434,7 +561,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "stores.commission.read", "stores.commission.history.export",
+      this.client,
+      identity,
+      "stores.commission.read",
+      "stores.commission.history.export",
     );
     const storeId = query.storeId?.trim() || null;
     if (storeId) {
@@ -454,26 +584,52 @@ export class DashboardExportService {
       left join account_emails e on e.account_id = h.changed_by_account_id and e.is_primary = true
       where h.city_id = ${cityId} and (${storeId}::uuid is null or h.store_id = ${storeId})
       order by h.changed_at desc, h.id desc`;
-    return this.file(identity, {
-      resource: "store-commission-history",
-      endpoint: "/api/v1/dashboard/store-commission-history/export",
-      permission: "stores.commission.history.export",
-      filename: "store-commission-history.xlsx",
-      filters: { storeId },
-      cityId: cityId,
-    }, "تاريخ النسب", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "storeName", header: "المتجر", type: "text", width: 24 },
-      { key: "previousRate", header: "النسبة السابقة", type: "percent", width: 16 },
-      { key: "newRate", header: "النسبة الجديدة", type: "percent", width: 16 },
-      { key: "reason", header: "السبب", type: "text", width: 36 },
-      { key: "changedBy", header: "الحساب المنفذ", type: "text", width: 28 },
-      { key: "changedAt", header: "وقت التغيير", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), storeName: text(row.store_name), previousRate: int(row.previous_rate),
-      newRate: int(row.new_rate), reason: text(row.reason),
-      changedBy: text(row.changed_by_email), changedAt: iso(row.changed_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "store-commission-history",
+        endpoint: "/api/v1/dashboard/store-commission-history/export",
+        permission: "stores.commission.history.export",
+        filename: "store-commission-history.xlsx",
+        filters: { storeId },
+        cityId: cityId,
+      },
+      "تاريخ النسب",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "storeName", header: "المتجر", type: "text", width: 24 },
+        {
+          key: "previousRate",
+          header: "النسبة السابقة",
+          type: "percent",
+          width: 16,
+        },
+        {
+          key: "newRate",
+          header: "النسبة الجديدة",
+          type: "percent",
+          width: 16,
+        },
+        { key: "reason", header: "السبب", type: "text", width: 36 },
+        { key: "changedBy", header: "الحساب المنفذ", type: "text", width: 28 },
+        {
+          key: "changedAt",
+          header: "وقت التغيير",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        storeName: text(row.store_name),
+        previousRate: int(row.previous_rate),
+        newRate: int(row.new_rate),
+        reason: text(row.reason),
+        changedBy: text(row.changed_by_email),
+        changedAt: iso(row.changed_at),
+      })),
+      requestId,
+    );
   }
 
   async mainCategories(
@@ -482,7 +638,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "main_categories.read", "main_categories.export",
+      this.client,
+      identity,
+      "main_categories.read",
+      "main_categories.export",
     );
     const search = query.search?.trim() || null;
     const status = query.status?.trim() || null;
@@ -507,23 +666,38 @@ export class DashboardExportService {
        order by c.display_order asc, c.created_at asc, c.id asc`,
       [cityId, status, search],
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "main-categories",
-      endpoint: "/api/v1/dashboard/main-categories/export",
-      permission: "main_categories.export",
-      filename: "main-categories.xlsx",
-      filters: { search, status },
-      cityId: cityId,
-    }, "التصنيفات الرئيسية", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "name", header: "الاسم", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "displayOrder", header: "الترتيب", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), name: text(row.name), status: text(row.status),
-      displayOrder: int(row.display_order), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "main-categories",
+        endpoint: "/api/v1/dashboard/main-categories/export",
+        permission: "main_categories.export",
+        filename: "main-categories.xlsx",
+        filters: { search, status },
+        cityId: cityId,
+      },
+      "التصنيفات الرئيسية",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "name", header: "الاسم", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "displayOrder", header: "الترتيب", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        name: text(row.name),
+        status: text(row.status),
+        displayOrder: int(row.display_order),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
   async subcategories(
@@ -532,7 +706,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "subcategories.read", "subcategories.export",
+      this.client,
+      identity,
+      "subcategories.read",
+      "subcategories.export",
     );
     const search = query.search?.trim() || null;
     const status = query.status?.trim() || null;
@@ -542,7 +719,12 @@ export class DashboardExportService {
     if (mainCategoryId) {
       const [parent] = await this.client<{ id: string }[]>`
         select id::text from main_categories where id = ${mainCategoryId} and city_id = ${cityId}`;
-      if (!parent) throw new AppError(404, "MAIN_CATEGORY_NOT_FOUND", "Main category not found");
+      if (!parent)
+        throw new AppError(
+          404,
+          "MAIN_CATEGORY_NOT_FOUND",
+          "Main category not found",
+        );
     }
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from subcategories s
@@ -566,24 +748,45 @@ export class DashboardExportService {
        order by s.main_category_id asc, s.display_order asc, s.created_at asc, s.id asc`,
       [cityId, mainCategoryId, status, search],
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "subcategories",
-      endpoint: "/api/v1/dashboard/subcategories/export",
-      permission: "subcategories.export",
-      filename: "subcategories.xlsx",
-      filters: { search, status, mainCategoryId },
-      cityId: cityId,
-    }, "التصنيفات الفرعية", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "name", header: "الاسم", type: "text", width: 24 },
-      { key: "mainCategory", header: "التصنيف الرئيسي", type: "text", width: 20 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "displayOrder", header: "الترتيب", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), name: text(row.name), mainCategory: text(row.main_category_name),
-      status: text(row.status), displayOrder: int(row.display_order), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "subcategories",
+        endpoint: "/api/v1/dashboard/subcategories/export",
+        permission: "subcategories.export",
+        filename: "subcategories.xlsx",
+        filters: { search, status, mainCategoryId },
+        cityId: cityId,
+      },
+      "التصنيفات الفرعية",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "name", header: "الاسم", type: "text", width: 24 },
+        {
+          key: "mainCategory",
+          header: "التصنيف الرئيسي",
+          type: "text",
+          width: 20,
+        },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "displayOrder", header: "الترتيب", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        name: text(row.name),
+        mainCategory: text(row.main_category_name),
+        status: text(row.status),
+        displayOrder: int(row.display_order),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
   async storeCategories(
@@ -593,7 +796,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "store_categories.read", "store_categories.export",
+      this.client,
+      identity,
+      "store_categories.read",
+      "store_categories.export",
     );
     const [store] = await this.client<{ id: string }[]>`
       select id::text from stores where id = ${storeId} and city_id = ${cityId}`;
@@ -614,24 +820,43 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "store-categories",
-      endpoint: "/api/v1/dashboard/stores/:storeId/categories/export",
-      permission: "store_categories.export",
-      filename: "store-categories.xlsx",
-      filters: { storeId, ...opsPublicFilters(filters as unknown as Record<string, unknown>) },
-      cityId: cityId,
-    }, "تصنيفات المتجر", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "name", header: "الاسم", type: "text", width: 24 },
-      { key: "parentId", header: "التصنيف الأب", type: "text", width: 38 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "displayOrder", header: "الترتيب", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), name: text(row.name), parentId: text(row.parent_category_id),
-      status: text(row.status), displayOrder: int(row.display_order), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "store-categories",
+        endpoint: "/api/v1/dashboard/stores/:storeId/categories/export",
+        permission: "store_categories.export",
+        filename: "store-categories.xlsx",
+        filters: {
+          storeId,
+          ...opsPublicFilters(filters as unknown as Record<string, unknown>),
+        },
+        cityId: cityId,
+      },
+      "تصنيفات المتجر",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "name", header: "الاسم", type: "text", width: 24 },
+        { key: "parentId", header: "التصنيف الأب", type: "text", width: 38 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "displayOrder", header: "الترتيب", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        name: text(row.name),
+        parentId: text(row.parent_category_id),
+        status: text(row.status),
+        displayOrder: int(row.display_order),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
   async products(
@@ -641,7 +866,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "products.read", "products.export",
+      this.client,
+      identity,
+      "products.read",
+      "products.export",
     );
     const [store] = await this.client<{ id: string }[]>`
       select id::text from stores where id = ${storeId} and city_id = ${cityId}`;
@@ -660,24 +888,43 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "products",
-      endpoint: "/api/v1/dashboard/stores/:storeId/products/export",
-      permission: "products.export",
-      filename: "products.xlsx",
-      filters: { storeId, ...opsPublicFilters(filters as unknown as Record<string, unknown>) },
-      cityId: cityId,
-    }, "المنتجات", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "name", header: "الاسم", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "basePrice", header: "السعر (د.ع)", type: "integer", width: 14 },
-      { key: "displayOrder", header: "الترتيب", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), name: text(row.name), status: text(row.status),
-      basePrice: int(row.base_price), displayOrder: int(row.display_order), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "products",
+        endpoint: "/api/v1/dashboard/stores/:storeId/products/export",
+        permission: "products.export",
+        filename: "products.xlsx",
+        filters: {
+          storeId,
+          ...opsPublicFilters(filters as unknown as Record<string, unknown>),
+        },
+        cityId: cityId,
+      },
+      "المنتجات",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "name", header: "الاسم", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "basePrice", header: "السعر (د.ع)", type: "integer", width: 14 },
+        { key: "displayOrder", header: "الترتيب", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        name: text(row.name),
+        status: text(row.status),
+        basePrice: int(row.base_price),
+        displayOrder: int(row.display_order),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
   async modifierGroups(
@@ -687,7 +934,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "modifiers.read", "modifiers.export",
+      this.client,
+      identity,
+      "modifiers.read",
+      "modifiers.export",
     );
     const [store] = await this.client<{ id: string }[]>`
       select id::text from stores where id = ${storeId} and city_id = ${cityId}`;
@@ -715,24 +965,40 @@ export class DashboardExportService {
        order by g.created_at asc, g.id asc`,
       [storeId, cityId, status, search],
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "modifiers",
-      endpoint: "/api/v1/dashboard/stores/:storeId/modifier-groups/export",
-      permission: "modifiers.export",
-      filename: "modifier-groups.xlsx",
-      filters: { storeId, search, status },
-      cityId: cityId,
-    }, "المعدّلات", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "name", header: "الاسم", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "minSelect", header: "الحد الأدنى", type: "integer" },
-      { key: "maxSelect", header: "الحد الأقصى", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), name: text(row.name), status: text(row.status),
-      minSelect: int(row.min_select), maxSelect: int(row.max_select), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "modifiers",
+        endpoint: "/api/v1/dashboard/stores/:storeId/modifier-groups/export",
+        permission: "modifiers.export",
+        filename: "modifier-groups.xlsx",
+        filters: { storeId, search, status },
+        cityId: cityId,
+      },
+      "المعدّلات",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "name", header: "الاسم", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "minSelect", header: "الحد الأدنى", type: "integer" },
+        { key: "maxSelect", header: "الحد الأقصى", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        name: text(row.name),
+        status: text(row.status),
+        minSelect: int(row.min_select),
+        maxSelect: int(row.max_select),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
   async merchants(
@@ -749,7 +1015,10 @@ export class DashboardExportService {
     requestId: string,
   ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "merchants.read", "merchants.export",
+      this.client,
+      identity,
+      "merchants.read",
+      "merchants.export",
     );
     const status = query.status?.trim() || null;
     if (status && !["ACTIVE", "INACTIVE", "SUSPENDED"].includes(status))
@@ -789,7 +1058,15 @@ export class DashboardExportService {
         or s.name ilike $6 escape '\\'
         or ($7::uuid is not null and (a.id = $7::uuid or m.store_id = $7::uuid))
       )`;
-    const params = [cityId, status, storeId, created.from, created.to, pattern, uuid];
+    const params = [
+      cityId,
+      status,
+      storeId,
+      created.from,
+      created.to,
+      pattern,
+      uuid,
+    ];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total
        from merchant_profiles m
@@ -821,30 +1098,52 @@ export class DashboardExportService {
        order by ${orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "merchants",
-      endpoint: "/api/v1/dashboard/merchants/export",
-      permission: "merchants.export",
-      filename: "merchants.xlsx",
-      filters: { search, status, storeId, sortBy, sortOrder },
-      cityId: cityId,
-    }, "التجار", [
-      { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
-      { key: "phone", header: "الهاتف", type: "text", width: 16 },
-      { key: "displayName", header: "الاسم", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "storeName", header: "المتجر", type: "text", width: 24 },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      accountId: text(row.account_id), phone: text(row.phone_e164),
-      displayName: text(row.display_name), status: text(row.merchant_status),
-      storeName: text(row.store_name), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "merchants",
+        endpoint: "/api/v1/dashboard/merchants/export",
+        permission: "merchants.export",
+        filename: "merchants.xlsx",
+        filters: { search, status, storeId, sortBy, sortOrder },
+        cityId: cityId,
+      },
+      "التجار",
+      [
+        { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
+        { key: "phone", header: "الهاتف", type: "text", width: 16 },
+        { key: "displayName", header: "الاسم", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "storeName", header: "المتجر", type: "text", width: 24 },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        accountId: text(row.account_id),
+        phone: text(row.phone_e164),
+        displayName: text(row.display_name),
+        status: text(row.merchant_status),
+        storeName: text(row.store_name),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
-  async orders(identity: AuthIdentity, query: OrderListQuery, requestId: string) {
+  async orders(
+    identity: AuthIdentity,
+    query: OrderListQuery,
+    requestId: string,
+  ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "orders.read", "orders.export",
+      this.client,
+      identity,
+      "orders.read",
+      "orders.export",
     );
     const filters = parseOrderListQuery(query);
     const params = orderListParams(cityId, filters);
@@ -862,37 +1161,82 @@ export class DashboardExportService {
       order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "orders",
-      endpoint: "/api/v1/dashboard/orders/export",
-      permission: "orders.export",
-      filename: "orders.xlsx",
-      filters: orderListPublicFilters(filters),
-      cityId: cityId,
-    }, "الطلبات", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
-      { key: "storeName", header: "المتجر", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text", width: 22 },
-      { key: "paymentMethod", header: "طريقة الدفع", type: "text", width: 14 },
-      { key: "paymentStatus", header: "حالة الدفع", type: "text", width: 16 },
-      { key: "productsSubtotal", header: "مجموع المنتجات (د.ع)", type: "integer", width: 18 },
-      { key: "deliveryFee", header: "أجرة التوصيل (د.ع)", type: "integer", width: 18 },
-      { key: "total", header: "الإجمالي (د.ع)", type: "integer", width: 16 },
-      { key: "commissionRate", header: "نسبة الاستقطاع", type: "percent", width: 16 },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), storeName: text(row.store_name),
-      status: text(row.status), paymentMethod: text(row.payment_method),
-      paymentStatus: text(row.payment_status), productsSubtotal: int(row.products_subtotal),
-      deliveryFee: int(row.delivery_fee), total: int(row.total),
-      commissionRate: int(row.store_commission_rate_snapshot), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "orders",
+        endpoint: "/api/v1/dashboard/orders/export",
+        permission: "orders.export",
+        filename: "orders.xlsx",
+        filters: orderListPublicFilters(filters),
+        cityId: cityId,
+      },
+      "الطلبات",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
+        { key: "storeName", header: "المتجر", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text", width: 22 },
+        {
+          key: "paymentMethod",
+          header: "طريقة الدفع",
+          type: "text",
+          width: 14,
+        },
+        { key: "paymentStatus", header: "حالة الدفع", type: "text", width: 16 },
+        {
+          key: "productsSubtotal",
+          header: "مجموع المنتجات (د.ع)",
+          type: "integer",
+          width: 18,
+        },
+        {
+          key: "deliveryFee",
+          header: "أجرة التوصيل (د.ع)",
+          type: "integer",
+          width: 18,
+        },
+        { key: "total", header: "الإجمالي (د.ع)", type: "integer", width: 16 },
+        {
+          key: "commissionRate",
+          header: "نسبة الاستقطاع",
+          type: "percent",
+          width: 16,
+        },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        storeName: text(row.store_name),
+        status: text(row.status),
+        paymentMethod: text(row.payment_method),
+        paymentStatus: text(row.payment_status),
+        productsSubtotal: int(row.products_subtotal),
+        deliveryFee: int(row.delivery_fee),
+        total: int(row.total),
+        commissionRate: int(row.store_commission_rate_snapshot),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
-  async orderEvents(identity: AuthIdentity, query: OpsListInput, requestId: string) {
+  async orderEvents(
+    identity: AuthIdentity,
+    query: OpsListInput,
+    requestId: string,
+  ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "orders.read", "orders.events.export",
+      this.client,
+      identity,
+      "orders.read",
+      "orders.events.export",
     );
     const filters = parseEventListQuery(query);
     const params = eventListParams(cityId, filters);
@@ -909,31 +1253,51 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "order-events",
-      endpoint: "/api/v1/dashboard/order-events/export",
-      permission: "orders.events.export",
-      filename: "order-events.xlsx",
-      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
-      cityId: cityId,
-    }, "أحداث الطلبات", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
-      { key: "eventType", header: "نوع الحدث", type: "text", width: 28 },
-      { key: "actorType", header: "المنفذ", type: "text" },
-      { key: "source", header: "المصدر", type: "text", width: 18 },
-      { key: "reason", header: "السبب", type: "text", width: 32 },
-      { key: "createdAt", header: "الوقت", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), eventType: text(row.event_type),
-      actorType: text(row.actor_type), source: text(row.source),
-      reason: text(row.reason), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "order-events",
+        endpoint: "/api/v1/dashboard/order-events/export",
+        permission: "orders.events.export",
+        filename: "order-events.xlsx",
+        filters: opsPublicFilters(
+          filters as unknown as Record<string, unknown>,
+        ),
+        cityId: cityId,
+      },
+      "أحداث الطلبات",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
+        { key: "eventType", header: "نوع الحدث", type: "text", width: 28 },
+        { key: "actorType", header: "المنفذ", type: "text" },
+        { key: "source", header: "المصدر", type: "text", width: 18 },
+        { key: "reason", header: "السبب", type: "text", width: 32 },
+        { key: "createdAt", header: "الوقت", type: "datetime", width: 24 },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        eventType: text(row.event_type),
+        actorType: text(row.actor_type),
+        source: text(row.source),
+        reason: text(row.reason),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
-  async orderAssignments(identity: AuthIdentity, query: OpsListInput, requestId: string) {
+  async orderAssignments(
+    identity: AuthIdentity,
+    query: OpsListInput,
+    requestId: string,
+  ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "orders.read", "orders.assignments.export",
+      this.client,
+      identity,
+      "orders.read",
+      "orders.assignments.export",
     );
     const filters = parseAssignmentListQuery(query);
     const params = assignmentListParams(cityId, filters);
@@ -950,31 +1314,61 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "order-assignments",
-      endpoint: "/api/v1/dashboard/order-assignments/export",
-      permission: "orders.assignments.export",
-      filename: "order-assignments.xlsx",
-      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
-      cityId: cityId,
-    }, "التعيينات", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
-      { key: "driverId", header: "السائق", type: "text", width: 38 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "sequence", header: "التسلسل", type: "integer" },
-      { key: "assignedAt", header: "وقت التعيين", type: "datetime", width: 24 },
-      { key: "completedAt", header: "وقت الإكمال", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), driverId: text(row.driver_id),
-      status: text(row.status), sequence: int(row.assignment_sequence),
-      assignedAt: iso(row.assigned_at), completedAt: iso(row.completed_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "order-assignments",
+        endpoint: "/api/v1/dashboard/order-assignments/export",
+        permission: "orders.assignments.export",
+        filename: "order-assignments.xlsx",
+        filters: opsPublicFilters(
+          filters as unknown as Record<string, unknown>,
+        ),
+        cityId: cityId,
+      },
+      "التعيينات",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
+        { key: "driverId", header: "السائق", type: "text", width: 38 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "sequence", header: "التسلسل", type: "integer" },
+        {
+          key: "assignedAt",
+          header: "وقت التعيين",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "completedAt",
+          header: "وقت الإكمال",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        driverId: text(row.driver_id),
+        status: text(row.status),
+        sequence: int(row.assignment_sequence),
+        assignedAt: iso(row.assigned_at),
+        completedAt: iso(row.completed_at),
+      })),
+      requestId,
+    );
   }
 
-  async orderOfferRounds(identity: AuthIdentity, query: OpsListInput, requestId: string) {
+  async orderOfferRounds(
+    identity: AuthIdentity,
+    query: OpsListInput,
+    requestId: string,
+  ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "order_offers.read", "order_offers.export",
+      this.client,
+      identity,
+      "order_offers.read",
+      "order_offers.export",
     );
     const filters = parseOfferRoundListQuery(query);
     if (filters.orderId) {
@@ -995,29 +1389,54 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "order-offer-rounds",
-      endpoint: "/api/v1/dashboard/order-offer-rounds/export",
-      permission: "order_offers.export",
-      filename: "order-offer-rounds.xlsx",
-      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
-      cityId: cityId,
-    }, "جولات العروض", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "finalDriverFee", header: "أجرة السائق (د.ع)", type: "integer", width: 18 },
-      { key: "openedAt", header: "وقت الفتح", type: "datetime", width: 24 },
-      { key: "closedAt", header: "وقت الإغلاق", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
-      finalDriverFee: int(row.final_driver_fee), openedAt: iso(row.opened_at), closedAt: iso(row.closed_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "order-offer-rounds",
+        endpoint: "/api/v1/dashboard/order-offer-rounds/export",
+        permission: "order_offers.export",
+        filename: "order-offer-rounds.xlsx",
+        filters: opsPublicFilters(
+          filters as unknown as Record<string, unknown>,
+        ),
+        cityId: cityId,
+      },
+      "جولات العروض",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
+        { key: "status", header: "الحالة", type: "text" },
+        {
+          key: "finalDriverFee",
+          header: "أجرة السائق (د.ع)",
+          type: "integer",
+          width: 18,
+        },
+        { key: "openedAt", header: "وقت الفتح", type: "datetime", width: 24 },
+        { key: "closedAt", header: "وقت الإغلاق", type: "datetime", width: 24 },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        status: text(row.status),
+        finalDriverFee: int(row.final_driver_fee),
+        openedAt: iso(row.opened_at),
+        closedAt: iso(row.closed_at),
+      })),
+      requestId,
+    );
   }
 
-  async orderHandoffs(identity: AuthIdentity, query: OpsListInput, requestId: string) {
+  async orderHandoffs(
+    identity: AuthIdentity,
+    query: OpsListInput,
+    requestId: string,
+  ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "orders.read", "orders.handoffs.export",
+      this.client,
+      identity,
+      "orders.read",
+      "orders.handoffs.export",
     );
     const filters = parseHandoffListQuery(query);
     const params = handoffListParams(cityId, filters);
@@ -1034,31 +1453,61 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "order-handoffs",
-      endpoint: "/api/v1/dashboard/order-handoffs/export",
-      permission: "orders.handoffs.export",
-      filename: "order-handoffs.xlsx",
-      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
-      cityId: cityId,
-    }, "تسليم السائقين", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "fromDriverId", header: "من سائق", type: "text", width: 38 },
-      { key: "toDriverId", header: "إلى سائق", type: "text", width: 38 },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-      { key: "completedAt", header: "وقت الإكمال", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
-      fromDriverId: text(row.from_driver_id), toDriverId: text(row.to_driver_id),
-      createdAt: iso(row.created_at), completedAt: iso(row.completed_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "order-handoffs",
+        endpoint: "/api/v1/dashboard/order-handoffs/export",
+        permission: "orders.handoffs.export",
+        filename: "order-handoffs.xlsx",
+        filters: opsPublicFilters(
+          filters as unknown as Record<string, unknown>,
+        ),
+        cityId: cityId,
+      },
+      "تسليم السائقين",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "fromDriverId", header: "من سائق", type: "text", width: 38 },
+        { key: "toDriverId", header: "إلى سائق", type: "text", width: 38 },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "completedAt",
+          header: "وقت الإكمال",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        status: text(row.status),
+        fromDriverId: text(row.from_driver_id),
+        toDriverId: text(row.to_driver_id),
+        createdAt: iso(row.created_at),
+        completedAt: iso(row.completed_at),
+      })),
+      requestId,
+    );
   }
 
-  async orderReturns(identity: AuthIdentity, query: OpsListInput, requestId: string) {
+  async orderReturns(
+    identity: AuthIdentity,
+    query: OpsListInput,
+    requestId: string,
+  ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "orders.read", "orders.returns.export",
+      this.client,
+      identity,
+      "orders.read",
+      "orders.returns.export",
     );
     const filters = parseReturnListQuery(query);
     const params = returnListParams(cityId, filters);
@@ -1074,28 +1523,57 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "order-returns",
-      endpoint: "/api/v1/dashboard/order-returns/export",
-      permission: "orders.returns.export",
-      filename: "order-returns.xlsx",
-      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
-      cityId: cityId,
-    }, "الإرجاع", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-      { key: "completedAt", header: "وقت الإكمال", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
-      createdAt: iso(row.created_at), completedAt: iso(row.completed_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "order-returns",
+        endpoint: "/api/v1/dashboard/order-returns/export",
+        permission: "orders.returns.export",
+        filename: "order-returns.xlsx",
+        filters: opsPublicFilters(
+          filters as unknown as Record<string, unknown>,
+        ),
+        cityId: cityId,
+      },
+      "الإرجاع",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
+        { key: "status", header: "الحالة", type: "text" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "completedAt",
+          header: "وقت الإكمال",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        status: text(row.status),
+        createdAt: iso(row.created_at),
+        completedAt: iso(row.completed_at),
+      })),
+      requestId,
+    );
   }
 
-  async orderCollections(identity: AuthIdentity, query: OpsListInput, requestId: string) {
+  async orderCollections(
+    identity: AuthIdentity,
+    query: OpsListInput,
+    requestId: string,
+  ) {
     const cityId = await requireCityReadAndExport(
-      this.client, identity, "orders.read", "orders.collections.export",
+      this.client,
+      identity,
+      "orders.read",
+      "orders.collections.export",
     );
     const filters = parseCollectionListQuery(query);
     const params = collectionListParams(cityId, filters);
@@ -1112,38 +1590,84 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "order-collections",
-      endpoint: "/api/v1/dashboard/order-collections/export",
-      permission: "orders.collections.export",
-      filename: "order-collections.xlsx",
-      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
-      cityId: cityId,
-    }, "التحصيلات", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
-      { key: "driverId", header: "السائق", type: "text", width: 38 },
-      { key: "expectedAmount", header: "المبلغ المتوقع (د.ع)", type: "integer", width: 18 },
-      { key: "collectedAmount", header: "المبلغ المحصّل (د.ع)", type: "integer", width: 18 },
-      { key: "differenceAmount", header: "الفرق (د.ع)", type: "integer", width: 14 },
-      { key: "collectedAt", header: "وقت التحصيل", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), driverId: text(row.collecting_driver_id),
-      expectedAmount: int(row.expected_amount), collectedAmount: int(row.collected_amount),
-      differenceAmount: int(row.difference_amount), collectedAt: iso(row.collected_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "order-collections",
+        endpoint: "/api/v1/dashboard/order-collections/export",
+        permission: "orders.collections.export",
+        filename: "order-collections.xlsx",
+        filters: opsPublicFilters(
+          filters as unknown as Record<string, unknown>,
+        ),
+        cityId: cityId,
+      },
+      "التحصيلات",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
+        { key: "driverId", header: "السائق", type: "text", width: 38 },
+        {
+          key: "expectedAmount",
+          header: "المبلغ المتوقع (د.ع)",
+          type: "integer",
+          width: 18,
+        },
+        {
+          key: "collectedAmount",
+          header: "المبلغ المحصّل (د.ع)",
+          type: "integer",
+          width: 18,
+        },
+        {
+          key: "differenceAmount",
+          header: "الفرق (د.ع)",
+          type: "integer",
+          width: 14,
+        },
+        {
+          key: "collectedAt",
+          header: "وقت التحصيل",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        driverId: text(row.collecting_driver_id),
+        expectedAmount: int(row.expected_amount),
+        collectedAmount: int(row.collected_amount),
+        differenceAmount: int(row.difference_amount),
+        collectedAt: iso(row.collected_at),
+      })),
+      requestId,
+    );
   }
 
-  async drivers(identity: AuthIdentity, query: OpsListInput & { activeOrderCount?: string }, requestId: string) {
+  async drivers(
+    identity: AuthIdentity,
+    query: OpsListInput & { activeOrderCount?: string },
+    requestId: string,
+  ) {
     await requireCityPermission(this.client, identity, "orders.assign");
-    const cityId = await requireCityPermission(this.client, identity, "drivers.export");
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "drivers.export",
+    );
     const filters = parseCandidateListQuery(query);
     const where = `
       dp.city_id = $1::uuid and dp.approval_status = 'APPROVED'
       and dp.operational_status = 'ACTIVE' and a.status = 'ACTIVE'
       and ($2::text is null or coalesce(ph.phone_e164,'') ilike $2 escape '\\' or ($3::uuid is not null and dp.account_id = $3::uuid))
       and ($4::int is null or (select count(*)::int from order_driver_assignments oda where oda.driver_id = dp.account_id and oda.completed_at is null and oda.cancelled_at is null) = $4::int)`;
-    const params = [cityId, filters.pattern, filters.searchUuid, filters.activeOrderCount];
+    const params = [
+      cityId,
+      filters.pattern,
+      filters.searchUuid,
+      filters.activeOrderCount,
+    ];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from driver_profiles dp join accounts a on a.id = dp.account_id
        left join lateral (select phone_e164 from account_phones where account_id = dp.account_id order by is_primary desc limit 1) ph on true
@@ -1166,35 +1690,80 @@ export class DashboardExportService {
        order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "drivers",
-      endpoint: "/api/v1/dashboard/drivers/assignment-candidates/export",
-      permission: "drivers.export",
-      filename: "drivers.xlsx",
-      filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
-      cityId: cityId,
-    }, "السائقون", [
-      { key: "driverId", header: "معرف السائق", type: "text", width: 38 },
-      { key: "phone", header: "الهاتف", type: "text", width: 16 },
-      { key: "approvalStatus", header: "حالة الاعتماد", type: "text", width: 16 },
-      { key: "operationalStatus", header: "الحالة التشغيلية", type: "text", width: 16 },
-    ], rows.map((row) => ({
-      driverId: text(row.account_id), phone: text(row.phone),
-      approvalStatus: text(row.approval_status), operationalStatus: text(row.operational_status),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "drivers",
+        endpoint: "/api/v1/dashboard/drivers/assignment-candidates/export",
+        permission: "drivers.export",
+        filename: "drivers.xlsx",
+        filters: opsPublicFilters(
+          filters as unknown as Record<string, unknown>,
+        ),
+        cityId: cityId,
+      },
+      "السائقون",
+      [
+        { key: "driverId", header: "معرف السائق", type: "text", width: 38 },
+        { key: "phone", header: "الهاتف", type: "text", width: 16 },
+        {
+          key: "approvalStatus",
+          header: "حالة الاعتماد",
+          type: "text",
+          width: 16,
+        },
+        {
+          key: "operationalStatus",
+          header: "الحالة التشغيلية",
+          type: "text",
+          width: 16,
+        },
+      ],
+      rows.map((row) => ({
+        driverId: text(row.account_id),
+        phone: text(row.phone),
+        approvalStatus: text(row.approval_status),
+        operationalStatus: text(row.operational_status),
+      })),
+      requestId,
+    );
   }
 
-  async employees(identity: AuthIdentity, query: { search?: string; status?: string; role?: string; permission?: string; createdFrom?: string; createdTo?: string; sortBy?: string; sortOrder?: string }, requestId: string) {
+  async employees(
+    identity: AuthIdentity,
+    query: {
+      search?: string;
+      status?: string;
+      role?: string;
+      permission?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
+    },
+    requestId: string,
+  ) {
     requireCityAdmin(identity);
-    const cityId = await requireCityPermission(this.client, identity, "staff.export");
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "staff.export",
+    );
     const search = parseOptionalSearch(query.search);
     const pattern = search ? likeContains(search) : null;
     const uuid = searchUuid(search);
-    const created = parseOptionalDateRange({ from: query.createdFrom, to: query.createdTo });
+    const created = parseOptionalDateRange({
+      from: query.createdFrom,
+      to: query.createdTo,
+    });
     const status = query.status?.trim() || null;
     const role = query.role?.trim() || null;
     const permission = query.permission?.trim() || null;
-    const sortBy = parseAllowlistedSort(query.sortBy, ["createdAt", "displayName", "email"] as const, "email");
+    const sortBy = parseAllowlistedSort(
+      query.sortBy,
+      ["createdAt", "displayName", "email"] as const,
+      "email",
+    );
     const sortOrder = parseSortOrder(query.sortOrder, "asc");
     const orderSql = {
       createdAt: `sp.created_at ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
@@ -1207,7 +1776,17 @@ export class DashboardExportService {
       and ($6::text is null or exists (select 1 from account_roles ar3 join roles r3 on r3.id = ar3.role_id where ar3.account_id = a.id and ar3.revoked_at is null and r3.code = $6::staff_role_code))
       and ($7::text is null or exists (select 1 from account_permission_grants g join permissions p on p.id = g.permission_id where g.account_id = a.id and g.revoked_at is null and p.code = $7))
       and ($8::timestamptz is null or sp.created_at >= $8) and ($9::timestamptz is null or sp.created_at < $9)`;
-    const params = [identity.accountId, cityId, pattern, uuid, status, role, permission, created.from, created.to];
+    const params = [
+      identity.accountId,
+      cityId,
+      pattern,
+      uuid,
+      status,
+      role,
+      permission,
+      created.from,
+      created.to,
+    ];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from staff_profiles sp join accounts a on a.id = sp.account_id
        join account_emails e on e.account_id = a.id and e.is_primary = true
@@ -1226,30 +1805,68 @@ export class DashboardExportService {
        where ${where} order by ${orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "employees", endpoint: "/api/v1/dashboard/employees/export", permission: "staff.export",
-      filename: "employees.xlsx", filters: { search, status, role, permission, sortBy, sortOrder }, cityId: cityId,
-    }, "الموظفون", [
-      { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
-      { key: "email", header: "البريد", type: "text", width: 28 },
-      { key: "displayName", header: "الاسم", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      accountId: text(row.account_id), email: text(row.email_normalized),
-      displayName: text(row.display_name), status: text(row.staff_status), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "employees",
+        endpoint: "/api/v1/dashboard/employees/export",
+        permission: "staff.export",
+        filename: "employees.xlsx",
+        filters: { search, status, role, permission, sortBy, sortOrder },
+        cityId: cityId,
+      },
+      "الموظفون",
+      [
+        { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
+        { key: "email", header: "البريد", type: "text", width: 28 },
+        { key: "displayName", header: "الاسم", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        accountId: text(row.account_id),
+        email: text(row.email_normalized),
+        displayName: text(row.display_name),
+        status: text(row.staff_status),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
-  async admins(identity: AuthIdentity, query: { search?: string; cityId?: string; status?: string; createdFrom?: string; createdTo?: string; sortBy?: string; sortOrder?: string }, requestId: string) {
+  async admins(
+    identity: AuthIdentity,
+    query: {
+      search?: string;
+      cityId?: string;
+      status?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      sortBy?: string;
+      sortOrder?: string;
+    },
+    requestId: string,
+  ) {
     await requireSuperAdminExport(this.client, identity, "admins.export");
     const search = parseOptionalSearch(query.search);
     const pattern = search ? likeContains(search) : null;
     const uuid = searchUuid(search);
     const cityId = parseOptionalUuid(query.cityId);
     const status = query.status?.trim() || null;
-    const created = parseOptionalDateRange({ from: query.createdFrom, to: query.createdTo });
-    const sortBy = parseAllowlistedSort(query.sortBy, ["createdAt", "displayName", "email"] as const, "email");
+    const created = parseOptionalDateRange({
+      from: query.createdFrom,
+      to: query.createdTo,
+    });
+    const sortBy = parseAllowlistedSort(
+      query.sortBy,
+      ["createdAt", "displayName", "email"] as const,
+      "email",
+    );
     const sortOrder = parseSortOrder(query.sortOrder, "asc");
     const orderSql = {
       createdAt: `sp.created_at ${sqlDir(sortOrder)}, a.id ${sqlDir(sortOrder)}`,
@@ -1282,25 +1899,53 @@ export class DashboardExportService {
        where ${where} order by ${orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "admins", endpoint: "/api/v1/dashboard/admins/export", permission: "admins.export",
-      filename: "admins.xlsx", filters: { search, cityId, status, sortBy, sortOrder }, cityId: null,
-    }, "مديرو المدن", [
-      { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
-      { key: "email", header: "البريد", type: "text", width: 28 },
-      { key: "displayName", header: "الاسم", type: "text", width: 24 },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "cityId", header: "المدينة", type: "text", width: 38 },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      accountId: text(row.account_id), email: text(row.email_normalized),
-      displayName: text(row.display_name), status: text(row.staff_status),
-      cityId: text(row.city_id), createdAt: iso(row.created_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "admins",
+        endpoint: "/api/v1/dashboard/admins/export",
+        permission: "admins.export",
+        filename: "admins.xlsx",
+        filters: { search, cityId, status, sortBy, sortOrder },
+        cityId: null,
+      },
+      "مديرو المدن",
+      [
+        { key: "accountId", header: "معرف الحساب", type: "text", width: 38 },
+        { key: "email", header: "البريد", type: "text", width: 28 },
+        { key: "displayName", header: "الاسم", type: "text", width: 24 },
+        { key: "status", header: "الحالة", type: "text" },
+        { key: "cityId", header: "المدينة", type: "text", width: 38 },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        accountId: text(row.account_id),
+        email: text(row.email_normalized),
+        displayName: text(row.display_name),
+        status: text(row.staff_status),
+        cityId: text(row.city_id),
+        createdAt: iso(row.created_at),
+      })),
+      requestId,
+    );
   }
 
-  async deliveryPricingVersions(identity: AuthIdentity, cityId: string, query: Record<string, string | undefined>, requestId: string) {
-    await requireSuperAdminExport(this.client, identity, "delivery_pricing.versions.export");
+  async deliveryPricingVersions(
+    identity: AuthIdentity,
+    cityId: string,
+    query: Record<string, string | undefined>,
+    requestId: string,
+  ) {
+    await requireSuperAdminExport(
+      this.client,
+      identity,
+      "delivery_pricing.versions.export",
+    );
     const filters = parseDeliveryPricingListQuery(query);
     const params = deliveryPricingListParams(cityId, filters);
     const [count] = (await this.client.unsafe(
@@ -1313,33 +1958,81 @@ export class DashboardExportService {
        from city_delivery_pricing_versions where ${DELIVERY_PRICING_LIST_WHERE_SQL} order by ${filters.orderSql}`,
       params,
     )) as Record<string, unknown>[];
-    return this.file(identity, {
-      resource: "delivery-pricing-versions",
-      endpoint: "/api/v1/dashboard/cities/:cityId/delivery-pricing/versions/export",
-      permission: "delivery_pricing.versions.export",
-      filename: "delivery-pricing-versions.xlsx",
-      filters: { cityId, ...opsPublicFilters(filters as unknown as Record<string, unknown>) },
-      cityId: null,
-    }, "تسعير التوصيل", [
-      { key: "id", header: "المعرف", type: "text", width: 38 },
-      { key: "version", header: "الإصدار", type: "integer" },
-      { key: "status", header: "الحالة", type: "text" },
-      { key: "baseFee", header: "الأجرة الأساسية (د.ع)", type: "integer", width: 18 },
-      { key: "includedDistance", header: "المسافة المشمولة (م)", type: "integer", width: 18 },
-      { key: "pricePerKm", header: "سعر الكيلومتر (د.ع)", type: "integer", width: 18 },
-      { key: "roundingStep", header: "خطوة التقريب", type: "integer" },
-      { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
-      { key: "activatedAt", header: "تاريخ التفعيل", type: "datetime", width: 24 },
-    ], rows.map((row) => ({
-      id: text(row.id), version: int(row.version), status: text(row.status),
-      baseFee: int(row.base_fee), includedDistance: int(row.included_distance_meters),
-      pricePerKm: int(row.price_per_km), roundingStep: int(row.rounding_step),
-      createdAt: iso(row.created_at), activatedAt: iso(row.activated_at),
-    })), requestId);
+    return this.file(
+      identity,
+      {
+        resource: "delivery-pricing-versions",
+        endpoint:
+          "/api/v1/dashboard/cities/:cityId/delivery-pricing/versions/export",
+        permission: "delivery_pricing.versions.export",
+        filename: "delivery-pricing-versions.xlsx",
+        filters: {
+          cityId,
+          ...opsPublicFilters(filters as unknown as Record<string, unknown>),
+        },
+        cityId: null,
+      },
+      "تسعير التوصيل",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "version", header: "الإصدار", type: "integer" },
+        { key: "status", header: "الحالة", type: "text" },
+        {
+          key: "baseFee",
+          header: "الأجرة الأساسية (د.ع)",
+          type: "integer",
+          width: 18,
+        },
+        {
+          key: "includedDistance",
+          header: "المسافة المشمولة (م)",
+          type: "integer",
+          width: 18,
+        },
+        {
+          key: "pricePerKm",
+          header: "سعر الكيلومتر (د.ع)",
+          type: "integer",
+          width: 18,
+        },
+        { key: "roundingStep", header: "خطوة التقريب", type: "integer" },
+        {
+          key: "createdAt",
+          header: "تاريخ الإنشاء",
+          type: "datetime",
+          width: 24,
+        },
+        {
+          key: "activatedAt",
+          header: "تاريخ التفعيل",
+          type: "datetime",
+          width: 24,
+        },
+      ],
+      rows.map((row) => ({
+        id: text(row.id),
+        version: int(row.version),
+        status: text(row.status),
+        baseFee: int(row.base_fee),
+        includedDistance: int(row.included_distance_meters),
+        pricePerKm: int(row.price_per_km),
+        roundingStep: int(row.rounding_step),
+        createdAt: iso(row.created_at),
+        activatedAt: iso(row.activated_at),
+      })),
+      requestId,
+    );
   }
 
-  async listOrderEvents(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
-    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+  async listOrderEvents(
+    identity: AuthIdentity,
+    query: OpsListInput & { page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "orders.read",
+    );
     const filters = parseEventListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
     const params = eventListParams(cityId, filters);
@@ -1353,14 +2046,31 @@ export class DashboardExportService {
        where ${EVENT_LIST_WHERE_SQL} order by ${filters.orderSql} limit $10::int offset $11::int`,
       [...params, p.limit, (p.page - 1) * p.limit],
     )) as Record<string, unknown>[];
-    return dashboardListResult(rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), eventType: text(row.event_type),
-      actorType: text(row.actor_type), source: text(row.source), reason: text(row.reason), createdAt: iso(row.created_at),
-    })), p.page, p.limit, count?.total ?? 0);
+    return dashboardListResult(
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        eventType: text(row.event_type),
+        actorType: text(row.actor_type),
+        source: text(row.source),
+        reason: text(row.reason),
+        createdAt: iso(row.created_at),
+      })),
+      p.page,
+      p.limit,
+      count?.total ?? 0,
+    );
   }
 
-  async listOrderAssignments(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
-    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+  async listOrderAssignments(
+    identity: AuthIdentity,
+    query: OpsListInput & { page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "orders.read",
+    );
     const filters = parseAssignmentListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
     const params = assignmentListParams(cityId, filters);
@@ -1374,15 +2084,31 @@ export class DashboardExportService {
        where ${ASSIGNMENT_LIST_WHERE_SQL} order by ${filters.orderSql} limit $11::int offset $12::int`,
       [...params, p.limit, (p.page - 1) * p.limit],
     )) as Record<string, unknown>[];
-    return dashboardListResult(rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), driverId: text(row.driver_id),
-      status: text(row.status), sequence: int(row.assignment_sequence),
-      assignedAt: iso(row.assigned_at), completedAt: iso(row.completed_at),
-    })), p.page, p.limit, count?.total ?? 0);
+    return dashboardListResult(
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        driverId: text(row.driver_id),
+        status: text(row.status),
+        sequence: int(row.assignment_sequence),
+        assignedAt: iso(row.assigned_at),
+        completedAt: iso(row.completed_at),
+      })),
+      p.page,
+      p.limit,
+      count?.total ?? 0,
+    );
   }
 
-  async listOrderOfferRounds(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
-    const cityId = await requireCityPermission(this.client, identity, "order_offers.read");
+  async listOrderOfferRounds(
+    identity: AuthIdentity,
+    query: OpsListInput & { page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "order_offers.read",
+    );
     const filters = parseOfferRoundListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
     const params = offerRoundListParams(cityId, filters);
@@ -1396,14 +2122,30 @@ export class DashboardExportService {
        where ${OFFER_ROUND_LIST_WHERE_SQL} order by ${filters.orderSql} limit $10::int offset $11::int`,
       [...params, p.limit, (p.page - 1) * p.limit],
     )) as Record<string, unknown>[];
-    return dashboardListResult(rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
-      finalDriverFee: int(row.final_driver_fee), openedAt: iso(row.opened_at), closedAt: iso(row.closed_at),
-    })), p.page, p.limit, count?.total ?? 0);
+    return dashboardListResult(
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        status: text(row.status),
+        finalDriverFee: int(row.final_driver_fee),
+        openedAt: iso(row.opened_at),
+        closedAt: iso(row.closed_at),
+      })),
+      p.page,
+      p.limit,
+      count?.total ?? 0,
+    );
   }
 
-  async listOrderHandoffs(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
-    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+  async listOrderHandoffs(
+    identity: AuthIdentity,
+    query: OpsListInput & { page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "orders.read",
+    );
     const filters = parseHandoffListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
     const params = handoffListParams(cityId, filters);
@@ -1417,15 +2159,31 @@ export class DashboardExportService {
        where ${HANDOFF_LIST_WHERE_SQL} order by ${filters.orderSql} limit $10::int offset $11::int`,
       [...params, p.limit, (p.page - 1) * p.limit],
     )) as Record<string, unknown>[];
-    return dashboardListResult(rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
-      fromDriverId: text(row.from_driver_id), toDriverId: text(row.to_driver_id),
-      createdAt: iso(row.created_at), completedAt: iso(row.completed_at),
-    })), p.page, p.limit, count?.total ?? 0);
+    return dashboardListResult(
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        status: text(row.status),
+        fromDriverId: text(row.from_driver_id),
+        toDriverId: text(row.to_driver_id),
+        createdAt: iso(row.created_at),
+        completedAt: iso(row.completed_at),
+      })),
+      p.page,
+      p.limit,
+      count?.total ?? 0,
+    );
   }
 
-  async listOrderReturns(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
-    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+  async listOrderReturns(
+    identity: AuthIdentity,
+    query: OpsListInput & { page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "orders.read",
+    );
     const filters = parseReturnListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
     const params = returnListParams(cityId, filters);
@@ -1439,14 +2197,29 @@ export class DashboardExportService {
        where ${RETURN_LIST_WHERE_SQL} order by ${filters.orderSql} limit $9::int offset $10::int`,
       [...params, p.limit, (p.page - 1) * p.limit],
     )) as Record<string, unknown>[];
-    return dashboardListResult(rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
-      createdAt: iso(row.created_at), completedAt: iso(row.completed_at),
-    })), p.page, p.limit, count?.total ?? 0);
+    return dashboardListResult(
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        status: text(row.status),
+        createdAt: iso(row.created_at),
+        completedAt: iso(row.completed_at),
+      })),
+      p.page,
+      p.limit,
+      count?.total ?? 0,
+    );
   }
 
-  async listOrderCollections(identity: AuthIdentity, query: OpsListInput & { page?: number; limit?: number }) {
-    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+  async listOrderCollections(
+    identity: AuthIdentity,
+    query: OpsListInput & { page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "orders.read",
+    );
     const filters = parseCollectionListQuery(query);
     const p = dashboardPageOf(query.page, query.limit);
     const params = collectionListParams(cityId, filters);
@@ -1460,10 +2233,19 @@ export class DashboardExportService {
        where ${COLLECTION_LIST_WHERE_SQL} order by ${filters.orderSql} limit $16::int offset $17::int`,
       [...params, p.limit, (p.page - 1) * p.limit],
     )) as Record<string, unknown>[];
-    return dashboardListResult(rows.map((row) => ({
-      id: text(row.id), orderNumber: text(row.order_number), driverId: text(row.collecting_driver_id),
-      expectedAmount: int(row.expected_amount), collectedAmount: int(row.collected_amount),
-      differenceAmount: int(row.difference_amount), collectedAt: iso(row.collected_at),
-    })), p.page, p.limit, count?.total ?? 0);
+    return dashboardListResult(
+      rows.map((row) => ({
+        id: text(row.id),
+        orderNumber: text(row.order_number),
+        driverId: text(row.collecting_driver_id),
+        expectedAmount: int(row.expected_amount),
+        collectedAmount: int(row.collected_amount),
+        differenceAmount: int(row.difference_amount),
+        collectedAt: iso(row.collected_at),
+      })),
+      p.page,
+      p.limit,
+      count?.total ?? 0,
+    );
   }
 }
