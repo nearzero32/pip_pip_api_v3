@@ -157,20 +157,25 @@ describe("central validation error contract — dashboard admins", () => {
       password: "short",
       cityId: "bad",
       displayName: "",
+      role: "SUPER_ADMIN",
     });
     expect(response.status).toBe(422);
     const body = (await response.json()) as ValidationBody;
     const fields = body.error.details?.fields ?? [];
-    expect(fields.length).toBeGreaterThanOrEqual(3);
+    expect(fields.length).toBeGreaterThanOrEqual(4);
     const names = fields.map((f) => f.field);
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
     expect(names).toContain("email");
     expect(names).toContain("password");
     expect(names).toContain("cityId");
+    expect(names).toContain("role");
+    expect(fields.some((f) => f.field === "role" && f.code === "UNKNOWN_FIELD")).toBe(
+      true,
+    );
   });
 
-  test("POST invalid JSON returns parse message without internals", async () => {
-    const response = await h.app.handle(
+  test("POST invalid JSON variants stay PARSE-safe with request_id", async () => {
+    const truncated = await h.app.handle(
       new Request("http://localhost/api/v1/dashboard/admins", {
         method: "POST",
         headers: {
@@ -180,14 +185,71 @@ describe("central validation error contract — dashboard admins", () => {
         body: '{"email":',
       }),
     );
-    expect(response.status).toBe(422);
-    const body = (await response.json()) as ValidationBody;
-    expect(body.error).toEqual({
+    expect(truncated.status).toBe(422);
+    const truncatedBody = (await truncated.json()) as ValidationBody;
+    expect(truncatedBody.error).toEqual({
       code: "VALIDATION_FAILED",
       message: "The request body contains invalid JSON",
     });
-    expect(body.request_id).toBeTruthy();
-    expect(JSON.stringify(body)).not.toMatch(/SyntaxError|Unexpected|stack/i);
+    expect(truncatedBody.request_id).toBeTruthy();
+    expect(JSON.stringify(truncatedBody)).not.toMatch(/SyntaxError|Unexpected|stack/i);
+
+    const empty = await h.app.handle(
+      new Request("http://localhost/api/v1/dashboard/admins", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${superToken}`,
+          "content-type": "application/json",
+        },
+        body: "",
+      }),
+    );
+    expect(empty.status).toBe(422);
+    const emptyBody = (await empty.json()) as ValidationBody;
+    expect(emptyBody.error.code).toBe("VALIDATION_FAILED");
+    expect(emptyBody.request_id).toBeTruthy();
+    expect(JSON.stringify(emptyBody)).not.toMatch(/SyntaxError|Unexpected|stack/i);
+
+    const wrongType = await h.app.handle(
+      new Request("http://localhost/api/v1/dashboard/admins", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${superToken}`,
+          "content-type": "text/plain",
+        },
+        body: "not-json",
+      }),
+    );
+    expect(wrongType.status).toBe(422);
+    const wrongBody = (await wrongType.json()) as ValidationBody;
+    expect(wrongBody.error.code).toBe("VALIDATION_FAILED");
+    expect(wrongBody.request_id).toBeTruthy();
+    expect(JSON.stringify(wrongBody)).not.toContain("not-json");
+  });
+
+  test("POST null and array bodies are rejected without leaking payload", async () => {
+    for (const payload of ["null", "[]", "[1]"]) {
+      const response = await h.app.handle(
+        new Request("http://localhost/api/v1/dashboard/admins", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${superToken}`,
+            "content-type": "application/json",
+          },
+          body: payload,
+        }),
+      );
+      expect(response.status).toBe(422);
+      const text = await response.text();
+      expect(text).not.toMatch(/"found"|"expected"|SyntaxError|stack/i);
+      expect(text).not.toContain("[1]");
+      const body = JSON.parse(text) as ValidationBody;
+      expect(body.error.code).toBe("VALIDATION_FAILED");
+      expect(body.error.message).toBe("The request contains invalid fields");
+      expect(body.error.details?.location).toBe("body");
+      expect(body.error.details?.fields?.length).toBeGreaterThan(0);
+      expect(body.request_id).toBeTruthy();
+    }
   });
 
   test("GET page=0 and limit=101 are rejected with query details", async () => {
@@ -250,55 +312,5 @@ describe("central validation error contract — dashboard admins", () => {
     expect(Array.isArray(body.data)).toBe(true);
     expect(body.pagination.page).toBe(1);
     expect(body.pagination.limit).toBe(25);
-  });
-
-  test("response validation failures do not leak schema or values to the client", async () => {
-    // Covered end-to-end by unit mapper; assert production client contract shape
-    // when response location is reported (empty fields, no schema/stack).
-    const { mapElysiaValidationError } = await import(
-      "../../src/errors/validation-details"
-    );
-    const { Elysia, t, ValidationError } = await import("elysia");
-    const events: Array<Record<string, unknown>> = [];
-    const app = new Elysia()
-      .onError(({ error, code, request }) => {
-        if (code === "VALIDATION" && error instanceof ValidationError) {
-          const mapped = mapElysiaValidationError(error, request);
-          if (mapped.details.location === "response") {
-            events.push({
-              event: "response_validation_failed",
-              fields: mapped.details.fields.map((f) => ({
-                field: f.field,
-                code: f.code,
-              })),
-            });
-          }
-          return {
-            error: {
-              code: "VALIDATION_FAILED",
-              message: mapped.message,
-              details: mapped.clientDetails,
-            },
-            request_id: "resp-val",
-          };
-        }
-      })
-      .get(
-        "/boom",
-        // @ts-expect-error intentional invalid response
-        () => ({ secret: "should-not-leak", password: "x" }),
-        { response: t.Object({ ok: t.Literal(true) }) },
-      );
-    const response = await app.handle(new Request("http://localhost/boom"));
-    const text = await response.text();
-    expect(text).not.toContain("should-not-leak");
-    expect(text).not.toContain("password");
-    expect(text).not.toMatch(/schema|TypeBox|stack/i);
-    const body = JSON.parse(text) as ValidationBody;
-    expect(body.error.details).toEqual({ location: "response", fields: [] });
-    expect(events[0]?.event).toBe("response_validation_failed");
-    expect(
-      Array.isArray(events[0]?.fields) && (events[0]!.fields as unknown[]).length > 0,
-    ).toBe(true);
   });
 });

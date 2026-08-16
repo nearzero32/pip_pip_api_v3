@@ -128,6 +128,7 @@ describe("validation details mapper", () => {
     const body = (await response.json()) as ReturnType<typeof mapElysiaValidationError>;
     expect(body.details.location).toBe("response");
     expect(body.details.fields.length).toBeGreaterThan(0);
-    expect(body.clientDetails).toEqual({ location: "response", fields: [] });
+    expect(body.clientDetails).toBeUndefined();
+    expect(body.message).toBe("An unexpected error occurred");
   });
 });

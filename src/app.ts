@@ -6,6 +6,7 @@ import {
   mapElysiaValidationError,
   validationLogFields,
 } from "./errors/validation-details";
+import { consumeUnknownBodyFields } from "./errors/unknown-body-fields";
 import { healthRoutes, type HealthDependencies } from "./health/routes";
 import type { Logger } from "./observability/logger";
 import { toOpenAPISchema } from "@elysiajs/openapi";
@@ -177,25 +178,63 @@ export function createApp(dependencies: AppDependencies) {
             dependencies.logger.error({
               event: "response_validation_failed",
               path,
+              method: request.method,
               request_id: resolvedRequestId,
               fields: validationLogFields(mapped.details.fields),
             });
-          } else {
-            dependencies.logger.warn({
-              event: "request_validation_failed",
-              path,
+            return status(500, {
+              error: {
+                code: "INTERNAL_SERVER_ERROR",
+                message: "An unexpected error occurred",
+              },
               request_id: resolvedRequestId,
-              location: mapped.details.location,
-              fields: validationLogFields(mapped.details.fields),
             });
           }
+          dependencies.logger.warn({
+            event: "request_validation_failed",
+            path,
+            request_id: resolvedRequestId,
+            location: mapped.details.location,
+            fields: validationLogFields(mapped.details.fields),
+          });
+          const unknownKeys =
+            mapped.details.location === "body"
+              ? consumeUnknownBodyFields(request)
+              : [];
+          const clientDetails = mapped.clientDetails
+            ? {
+                ...mapped.clientDetails,
+                fields: [
+                  ...mapped.clientDetails.fields,
+                  ...unknownKeys.map((field) => ({
+                    field,
+                    code: "UNKNOWN_FIELD" as const,
+                    message: `${field} is not allowed`,
+                  })),
+                ]
+                  .filter(
+                    (field, index, all) =>
+                      all.findIndex(
+                        (other) =>
+                          other.field === field.field &&
+                          other.code === field.code &&
+                          other.message === field.message,
+                      ) === index,
+                  )
+                  .sort((a, b) => {
+                    const byField = a.field.localeCompare(b.field);
+                    if (byField !== 0) return byField;
+                    const byCode = a.code.localeCompare(b.code);
+                    if (byCode !== 0) return byCode;
+                    return a.message.localeCompare(b.message);
+                  }),
+              }
+            : undefined;
           return status(422, {
             error: {
               code: "VALIDATION_FAILED",
               message: mapped.message,
-              ...(mapped.clientDetails
-                ? { details: mapped.clientDetails }
-                : {}),
+              ...(clientDetails ? { details: clientDetails } : {}),
             },
             request_id: resolvedRequestId,
           });

@@ -537,4 +537,59 @@ describe("API foundation", () => {
     const injected=await app.handle(new Request("http://localhost/api/v1/mobile/customer/auth/otp/request",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({phone:"+9647700000000",applicationType:"DRIVER_APP"})}));
     expect(injected.status).toBe(422);expect(called).toBe(0);
   });
+
+  test("response validation failures return 500 without details or leaked values", async () => {
+    const { t } = await import("elysia");
+    const logs: Array<Record<string, unknown>> = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: (record: Record<string, unknown>) => {
+        logs.push(record);
+      },
+    };
+    const leak = "response-secret-should-not-leak";
+    const app = createApp({
+      logger,
+      production: true,
+      readinessCheck: async () => undefined,
+    }).get(
+      "/__test/invalid-response",
+      // @ts-expect-error intentional invalid response for contract coverage
+      () => ({ password: leak, token: "tok", ok: false }),
+      {
+        response: t.Object({ ok: t.Literal(true) }),
+        detail: { hide: true },
+      },
+    );
+    const response = await app.handle(
+      new Request("http://localhost/__test/invalid-response", {
+        headers: { "x-request-id": "resp-validation-1" },
+      }),
+    );
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(text).not.toContain(leak);
+    expect(text).not.toContain("tok");
+    expect(text).not.toMatch(/"details"|schema|TypeBox|stack/i);
+    const body = JSON.parse(text) as {
+      error: { code: string; message: string; details?: unknown };
+      request_id: string;
+    };
+    expect(body.error).toEqual({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "An unexpected error occurred",
+    });
+    expect(body.error.details).toBeUndefined();
+    expect(body.request_id).toBe("resp-validation-1");
+    const event = logs.find((entry) => entry.event === "response_validation_failed");
+    expect(event).toBeTruthy();
+    expect(event?.path).toBe("/__test/invalid-response");
+    expect(event?.method).toBe("GET");
+    expect(event?.request_id).toBe("resp-validation-1");
+    expect(Array.isArray(event?.fields) && (event!.fields as unknown[]).length > 0).toBe(true);
+    expect(JSON.stringify(event)).not.toContain(leak);
+    expect(JSON.stringify(event)).not.toContain("tok");
+  });
 });

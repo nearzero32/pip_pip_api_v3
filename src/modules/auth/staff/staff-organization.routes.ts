@@ -9,6 +9,12 @@ import {
   standardErrors,
 } from "../http/shared";
 import { AppError } from "../../../errors/app-error";
+import {
+  consumeInvalidBodyShape,
+  consumeUnknownBodyFields,
+  registerInvalidBodyShape,
+  registerUnknownBodyFields,
+} from "../../../errors/unknown-body-fields";
 import { assertAllowedQueryKeys } from "../../geography/shared";
 import {
   dashboardListQuery,
@@ -47,18 +53,26 @@ const employeeListQueryKeys = new Set([
   "createdTo",
 ]);
 
-/** Parse only — never throw AppError here (Elysia wraps onParse throws as PARSE).
- * Unknown keys are detected from the raw JSON (before normalize strips them)
- * and rejected in onBeforeHandle so clients get a proper AppError. */
-const pendingUnknownBodyFields = new WeakMap<Request, string[]>();
-
+/**
+ * Staff JSON body allowlist (route-scoped supplement — not global middleware).
+ *
+ * Central mapping: `validation-details.ts` + `app.ts`. Unknown keys are
+ * registered here from the onParse result (single parse) because Elysia
+ * normalize strips them before TypeBox UNKNOWN_FIELD can fire.
+ *
+ * Bounds: staff organization JSON write routes only; skips GET/HEAD and
+ * non-application/json. Never throws inside onParse.
+ */
 const parseStaffBody = async (context: {
   request: Request;
   contentType: string;
 }) => {
+  const method = context.request.method.toUpperCase();
+  if (method === "GET" || method === "HEAD") return;
+  if (!context.contentType.toLowerCase().includes("application/json")) return;
+
   const body = await parseAuthenticationBody(context);
   const path = new URL(context.request.url).pathname;
-  const method = context.request.method.toUpperCase();
   let allowed: Set<string> | null = null;
   if (method === "POST" && path.endsWith("/dashboard/admins")) {
     allowed = adminCreateKeys;
@@ -74,26 +88,43 @@ const parseStaffBody = async (context: {
   ) {
     allowed = permissionGrantKeys;
   }
-  if (
-    allowed &&
-    body &&
-    typeof body === "object" &&
-    !Array.isArray(body)
-  ) {
-    const unknown = Object.keys(body as Record<string, unknown>)
-      .filter((key) => !allowed.has(key))
-      .sort((a, b) => a.localeCompare(b));
-    if (unknown.length > 0) {
-      pendingUnknownBodyFields.set(context.request, unknown);
-    }
+  if (!allowed) return body;
+
+  if (body === null || Array.isArray(body)) {
+    registerInvalidBodyShape(context.request);
+    return body;
+  }
+  if (body && typeof body === "object") {
+    const unknown = Object.keys(body as Record<string, unknown>).filter(
+      (key) => !allowed.has(key),
+    );
+    registerUnknownBodyFields(context.request, unknown);
   }
   return body;
 };
 
 const assertStaffBodyKeys = ({ request }: { request: Request }) => {
-  const unknown = pendingUnknownBodyFields.get(request);
-  if (!unknown || unknown.length === 0) return;
-  pendingUnknownBodyFields.delete(request);
+  if (consumeInvalidBodyShape(request)) {
+    throw new AppError(
+      422,
+      "VALIDATION_FAILED",
+      "The request contains invalid fields",
+      undefined,
+      undefined,
+      {
+        location: "body",
+        fields: [
+          {
+            field: "root",
+            code: "INVALID_TYPE",
+            message: "value has an invalid type",
+          },
+        ],
+      },
+    );
+  }
+  const unknown = consumeUnknownBodyFields(request);
+  if (unknown.length === 0) return;
   throw new AppError(
     422,
     "VALIDATION_FAILED",

@@ -272,9 +272,22 @@ export function validationLogFields(
 /**
  * Maps Elysia ValidationError to a stable client-safe contract.
  *
+ * Scope (central):
+ * - Request locations (body/query/params/headers/cookie) → clientDetails with
+ *   safe field codes/messages. Never includes found values, bodies, schema
+ *   trees, or stacks.
+ * - Response location → internal `details` for logging only; `clientDetails`
+ *   is undefined (app.ts returns a generic 500).
+ *
+ * Unknown body keys: Elysia `normalize` often strips additionalProperties
+ * before VALIDATION fires. Route layers that need UNKNOWN_FIELD must detect
+ * keys from the parsed JSON object returned by onParse (single parse; no
+ * second body read) and reject in onBeforeHandle. That supplement is
+ * intentionally route-scoped (e.g. staff organization JSON routes) and must
+ * not run for GET/HEAD, multipart, or non-JSON media uploads.
+ *
  * Uses ValidationError.all (always available; does not need
- * allowUnsafeValidationDetails). Never includes found values, bodies,
- * schema trees, or stacks.
+ * allowUnsafeValidationDetails).
  */
 export function mapElysiaValidationError(
   error: ValidationError,
@@ -295,8 +308,8 @@ export function mapElysiaValidationError(
   if (location === "response") {
     return {
       details,
-      clientDetails: { location: "response", fields: [] },
-      message: "The request contains invalid fields",
+      clientDetails: undefined,
+      message: "An unexpected error occurred",
     };
   }
   return {
