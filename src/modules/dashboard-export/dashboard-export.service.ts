@@ -462,6 +462,7 @@ export class DashboardExportService {
       filters: { storeId },
       cityId: cityId,
     }, "تاريخ النسب", [
+      { key: "id", header: "المعرف", type: "text", width: 38 },
       { key: "storeName", header: "المتجر", type: "text", width: 24 },
       { key: "previousRate", header: "النسبة السابقة", type: "percent", width: 16 },
       { key: "newRate", header: "النسبة الجديدة", type: "percent", width: 16 },
@@ -469,7 +470,7 @@ export class DashboardExportService {
       { key: "changedBy", header: "الحساب المنفذ", type: "text", width: 28 },
       { key: "changedAt", header: "وقت التغيير", type: "datetime", width: 24 },
     ], rows.map((row) => ({
-      storeName: text(row.store_name), previousRate: int(row.previous_rate),
+      id: text(row.id), storeName: text(row.store_name), previousRate: int(row.previous_rate),
       newRate: int(row.new_rate), reason: text(row.reason),
       changedBy: text(row.changed_by_email), changedAt: iso(row.changed_at),
     })), requestId);
@@ -780,7 +781,7 @@ export class DashboardExportService {
       and ($2::text is null or m.status = $2::merchant_profile_status)
       and ($3::uuid is null or m.store_id = $3::uuid)
       and ($4::timestamptz is null or m.created_at >= $4::timestamptz)
-      and ($5::timestamptz is null or m.created_at <= $5::timestamptz)
+      and ($5::timestamptz is null or m.created_at < $5::timestamptz)
       and (
         $6::text is null
         or ph.phone_e164 ilike $6 escape '\\'
@@ -869,6 +870,7 @@ export class DashboardExportService {
       filters: orderListPublicFilters(filters),
       cityId: cityId,
     }, "الطلبات", [
+      { key: "id", header: "المعرف", type: "text", width: 38 },
       { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
       { key: "storeName", header: "المتجر", type: "text", width: 24 },
       { key: "status", header: "الحالة", type: "text", width: 22 },
@@ -880,7 +882,7 @@ export class DashboardExportService {
       { key: "commissionRate", header: "نسبة الاستقطاع", type: "percent", width: 16 },
       { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
     ], rows.map((row) => ({
-      orderNumber: text(row.order_number), storeName: text(row.store_name),
+      id: text(row.id), orderNumber: text(row.order_number), storeName: text(row.store_name),
       status: text(row.status), paymentMethod: text(row.payment_method),
       paymentStatus: text(row.payment_status), productsSubtotal: int(row.products_subtotal),
       deliveryFee: int(row.delivery_fee), total: int(row.total),
@@ -915,6 +917,7 @@ export class DashboardExportService {
       filters: opsPublicFilters(filters as unknown as Record<string, unknown>),
       cityId: cityId,
     }, "أحداث الطلبات", [
+      { key: "id", header: "المعرف", type: "text", width: 38 },
       { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
       { key: "eventType", header: "نوع الحدث", type: "text", width: 28 },
       { key: "actorType", header: "المنفذ", type: "text" },
@@ -922,7 +925,7 @@ export class DashboardExportService {
       { key: "reason", header: "السبب", type: "text", width: 32 },
       { key: "createdAt", header: "الوقت", type: "datetime", width: 24 },
     ], rows.map((row) => ({
-      orderNumber: text(row.order_number), eventType: text(row.event_type),
+      id: text(row.id), orderNumber: text(row.order_number), eventType: text(row.event_type),
       actorType: text(row.actor_type), source: text(row.source),
       reason: text(row.reason), createdAt: iso(row.created_at),
     })), requestId);
@@ -1203,7 +1206,7 @@ export class DashboardExportService {
       and ($5::text is null or sp.status = $5::staff_profile_status)
       and ($6::text is null or exists (select 1 from account_roles ar3 join roles r3 on r3.id = ar3.role_id where ar3.account_id = a.id and ar3.revoked_at is null and r3.code = $6::staff_role_code))
       and ($7::text is null or exists (select 1 from account_permission_grants g join permissions p on p.id = g.permission_id where g.account_id = a.id and g.revoked_at is null and p.code = $7))
-      and ($8::timestamptz is null or sp.created_at >= $8) and ($9::timestamptz is null or sp.created_at <= $9)`;
+      and ($8::timestamptz is null or sp.created_at >= $8) and ($9::timestamptz is null or sp.created_at < $9)`;
     const params = [identity.accountId, cityId, pattern, uuid, status, role, permission, created.from, created.to];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from staff_profiles sp join accounts a on a.id = sp.account_id
@@ -1257,7 +1260,7 @@ export class DashboardExportService {
       and ($1::text is null or e.email_normalized ilike $1 escape '\\' or coalesce(sp.display_name,'') ilike $1 escape '\\' or ($2::uuid is not null and a.id = $2::uuid))
       and ($3::uuid is null or s.scope_reference_id = $3::uuid)
       and ($4::text is null or sp.status = $4::staff_profile_status)
-      and ($5::timestamptz is null or sp.created_at >= $5) and ($6::timestamptz is null or sp.created_at <= $6)`;
+      and ($5::timestamptz is null or sp.created_at >= $5) and ($6::timestamptz is null or sp.created_at < $6)`;
     const params = [pattern, uuid, cityId, status, created.from, created.to];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from staff_profiles sp join accounts a on a.id = sp.account_id

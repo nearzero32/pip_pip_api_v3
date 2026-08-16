@@ -80,7 +80,7 @@ export const EVENT_LIST_WHERE_SQL = `
   and ($4::text is null or e.source::text = $4::text)
   and ($5::uuid is null or e.actor_account_id = $5::uuid)
   and ($6::timestamptz is null or e.created_at >= $6::timestamptz)
-  and ($7::timestamptz is null or e.created_at <= $7::timestamptz)
+  and ($7::timestamptz is null or e.created_at < $7::timestamptz)
   and (
     $8::text is null
     or o.order_number ilike $8 escape '\\'
@@ -144,7 +144,7 @@ export const ASSIGNMENT_LIST_WHERE_SQL = `
   and ($5::text is null or a.assignment_source::text = $5::text)
   and ($6::text is null or a.closing_reason::text = $6::text)
   and ($7::timestamptz is null or a.assigned_at >= $7::timestamptz)
-  and ($8::timestamptz is null or a.assigned_at <= $8::timestamptz)
+  and ($8::timestamptz is null or a.assigned_at < $8::timestamptz)
   and (
     $9::text is null
     or o.order_number ilike $9 escape '\\'
@@ -213,7 +213,7 @@ export const OFFER_ROUND_LIST_WHERE_SQL = `
   and ($4::text is null or r.round_kind::text = $4::text)
   and ($5::text is null or coalesce(r.stop_reason, '') = $5::text)
   and ($6::timestamptz is null or r.opened_at >= $6::timestamptz)
-  and ($7::timestamptz is null or r.opened_at <= $7::timestamptz)
+  and ($7::timestamptz is null or r.opened_at < $7::timestamptz)
   and (
     $8::text is null
     or o.order_number ilike $8 escape '\\'
@@ -269,7 +269,7 @@ export const HANDOFF_LIST_WHERE_SQL = `
   and ($4::uuid is null or h.to_driver_id = $4::uuid)
   and ($5::text is null or h.status::text = $5::text)
   and ($6::timestamptz is null or h.created_at >= $6::timestamptz)
-  and ($7::timestamptz is null or h.created_at <= $7::timestamptz)
+  and ($7::timestamptz is null or h.created_at < $7::timestamptz)
   and (
     $8::text is null
     or o.order_number ilike $8 escape '\\'
@@ -326,7 +326,7 @@ export const RETURN_LIST_WHERE_SQL = `
   and ($3::uuid is null or w.driver_id = $3::uuid)
   and ($4::text is null or w.status::text = $4::text)
   and ($5::timestamptz is null or w.created_at >= $5::timestamptz)
-  and ($6::timestamptz is null or w.created_at <= $6::timestamptz)
+  and ($6::timestamptz is null or w.created_at < $6::timestamptz)
   and (
     $7::text is null
     or o.order_number ilike $7 escape '\\'
@@ -415,7 +415,7 @@ export const COLLECTION_LIST_WHERE_SQL = `
   and ($10::int is null or c.difference_amount >= $10::int)
   and ($11::int is null or c.difference_amount <= $11::int)
   and ($12::timestamptz is null or c.collected_at >= $12::timestamptz)
-  and ($13::timestamptz is null or c.collected_at <= $13::timestamptz)
+  and ($13::timestamptz is null or c.collected_at < $13::timestamptz)
   and (
     $14::text is null
     or o.order_number ilike $14 escape '\\'

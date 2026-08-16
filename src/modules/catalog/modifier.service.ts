@@ -460,7 +460,7 @@ export class ModifierService {
       and ($4::text is null or g.name ilike $4 escape '\\' or ($5::uuid is not null and g.id = $5::uuid))
       and ($6::uuid is null or exists (select 1 from products p where p.modifier_group_id = g.id and p.id = $6::uuid))
       and ($7::timestamptz is null or g.created_at >= $7)
-      and ($8::timestamptz is null or g.created_at <= $8)`;
+      and ($8::timestamptz is null or g.created_at < $8)`;
     const base = [storeId, cityId, status, pattern, uuid, productId, created.from, created.to];
     const rows = (await this.client.unsafe(
       `select ${GROUP_SELECT} from modifier_groups g where ${where}

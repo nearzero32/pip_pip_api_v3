@@ -92,7 +92,7 @@ export const PRODUCT_LIST_WHERE_SQL = `
   )
   and ($7::uuid is null or p.modifier_group_id = $7::uuid)
   and ($8::timestamptz is null or p.created_at >= $8::timestamptz)
-  and ($9::timestamptz is null or p.created_at <= $9::timestamptz)
+  and ($9::timestamptz is null or p.created_at < $9::timestamptz)
   and (
     $10::text is null
     or p.name ilike $10 escape '\\'
@@ -183,7 +183,7 @@ export const STORE_CATEGORY_LIST_WHERE_SQL = `
   )
   and ($5::text is null or c.name ilike $5 escape '\\' or ($6::uuid is not null and c.id = $6::uuid))
   and ($7::timestamptz is null or c.created_at >= $7::timestamptz)
-  and ($8::timestamptz is null or c.created_at <= $8::timestamptz)`;
+  and ($8::timestamptz is null or c.created_at < $8::timestamptz)`;
 
 export function storeCategoryListParams(
   storeId: string,
@@ -255,9 +255,9 @@ export const DELIVERY_PRICING_LIST_WHERE_SQL = `
   and ($2::text is null or status::text = $2::text)
   and ($3::uuid is null or created_by_account_id = $3::uuid)
   and ($4::timestamptz is null or created_at >= $4::timestamptz)
-  and ($5::timestamptz is null or created_at <= $5::timestamptz)
+  and ($5::timestamptz is null or created_at < $5::timestamptz)
   and ($6::timestamptz is null or activated_at >= $6::timestamptz)
-  and ($7::timestamptz is null or activated_at <= $7::timestamptz)
+  and ($7::timestamptz is null or activated_at < $7::timestamptz)
   and (
     $8::text is null
     or version::text ilike $8 escape '\\'

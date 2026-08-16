@@ -284,7 +284,7 @@ export class ZoneService {
          and ($2::text is null or z.status = $2::zone_status)
          and ($3::text is null or z.name ilike $3 escape '\\')
          and ($4::timestamptz is null or z.created_at >= $4::timestamptz)
-         and ($5::timestamptz is null or z.created_at <= $5::timestamptz)
+         and ($5::timestamptz is null or z.created_at < $5::timestamptz)
        order by ${orderSql}
        limit $6::int offset $7::int`,
       [cityId, status, pattern, created.from, created.to, limit, offset],
@@ -296,7 +296,7 @@ export class ZoneService {
          and ($2::text is null or z.status = $2::zone_status)
          and ($3::text is null or z.name ilike $3 escape '\\')
          and ($4::timestamptz is null or z.created_at >= $4::timestamptz)
-         and ($5::timestamptz is null or z.created_at <= $5::timestamptz)`,
+         and ($5::timestamptz is null or z.created_at < $5::timestamptz)`,
       [cityId, status, pattern, created.from, created.to],
     )) as { total: string }[];
     return dashboardListResult(

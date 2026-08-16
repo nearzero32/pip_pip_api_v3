@@ -36,30 +36,37 @@ describe("dashboard list query primitives", () => {
     );
   });
 
-  test("date-only ranges use Asia/Baghdad inclusive bounds", () => {
-    const range = parseOptionalDateRange({
-      from: "2026-08-01",
-      to: "2026-08-01",
-    });
-    expect(range.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
-    expect(range.to?.toISOString()).toBe("2026-08-01T20:59:59.999Z");
+  test("date-only ranges are Asia/Baghdad half-open [startOfDay, startOfNextDay)", () => {
+    const previousTz = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      const range = parseOptionalDateRange({
+        from: "2026-08-01",
+        to: "2026-08-01",
+      });
+      expect(range.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
+      expect(range.to?.toISOString()).toBe("2026-08-01T21:00:00.000Z");
+    } finally {
+      if (previousTz === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTz;
+    }
     expect(() =>
       parseOptionalDateRange({ from: "2026-08-16", to: "2026-08-01" }),
     ).toThrow(AppError);
   });
 
-  test("offset date-times are respected and midnight boundaries stay inclusive", () => {
+  test("offset date-times are exclusive on to ([from, to))", () => {
     const offset = parseOptionalDateRange({
       from: "2026-08-01T00:00:00.000+03:00",
-      to: "2026-08-01T00:00:00.000+03:00",
+      to: "2026-08-02T00:00:00.000+03:00",
     });
     expect(offset.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
-    expect(offset.to?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
+    expect(offset.to?.toISOString()).toBe("2026-08-01T21:00:00.000Z");
     const utc = parseOptionalDateRange({
       from: "2026-07-31T21:00:00.000Z",
-      to: "2026-08-01T20:59:59.999Z",
+      to: "2026-08-01T21:00:00.000Z",
     });
     expect(utc.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
-    expect(utc.to?.toISOString()).toBe("2026-08-01T20:59:59.999Z");
+    expect(utc.to?.toISOString()).toBe("2026-08-01T21:00:00.000Z");
   });
 });

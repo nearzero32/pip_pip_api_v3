@@ -166,11 +166,11 @@ export const ORDER_LIST_WHERE_SQL = `
       ))
   and ($7::text is null or o.custody_status = $7::order_custody_status)
   and ($8::timestamptz is null or o.created_at >= $8::timestamptz)
-  and ($9::timestamptz is null or o.created_at <= $9::timestamptz)
+  and ($9::timestamptz is null or o.created_at < $9::timestamptz)
   and ($10::timestamptz is null or o.delivered_at >= $10::timestamptz)
-  and ($11::timestamptz is null or o.delivered_at <= $11::timestamptz)
+  and ($11::timestamptz is null or o.delivered_at < $11::timestamptz)
   and ($12::timestamptz is null or o.cancelled_at >= $12::timestamptz)
-  and ($13::timestamptz is null or o.cancelled_at <= $13::timestamptz)
+  and ($13::timestamptz is null or o.cancelled_at < $13::timestamptz)
   and ($14::boolean is null or ($14::boolean = exists (
         select 1 from order_driver_handoffs h
         where h.order_id = o.id and h.status = 'PENDING'

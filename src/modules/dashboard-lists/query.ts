@@ -223,20 +223,40 @@ export function parseOptionalUuid(value?: string | null): string | null {
   return trimmed;
 }
 
+/** Fixed offset; Asia/Baghdad has no DST. Never use the host timezone. */
+export const DASHBOARD_CALENDAR_OFFSET = "+03:00";
+
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Next Gregorian calendar day from a YYYY-MM-DD string (UTC date arithmetic). */
+export function nextCalendarDate(yyyyMmDd: string): string {
+  const [year, month, day] = yyyyMmDd.split("-").map(Number);
+  const next = new Date(Date.UTC(year!, month! - 1, day! + 1));
+  return `${next.getUTCFullYear()}-${pad2(next.getUTCMonth() + 1)}-${pad2(next.getUTCDate())}`;
+}
+
 /**
- * Date-only values are Asia/Baghdad calendar days (UTC+3, no DST).
- * `from` is inclusive start-of-day; `to` is inclusive end-of-day.
- * Offset date-times are respected as sent.
+ * Instant bounds for list/export date filters. Apply in SQL as half-open
+ * `column >= from AND column < to` (never `<= 23:59:59.999`).
+ *
+ * Date-only (`YYYY-MM-DD`): Asia/Baghdad calendar days.
+ * - from → start of that day (`T00:00:00.000+03:00`), inclusive
+ * - to → start of the next calendar day, exclusive
+ *
+ * Offset / UTC date-times: the sent instant is used as-is.
+ * - from is inclusive; to is exclusive ([from, to)).
  */
 export function parseDashboardInstant(
   value: string,
   bound: "from" | "to",
 ): Date {
   const trimmed = value.trim();
-  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
-    ? `${trimmed}${bound === "from" ? "T00:00:00.000+03:00" : "T23:59:59.999+03:00"}`
+  const instant = DATE_ONLY_RE.test(trimmed)
+    ? `${bound === "from" ? trimmed : nextCalendarDate(trimmed)}T00:00:00.000${DASHBOARD_CALENDAR_OFFSET}`
     : trimmed;
-  const parsed = new Date(dateOnly);
+  const parsed = new Date(instant);
   if (Number.isNaN(parsed.getTime())) {
     throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
   }

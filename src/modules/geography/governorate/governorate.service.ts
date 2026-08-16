@@ -82,7 +82,7 @@ export class GovernorateService {
        where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
          and ($2::text is null or status=$2::governorate_status)
          and ($3::timestamptz is null or created_at >= $3)
-         and ($4::timestamptz is null or created_at <= $4)
+         and ($4::timestamptz is null or created_at < $4)
        order by ${orderSql}
        limit $5::int offset $6::int`,
       [pattern, input.status ?? null, created.from, created.to, limit, offset],
@@ -92,7 +92,7 @@ export class GovernorateService {
        where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
          and ($2::text is null or status=$2::governorate_status)
          and ($3::timestamptz is null or created_at >= $3)
-         and ($4::timestamptz is null or created_at <= $4)`,
+         and ($4::timestamptz is null or created_at < $4)`,
       [pattern, input.status ?? null, created.from, created.to],
     ) as { total: string }[];
     return dashboardListResult(

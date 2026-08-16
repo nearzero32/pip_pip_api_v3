@@ -311,7 +311,7 @@ export class MerchantOrganizationService {
       and ($2::text is null or m.status = $2::merchant_profile_status)
       and ($3::uuid is null or m.store_id = $3::uuid)
       and ($4::timestamptz is null or m.created_at >= $4::timestamptz)
-      and ($5::timestamptz is null or m.created_at <= $5::timestamptz)
+      and ($5::timestamptz is null or m.created_at < $5::timestamptz)
       and (
         $6::text is null
         or ph.phone_e164 ilike $6 escape '\\'

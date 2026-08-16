@@ -168,7 +168,7 @@ export class StaffOrganizationService {
         and ($2::uuid is null or s.scope_reference_id = $2::uuid)
         and ($3::text is null or sp.status = $3::staff_profile_status)
         and ($7::timestamptz is null or sp.created_at >= $7)
-        and ($8::timestamptz is null or sp.created_at <= $8)
+        and ($8::timestamptz is null or sp.created_at < $8)
       order by ${orderSql}
       limit $4::int offset $5::int`,
       [pattern, cityId, status, p.limit, offset, uuid, created.from, created.to],
@@ -186,7 +186,7 @@ export class StaffOrganizationService {
         and ($2::uuid is null or s.scope_reference_id = $2::uuid)
         and ($3::text is null or sp.status = $3::staff_profile_status)
         and ($5::timestamptz is null or sp.created_at >= $5)
-        and ($6::timestamptz is null or sp.created_at <= $6)`,
+        and ($6::timestamptz is null or sp.created_at < $6)`,
       [pattern, cityId, status, uuid, created.from, created.to],
     )) as { total: number }[];
     return dashboardListResult(rows.map((row) => this.adminDto(row)), p.page, p.limit, count?.total ?? 0);
@@ -379,7 +379,7 @@ export class StaffOrganizationService {
           where g.account_id = a.id and g.revoked_at is null and p.code = $8
         ))
         and ($9::timestamptz is null or sp.created_at >= $9)
-        and ($10::timestamptz is null or sp.created_at <= $10)
+        and ($10::timestamptz is null or sp.created_at < $10)
       order by ${orderSql}
       limit $5::int offset $6::int`,
       [identity.accountId, pattern, status, role, p.limit, offset, uuid, permission, created.from, created.to],
@@ -403,7 +403,7 @@ export class StaffOrganizationService {
           where g.account_id = a.id and g.revoked_at is null and p.code = $6
         ))
         and ($7::timestamptz is null or sp.created_at >= $7)
-        and ($8::timestamptz is null or sp.created_at <= $8)`,
+        and ($8::timestamptz is null or sp.created_at < $8)`,
       [identity.accountId, pattern, status, role, uuid, permission, created.from, created.to],
     )) as { total: number }[];
     return dashboardListResult(rows.map((row) => this.employeeDto(row)), p.page, p.limit, count?.total ?? 0);

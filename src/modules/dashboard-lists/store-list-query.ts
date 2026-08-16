@@ -99,7 +99,7 @@ export const STORE_LIST_WHERE_SQL = `
   and ($7::int is null or s.platform_commission_rate >= $7::int)
   and ($8::int is null or s.platform_commission_rate <= $8::int)
   and ($9::timestamptz is null or s.created_at >= $9::timestamptz)
-  and ($10::timestamptz is null or s.created_at <= $10::timestamptz)
+  and ($10::timestamptz is null or s.created_at < $10::timestamptz)
 `;
 
 export const COMMISSION_STORE_WHERE_SQL = `
@@ -110,7 +110,7 @@ export const COMMISSION_STORE_WHERE_SQL = `
   and ($5::int is null or s.platform_commission_rate >= $5::int)
   and ($6::int is null or s.platform_commission_rate <= $6::int)
   and ($7::timestamptz is null or s.created_at >= $7::timestamptz)
-  and ($8::timestamptz is null or s.created_at <= $8::timestamptz)
+  and ($8::timestamptz is null or s.created_at < $8::timestamptz)
 `;
 
 export function storeListParams(cityId: string, f: StoreListFilters) {

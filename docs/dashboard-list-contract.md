@@ -23,7 +23,11 @@ Every Dashboard LIST GET accepts `search`, `page`, `limit`, `sortBy`, `sortOrder
 
 ## Date filters
 
-Date-only values are **Asia/Baghdad** calendar days. `from` is inclusive start of day (`T00:00:00.000+03:00`). `to` is inclusive end of day (`T23:59:59.999+03:00`). Offset date-times are used as sent. `from > to` is 422.
+Date filters are a half-open interval **`[from, to)`** in SQL (`>= from AND < to`). Do not use `<= 23:59:59.999`.
+
+- **Date-only** (`YYYY-MM-DD`): Asia/Baghdad calendar days (fixed `+03:00`, no DST; not the host timezone). `from` is start of that day inclusive. `to` is start of the **next** calendar day exclusive.
+- **Date-time with offset or `Z`**: the sent instant is used as-is. `from` inclusive, `to` exclusive.
+- `from > to` is 422. List and Excel export share this parser.
 
 ## Intentionally not implemented
 

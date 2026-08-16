@@ -140,7 +140,7 @@ export class CityService {
          and ($2::text is null or c.status=$2::city_status)
          and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
          and ($4::timestamptz is null or c.created_at >= $4)
-         and ($5::timestamptz is null or c.created_at <= $5)
+         and ($5::timestamptz is null or c.created_at < $5)
        order by ${orderSql}
        limit $6::int offset $7::int`,
       [input.governorateId ?? null, input.status ?? null, pattern, created.from, created.to, limit, offset],
@@ -151,7 +151,7 @@ export class CityService {
          and ($2::text is null or c.status=$2::city_status)
          and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
          and ($4::timestamptz is null or c.created_at >= $4)
-         and ($5::timestamptz is null or c.created_at <= $5)`,
+         and ($5::timestamptz is null or c.created_at < $5)`,
       [input.governorateId ?? null, input.status ?? null, pattern, created.from, created.to],
     )) as { total: string }[];
     return dashboardListResult(
