@@ -313,4 +313,58 @@ describe("central validation error contract — dashboard admins", () => {
     expect(body.pagination.page).toBe(1);
     expect(body.pagination.limit).toBe(25);
   });
+
+  test("GET AppError query parsers return structured field details", async () => {
+    const sortBy = await getAdmins("?sortBy=invalid");
+    expect(sortBy.status).toBe(422);
+    const sortByBody = (await sortBy.json()) as ValidationBody;
+    expect(sortByBody.error).toMatchObject({
+      code: "VALIDATION_FAILED",
+      message: "The request contains invalid fields",
+    });
+    expect(sortByBody.error.message).not.toBe("The request is invalid");
+    expect(sortByBody.error.details?.location).toBe("query");
+    expect(sortByBody.error.details?.fields).toContainEqual({
+      field: "sortBy",
+      code: "INVALID_VALUE",
+      message: "sortBy has an invalid value",
+    });
+
+    const createdFrom = await getAdmins("?createdFrom=not-a-date");
+    expect(createdFrom.status).toBe(422);
+    const fromBody = (await createdFrom.json()) as ValidationBody;
+    expect(
+      fromBody.error.details?.fields.some(
+        (f) => f.field === "createdFrom" && f.code === "INVALID_FORMAT",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(fromBody)).not.toContain("not-a-date");
+
+    const createdTo = await getAdmins("?createdTo=also-bad");
+    expect(createdTo.status).toBe(422);
+    const toBody = (await createdTo.json()) as ValidationBody;
+    expect(
+      toBody.error.details?.fields.some(
+        (f) => f.field === "createdTo" && f.code === "INVALID_FORMAT",
+      ),
+    ).toBe(true);
+
+    const range = await getAdmins("?createdFrom=2026-08-16&createdTo=2026-08-01");
+    expect(range.status).toBe(422);
+    const rangeBody = (await range.json()) as ValidationBody;
+    expect(
+      rangeBody.error.details?.fields.filter((f) => f.code === "INVALID_RANGE").map((f) => f.field).sort(),
+    ).toEqual(["createdFrom", "createdTo"]);
+
+    const status = await getAdmins("?status=NOT_A_STATUS");
+    expect(status.status).toBe(422);
+    const statusBody = (await status.json()) as ValidationBody;
+    expect(statusBody.error.details?.fields).toContainEqual({
+      field: "status",
+      code: "INVALID_VALUE",
+      message: "status has an invalid value",
+    });
+    expect(JSON.stringify(statusBody)).not.toContain("NOT_A_STATUS");
+    expect(JSON.stringify(statusBody)).not.toMatch(/schema|staff_profile_status|stack/i);
+  });
 });
