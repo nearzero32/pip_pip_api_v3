@@ -1,7 +1,11 @@
 import { cors } from "@elysiajs/cors";
-import { Elysia, status } from "elysia";
+import { Elysia, ValidationError, status } from "elysia";
 import { AppError } from "./errors/app-error";
 import { RateLimiterUnavailableError } from "./errors/rate-limiter-unavailable-error";
+import {
+  mapElysiaValidationError,
+  validationLogFields,
+} from "./errors/validation-details";
 import { healthRoutes, type HealthDependencies } from "./health/routes";
 import type { Logger } from "./observability/logger";
 import { toOpenAPISchema } from "@elysiajs/openapi";
@@ -114,6 +118,12 @@ export function createApp(dependencies: AppDependencies) {
     )
     .onError(({ error, code, request, requestId, set }) => {
       const path = new URL(request.url, "http://localhost").pathname;
+      // PARSE (and some early failures) can run before derive; always emit request_id.
+      const resolvedRequestId =
+        typeof requestId === "string" && requestId.length > 0
+          ? requestId
+          : resolveRequestId(request.headers.get("x-request-id"));
+      set.headers["x-request-id"] = resolvedRequestId;
       if (error instanceof AppError) {
         if (error.retryAfterSeconds)
           set.headers["retry-after"] = String(error.retryAfterSeconds);
@@ -124,7 +134,7 @@ export function createApp(dependencies: AppDependencies) {
           dependencies.logger.warn({
             event: "rate_limiter_unavailable",
             path,
-            request_id: requestId,
+            request_id: resolvedRequestId,
             operation:
               error instanceof RateLimiterUnavailableError
                 ? error.operation
@@ -139,7 +149,7 @@ export function createApp(dependencies: AppDependencies) {
             event: "request_error",
             code: error.publicCode,
             path,
-            request_id: requestId,
+            request_id: resolvedRequestId,
           });
         }
         return status(error.statusCode, {
@@ -148,7 +158,7 @@ export function createApp(dependencies: AppDependencies) {
             message: error.message,
             ...(error.details ? { details: error.details } : {}),
           },
-          request_id: requestId,
+          request_id: resolvedRequestId,
           ...(error.retryable === undefined
             ? {}
             : { retryable: error.retryable }),
@@ -157,31 +167,83 @@ export function createApp(dependencies: AppDependencies) {
       if (code === "NOT_FOUND") {
         return status(404, {
           error: { code: "NOT_FOUND", message: "Resource not found" },
-          request_id: requestId,
+          request_id: resolvedRequestId,
         });
       }
       if (code === "VALIDATION") {
+        if (error instanceof ValidationError) {
+          const mapped = mapElysiaValidationError(error, request);
+          if (mapped.details.location === "response") {
+            dependencies.logger.error({
+              event: "response_validation_failed",
+              path,
+              request_id: resolvedRequestId,
+              fields: validationLogFields(mapped.details.fields),
+            });
+          } else {
+            dependencies.logger.warn({
+              event: "request_validation_failed",
+              path,
+              request_id: resolvedRequestId,
+              location: mapped.details.location,
+              fields: validationLogFields(mapped.details.fields),
+            });
+          }
+          return status(422, {
+            error: {
+              code: "VALIDATION_FAILED",
+              message: mapped.message,
+              ...(mapped.clientDetails
+                ? { details: mapped.clientDetails }
+                : {}),
+            },
+            request_id: resolvedRequestId,
+          });
+        }
         return status(422, {
           error: {
             code: "VALIDATION_FAILED",
-            message: "The request is invalid",
+            message: "The request contains invalid fields",
           },
-          request_id: requestId,
+          request_id: resolvedRequestId,
         });
       }
       if (code === "PARSE") {
+        // AppError thrown during onParse is sometimes wrapped as PARSE.
+        const nested =
+          error instanceof Error && error.cause instanceof AppError
+            ? error.cause
+            : null;
+        if (nested) {
+          return status(nested.statusCode, {
+            error: {
+              code: nested.publicCode,
+              message: nested.message,
+              ...(nested.details ? { details: nested.details } : {}),
+            },
+            request_id: resolvedRequestId,
+            ...(nested.retryable === undefined
+              ? {}
+              : { retryable: nested.retryable }),
+          });
+        }
+        dependencies.logger.warn({
+          event: "request_parse_failed",
+          path,
+          request_id: resolvedRequestId,
+        });
         return status(422, {
           error: {
             code: "VALIDATION_FAILED",
-            message: "The request is invalid",
+            message: "The request body contains invalid JSON",
           },
-          request_id: requestId,
+          request_id: resolvedRequestId,
         });
       }
       dependencies.logger.error({
         event: "unexpected_error",
         path,
-        request_id: requestId,
+        request_id: resolvedRequestId,
         error_name: error instanceof Error ? error.name : "UnknownError",
       });
       return status(500, {
@@ -189,7 +251,7 @@ export function createApp(dependencies: AppDependencies) {
           code: "INTERNAL_SERVER_ERROR",
           message: "An unexpected error occurred",
         },
-        request_id: requestId,
+        request_id: resolvedRequestId,
       });
     })
     .use(healthRoutes(dependencies))

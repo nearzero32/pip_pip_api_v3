@@ -3,11 +3,34 @@ import { AppError } from "../../../errors/app-error";
 import { document } from "../../../openapi/document";
 import { SAMPLE } from "../../../openapi/samples";
 
+export const validationFieldDetail = t.Object({
+  field: t.String(),
+  code: t.String(),
+  message: t.String(),
+});
+
+export const validationErrorDetails = t.Object({
+  location: t.Union([
+    t.Literal("body"),
+    t.Literal("query"),
+    t.Literal("params"),
+    t.Literal("headers"),
+    t.Literal("response"),
+    t.Literal("cookie"),
+  ]),
+  fields: t.Array(validationFieldDetail),
+});
+
 export const errorResponse = t.Object({
   error: t.Object({
     code: t.String(),
     message: t.String(),
-    details: t.Optional(t.Record(t.String(), t.Union([t.Integer(), t.String(), t.Null()]))),
+    details: t.Optional(
+      t.Union([
+        validationErrorDetails,
+        t.Record(t.String(), t.Union([t.Integer(), t.String(), t.Null(), t.Boolean()])),
+      ]),
+    ),
   }),
   request_id: t.String(),
   retryable: t.Optional(t.Boolean()),

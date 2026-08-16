@@ -77,8 +77,51 @@ export { requestIdOf };
 
 export const assertAllowedBodyKeys = (body: unknown, allowed: Set<string>) => {
   if (!body || typeof body !== "object" || Array.isArray(body)) return;
-  for (const key of Object.keys(body as Record<string, unknown>)) {
-    if (!allowed.has(key))
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-  }
+  const unknown = Object.keys(body as Record<string, unknown>).filter(
+    (key) => !allowed.has(key),
+  );
+  if (unknown.length === 0) return;
+  unknown.sort((a, b) => a.localeCompare(b));
+  throw new AppError(
+    422,
+    "VALIDATION_FAILED",
+    "The request contains invalid fields",
+    undefined,
+    undefined,
+    {
+      location: "body",
+      fields: unknown.map((field) => ({
+        field,
+        code: "UNKNOWN_FIELD",
+        message: `${field} is not allowed`,
+      })),
+    },
+  );
+};
+
+/** Reject unknown query keys using the raw URL (Elysia normalize strips them). */
+export const assertAllowedQueryKeys = (
+  request: Request,
+  allowed: Set<string>,
+) => {
+  const unknown = [
+    ...new Set([...new URL(request.url).searchParams.keys()].filter((key) => !allowed.has(key))),
+  ];
+  if (unknown.length === 0) return;
+  unknown.sort((a, b) => a.localeCompare(b));
+  throw new AppError(
+    422,
+    "VALIDATION_FAILED",
+    "The request contains invalid fields",
+    undefined,
+    undefined,
+    {
+      location: "query",
+      fields: unknown.map((field) => ({
+        field,
+        code: "UNKNOWN_FIELD",
+        message: `${field} is not allowed`,
+      })),
+    },
+  );
 };

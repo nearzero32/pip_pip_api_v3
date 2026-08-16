@@ -8,7 +8,8 @@ import {
   requestIdOf,
   standardErrors,
 } from "../http/shared";
-import { assertAllowedBodyKeys } from "../../geography/shared";
+import { AppError } from "../../../errors/app-error";
+import { assertAllowedQueryKeys } from "../../geography/shared";
 import {
   dashboardListQuery,
   dashboardPaginated,
@@ -22,6 +23,34 @@ const adminPatchKeys = new Set(["displayName", "cityId", "status"]);
 const employeeCreateKeys = new Set(["email", "password", "role", "displayName"]);
 const employeePatchKeys = new Set(["displayName", "status"]);
 const permissionGrantKeys = new Set(["permission"]);
+const adminListQueryKeys = new Set([
+  "search",
+  "page",
+  "limit",
+  "sortBy",
+  "sortOrder",
+  "cityId",
+  "status",
+  "createdFrom",
+  "createdTo",
+]);
+const employeeListQueryKeys = new Set([
+  "search",
+  "page",
+  "limit",
+  "sortBy",
+  "sortOrder",
+  "status",
+  "role",
+  "permission",
+  "createdFrom",
+  "createdTo",
+]);
+
+/** Parse only — never throw AppError here (Elysia wraps onParse throws as PARSE).
+ * Unknown keys are detected from the raw JSON (before normalize strips them)
+ * and rejected in onBeforeHandle so clients get a proper AppError. */
+const pendingUnknownBodyFields = new WeakMap<Request, string[]>();
 
 const parseStaffBody = async (context: {
   request: Request;
@@ -30,25 +59,56 @@ const parseStaffBody = async (context: {
   const body = await parseAuthenticationBody(context);
   const path = new URL(context.request.url).pathname;
   const method = context.request.method.toUpperCase();
+  let allowed: Set<string> | null = null;
   if (method === "POST" && path.endsWith("/dashboard/admins")) {
-    assertAllowedBodyKeys(body, adminCreateKeys);
-  }
-  if (method === "PATCH" && /\/dashboard\/admins\/[^/]+$/.test(path)) {
-    assertAllowedBodyKeys(body, adminPatchKeys);
-  }
-  if (method === "POST" && path.endsWith("/dashboard/employees")) {
-    assertAllowedBodyKeys(body, employeeCreateKeys);
-  }
-  if (method === "PATCH" && /\/dashboard\/employees\/[^/]+$/.test(path)) {
-    assertAllowedBodyKeys(body, employeePatchKeys);
-  }
-  if (
+    allowed = adminCreateKeys;
+  } else if (method === "PATCH" && /\/dashboard\/admins\/[^/]+$/.test(path)) {
+    allowed = adminPatchKeys;
+  } else if (method === "POST" && path.endsWith("/dashboard/employees")) {
+    allowed = employeeCreateKeys;
+  } else if (method === "PATCH" && /\/dashboard\/employees\/[^/]+$/.test(path)) {
+    allowed = employeePatchKeys;
+  } else if (
     method === "POST" &&
     /\/dashboard\/employees\/[^/]+\/permissions$/.test(path)
   ) {
-    assertAllowedBodyKeys(body, permissionGrantKeys);
+    allowed = permissionGrantKeys;
+  }
+  if (
+    allowed &&
+    body &&
+    typeof body === "object" &&
+    !Array.isArray(body)
+  ) {
+    const unknown = Object.keys(body as Record<string, unknown>)
+      .filter((key) => !allowed.has(key))
+      .sort((a, b) => a.localeCompare(b));
+    if (unknown.length > 0) {
+      pendingUnknownBodyFields.set(context.request, unknown);
+    }
   }
   return body;
+};
+
+const assertStaffBodyKeys = ({ request }: { request: Request }) => {
+  const unknown = pendingUnknownBodyFields.get(request);
+  if (!unknown || unknown.length === 0) return;
+  pendingUnknownBodyFields.delete(request);
+  throw new AppError(
+    422,
+    "VALIDATION_FAILED",
+    "The request contains invalid fields",
+    undefined,
+    undefined,
+    {
+      location: "body",
+      fields: unknown.map((field) => ({
+        field,
+        code: "UNKNOWN_FIELD",
+        message: `${field} is not allowed`,
+      })),
+    },
+  );
 };
 
 const adminDto = t.Object({
@@ -105,6 +165,7 @@ const employeeRoleLiteral = t.Union([
 export const staffOrganizationRoutes = (auth: AuthModule) =>
   new Elysia({ name: "staff-organization-routes" })
     .onParse(parseStaffBody)
+    .onBeforeHandle(assertStaffBodyKeys)
     .post(
       "/api/v1/dashboard/admins",
       async ({ request, set, body }) =>
@@ -137,15 +198,17 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
     )
     .get(
       "/api/v1/dashboard/admins",
-      async ({ request, set, query }) =>
-        auth.staff.listAdmins(
+      async ({ request, set, query }) => {
+        assertAllowedQueryKeys(request, adminListQueryKeys);
+        return auth.staff.listAdmins(
           await auth.sessions.authenticate(
             bearer(request),
             dashboardContext,
             requestIdOf(set),
           ),
           query,
-        ),
+        );
+      },
       {
         query: t.Object(
           {
@@ -264,15 +327,17 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
     )
     .get(
       "/api/v1/dashboard/employees",
-      async ({ request, set, query }) =>
-        auth.staff.listEmployees(
+      async ({ request, set, query }) => {
+        assertAllowedQueryKeys(request, employeeListQueryKeys);
+        return auth.staff.listEmployees(
           await auth.sessions.authenticate(
             bearer(request),
             dashboardContext,
             requestIdOf(set),
           ),
           query,
-        ),
+        );
+      },
       {
         query: t.Object(
           {

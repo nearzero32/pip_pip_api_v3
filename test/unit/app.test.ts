@@ -497,10 +497,21 @@ describe("API foundation", () => {
     const app = createApp({ logger: silentLogger, production: true, readinessCheck: async () => undefined, authModule: fakeModule() });
     const response = await app.handle(new Request("http://localhost/api/v1/dashboard/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "not-an-email" }) }));
     expect(response.status).toBe(422);
-    const body = await response.json() as {error:{code:string;message:string};request_id:string};
-    expect(body.error).toEqual({code:"VALIDATION_FAILED",message:"The request is invalid"});
+    const body = await response.json() as {
+      error: {
+        code: string;
+        message: string;
+        details?: { location: string; fields: Array<{ field: string; code: string; message: string }> };
+      };
+      request_id: string;
+    };
+    expect(body.error.code).toBe("VALIDATION_FAILED");
+    expect(body.error.message).toBe("The request contains invalid fields");
+    expect(body.error.details?.location).toBe("body");
+    expect(body.error.details?.fields?.length).toBeGreaterThan(0);
     expect(body.request_id).toBe(response.headers.get("x-request-id")!);
-    expect(JSON.stringify(body)).not.toContain("password");
+    expect(JSON.stringify(body)).not.toContain("not-an-email");
+    expect(JSON.stringify(body)).not.toMatch(/"found"|"expected"|stack/i);
   });
 
   test("OTP request is generic 202 and staff failures are enumeration-safe", async () => {
