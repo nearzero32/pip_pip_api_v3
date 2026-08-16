@@ -15,7 +15,12 @@ import {
   beginWithGeographyRetry,
   lockCityGeography,
 } from "../geography/geography-locks";
-import { dateValue, pageOf } from "../geography/shared";
+import { dateValue } from "../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+} from "../dashboard-lists/query";
 import {
   parseOptionalSearch,
   parseOptionalUuid,
@@ -667,9 +672,10 @@ export class StoreService {
     },
   ) {
     const cityId = await this.authorize(identity, "stores.read");
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const search = parseOptionalSearch(input.search);
+    const pattern = search ? likeContains(search) : null;
     const status = parseStoreStatusFilter(input.status);
     const mainCategoryId = parseOptionalUuid(input.mainCategoryId);
     const rows = (await this.client.unsafe(
@@ -681,12 +687,12 @@ export class StoreService {
        where ${STORE_LIST_WHERE_SQL}
        order by s.display_order asc, s.created_at asc, s.id asc
        limit $5::int offset $6::int`,
-      [cityId, status, mainCategoryId, search, limit, offset],
+      [cityId, status, mainCategoryId, pattern, limit, offset],
     )) as StoreRow[];
     const [count] = (await this.client.unsafe(
       `select count(*)::text as total from stores s
        where ${STORE_LIST_WHERE_SQL}`,
-      [cityId, status, mainCategoryId, search],
+      [cityId, status, mainCategoryId, pattern],
     )) as { total: string }[];
 
     const data = [];
@@ -698,7 +704,7 @@ export class StoreService {
       ]);
       data.push(this.storeDto(row, zoneIds, subcategoryIds, hours));
     }
-    return { data, page, limit, total: Number(count?.total ?? 0) };
+    return dashboardListResult(data, page, limit, Number(count?.total ?? 0));
   }
 
   async get(identity: AuthIdentity, storeId: string) {

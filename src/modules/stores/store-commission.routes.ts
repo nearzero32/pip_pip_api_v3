@@ -12,10 +12,12 @@ import {
   dashboardDetailErrors,
   dashboardListErrors,
   dateSchema,
-  pageQuery,
-  paginated,
   requestIdOf,
 } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { StoreCommissionService } from "./store-commission.service";
 import { document } from "../../openapi/document";
 import { orderExamples } from "../../openapi/examples/orders";
@@ -79,7 +81,7 @@ export const storeCommissionRoutes = (
       {
         query: t.Object(
           {
-            ...pageQuery,
+            ...dashboardListQuery,
             search: t.Optional(t.String({ maxLength: 200 })),
             status: t.Optional(
               t.Union([
@@ -92,7 +94,7 @@ export const storeCommissionRoutes = (
           },
           { additionalProperties: false },
         ),
-        response: { 200: paginated(commissionDto), ...dashboardListErrors, 403: errorResponse },
+        response: { 200: dashboardPaginated(commissionDto), ...dashboardListErrors, 403: errorResponse },
         detail: {
           tags: ["Dashboard — Store Commissions"],
           summary: "List store platform commission rates",
@@ -112,9 +114,9 @@ export const storeCommissionRoutes = (
         ),
       {
         params: t.Object({ storeId: uuid }, { additionalProperties: false }),
-        query: t.Object(pageQuery, { additionalProperties: false }),
+        query: t.Object(dashboardListQuery, { additionalProperties: false }),
         response: {
-          200: paginated(historyDto),
+          200: dashboardPaginated(historyDto),
           ...dashboardDetailErrors,
           403: errorResponse,
         },

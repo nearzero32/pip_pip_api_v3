@@ -8,6 +8,10 @@ import {
   dateSchema,
   requestIdOf,
 } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { CityDriverPricingService } from "./city-driver-pricing.service";
 import type { OfferService } from "./offer.service";
 
@@ -358,13 +362,9 @@ export const driverOfferRoutes = (
         );
       },
       {
-        query: t.Object({
-          page: t.Optional(t.Integer({ minimum: 1 })),
-          limit: t.Optional(t.Integer({ minimum: 1, maximum: 100 })),
-        }),
+        query: t.Object({ ...dashboardListQuery }, { additionalProperties: false }),
         response: {
-          200: t.Object({
-            data: t.Array(
+          200: dashboardPaginated(
               t.Object({
                 driverId: uuid,
                 driverName: t.String(),
@@ -394,11 +394,7 @@ export const driverOfferRoutes = (
                 currentOrderSummary: t.Nullable(orderSummary),
                 nextOrderSummary: t.Nullable(orderSummary),
               }),
-            ),
-            page: t.Integer({ minimum: 1 }),
-            limit: t.Integer({ minimum: 1 }),
-            total: t.Integer({ minimum: 0 }),
-          }),
+          ),
           ...errors,
         },
         detail: {

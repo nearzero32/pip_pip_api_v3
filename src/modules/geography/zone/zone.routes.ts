@@ -8,14 +8,16 @@ import {
   standardErrors,
 } from "../../auth/http/shared";
 import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../../dashboard-lists/query";
+import {
   assertAllowedBodyKeys,
   authIdentity,
   dashboardDetailErrors,
   dashboardListErrors,
   dashboardMutationErrors,
   dateSchema,
-  pageQuery,
-  paginated,
   requestIdOf,
 } from "../shared";
 import type { ZoneService } from "./zone.service";
@@ -62,7 +64,7 @@ const publicZoneDto = t.Object({
   boundary: geoJsonPolygon,
 });
 
-const zoneListResponse = paginated(zoneDto);
+const zoneListResponse = dashboardPaginated(zoneDto);
 const publicZoneListResponse = t.Object({ data: t.Array(publicZoneDto) });
 
 const zoneIdParam = t.Object(
@@ -162,13 +164,27 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
       {
         query: t.Object(
           {
-            ...pageQuery,
+            ...dashboardListQuery,
             status: t.Optional(
               t.Union([
                 t.Literal("ACTIVE"),
                 t.Literal("INACTIVE"),
                 t.Literal("ARCHIVED"),
               ]),
+            ),
+            createdFrom: t.Optional(
+              t.String({
+                description:
+                  "Inclusive created-at lower bound. Date-only values use Asia/Baghdad.",
+                examples: ["2026-08-01"],
+              }),
+            ),
+            createdTo: t.Optional(
+              t.String({
+                description:
+                  "Inclusive created-at upper bound. Date-only values use Asia/Baghdad end of day.",
+                examples: ["2026-08-16"],
+              }),
             ),
           },
           { additionalProperties: false },

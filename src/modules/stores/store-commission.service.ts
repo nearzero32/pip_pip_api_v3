@@ -9,7 +9,12 @@ import {
   hashOrderCommandPayload,
   requireOrderIdempotencyKey,
 } from "../orders/order-command-idempotency";
-import { dateValue, pageOf } from "../geography/shared";
+import { dateValue } from "../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+} from "../dashboard-lists/query";
 import {
   COMMISSION_STORE_WHERE_SQL,
   parseOptionalSearch,
@@ -123,9 +128,10 @@ export class StoreCommissionService {
       identity,
       "stores.commission.read",
     );
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const { search, status } = this.storeFilters(input);
+    const { search: searchRaw, status } = this.storeFilters(input);
+    const search = searchRaw ? likeContains(searchRaw) : null;
     const rows = (await this.client.unsafe(
       `select ${COMMISSION_SELECT}
        ${COMMISSION_FROM}
@@ -140,12 +146,12 @@ export class StoreCommissionService {
        where ${COMMISSION_STORE_WHERE_SQL}`,
       [cityId, status, search],
     )) as { total: string }[];
-    return {
-      data: rows.map(commissionDto),
+    return dashboardListResult(
+      rows.map(commissionDto),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   async get(identity: AuthIdentity, storeId: string) {
@@ -177,7 +183,7 @@ export class StoreCommissionService {
     const [store] = await this.client<{ id: string }[]>`
       select id::text from stores where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const rows = await this.client<Record<string, unknown>[]>`
       select h.id::text, h.store_id::text, s.name as store_name,
@@ -195,8 +201,8 @@ export class StoreCommissionService {
       select count(*)::text as total
       from store_commission_rate_history
       where store_id = ${storeId} and city_id = ${cityId}`;
-    return {
-      data: rows.map((row) => ({
+    return dashboardListResult(
+      rows.map((row) => ({
         id: String(row.id),
         storeId: String(row.store_id),
         storeName: String(row.store_name),
@@ -211,8 +217,8 @@ export class StoreCommissionService {
       })),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   async update(

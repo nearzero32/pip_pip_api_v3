@@ -15,6 +15,16 @@ import {
   enqueueDriverRuntimeRecon,
 } from "../driver-offers/redis-reconciliation";
 import { dateValue, pageOf } from "../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+} from "../dashboard-lists/query";
+import {
+  ORDER_LIST_WHERE_SQL,
+  orderListParams,
+  parseOrderListQuery,
+  type OrderListQuery,
+} from "../dashboard-lists/order-list-query";
 import type { Logger } from "../../observability/logger";
 import {
   assertOpsTransition,
@@ -1106,31 +1116,38 @@ export class OrderService {
     return this.getForCustomer(customerAccountId, cityId, orderId);
   }
 
-  async listForDashboard(identity: AuthIdentity, page = 1, limit = 20) {
+  async listForDashboard(identity: AuthIdentity, input: OrderListQuery & { page?: number; limit?: number }) {
     const cityId = await requireCityPermission(
       this.client,
       identity,
       "orders.read",
     );
-    const p = pageOf(page, limit);
+    const p = dashboardPageOf(input.page, input.limit);
     const offset = (p.page - 1) * p.limit;
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from orders where city_id = ${cityId}`;
-    const rows = await this.client<Record<string, unknown>[]>`
-      select id::text, order_number, city_id::text, zone_id::text, store_id::text,
-             customer_account_id::text, status::text, custody_status::text, custody_driver_id::text, payment_method::text,
-             payment_status::text, products_subtotal, delivery_fee, total, currency,
-             store_commission_rate_snapshot, version, status_changed_at, delivered_at, cancelled_at, created_at, updated_at
-      from orders
-      where city_id = ${cityId}
-      order by created_at desc, id desc
-      limit ${p.limit} offset ${offset}`;
-    return {
-      data: rows.map((row) => this.mapOrder(row)),
-      page: p.page,
-      limit: p.limit,
-      total: count?.total ?? 0,
-    };
+    const filters = parseOrderListQuery(input);
+    const params = orderListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from orders o where ${ORDER_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
+    const rows = (await this.client.unsafe(
+      `select o.id::text, o.order_number, o.city_id::text, o.zone_id::text, o.store_id::text,
+              o.customer_account_id::text, o.status::text, o.custody_status::text, o.custody_driver_id::text,
+              o.payment_method::text, o.payment_status::text, o.products_subtotal, o.delivery_fee, o.total,
+              o.currency, o.store_commission_rate_snapshot, o.version, o.status_changed_at, o.delivered_at,
+              o.cancelled_at, o.created_at, o.updated_at
+       from orders o
+       where ${ORDER_LIST_WHERE_SQL}
+       order by ${filters.orderSql}
+       limit $${params.length + 1}::int offset $${params.length + 2}::int`,
+      [...params, p.limit, offset],
+    )) as Record<string, unknown>[];
+    return dashboardListResult(
+      rows.map((row) => this.mapOrder(row)),
+      p.page,
+      p.limit,
+      count?.total ?? 0,
+    );
   }
 
   async getForDashboard(identity: AuthIdentity, orderId: string) {

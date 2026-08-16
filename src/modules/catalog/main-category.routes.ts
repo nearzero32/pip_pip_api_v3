@@ -14,10 +14,12 @@ import {
   dashboardListErrors,
   dashboardMutationErrors,
   dateSchema,
-  pageQuery,
-  paginated,
   requestIdOf,
 } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { MainCategoryService } from "./main-category.service";
 
 const categoryStatus = t.Union([
@@ -49,7 +51,7 @@ const publicMainCategoryDto = t.Object({
   image: imageDto,
 });
 
-const listResponse = paginated(mainCategoryDto);
+const listResponse = dashboardPaginated(mainCategoryDto);
 const publicListResponse = t.Object({ data: t.Array(publicMainCategoryDto) });
 
 const mainCategoryIdParam = t.Object(
@@ -170,7 +172,7 @@ export const mainCategoryRoutes = (
       {
         query: t.Object(
           {
-            ...pageQuery,
+            ...dashboardListQuery,
             status: t.Optional(
               t.Union([
                 t.Literal("ACTIVE"),

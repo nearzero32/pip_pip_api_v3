@@ -9,7 +9,12 @@ import {
   beginWithGeographyRetry,
   lockCityGeography,
 } from "../geography/geography-locks";
-import { dateValue, pageOf } from "../geography/shared";
+import { dateValue } from "../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+} from "../dashboard-lists/query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import {
@@ -351,9 +356,10 @@ export class SubcategoryService {
     },
   ) {
     const cityId = await this.authorize(identity, "subcategories.read");
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = input.search?.trim() || null;
+    const searchRaw = input.search?.trim() || null;
+    const search = searchRaw ? likeContains(searchRaw) : null;
     const status = input.status?.trim() || null;
     const mainCategoryId = input.mainCategoryId?.trim() || null;
     if (
@@ -386,7 +392,7 @@ export class SubcategoryService {
          and ($2::uuid is null or s.main_category_id = $2::uuid)
          and ($3::text is null or s.status = $3::main_category_status)
          and ($3::text is not null or s.status <> 'ARCHIVED')
-         and ($4::text is null or s.name ilike ('%' || $4 || '%'))
+         and ($4::text is null or s.name ilike $4 escape '\\')
        order by s.main_category_id asc, s.display_order asc, s.created_at asc, s.id asc
        limit $5::int offset $6::int`,
       [cityId, mainCategoryId, status, search, limit, offset],
@@ -398,18 +404,16 @@ export class SubcategoryService {
          and ($2::uuid is null or s.main_category_id = $2::uuid)
          and ($3::text is null or s.status = $3::main_category_status)
          and ($3::text is not null or s.status <> 'ARCHIVED')
-         and ($4::text is null or s.name ilike ('%' || $4 || '%'))`,
+         and ($4::text is null or s.name ilike $4 escape '\\')`,
       [cityId, mainCategoryId, status, search],
     )) as { total: string }[];
 
-    return {
-      data: rows.map((row) =>
-        subcategoryDto(row, this.config.r2PublicBaseUrl),
-      ),
+    return dashboardListResult(
+      rows.map((row) => subcategoryDto(row, this.config.r2PublicBaseUrl)),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   async get(identity: AuthIdentity, subcategoryId: string) {

@@ -18,6 +18,10 @@ import {
   paginated,
   requestIdOf,
 } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import { document } from "../../openapi/document";
 import { catalogExamples } from "../../openapi/examples/catalog";
 import type { ModifierService } from "./modifier.service";
@@ -86,7 +90,7 @@ const productDto = t.Object({
   archivedAt: t.Nullable(dateSchema),
 });
 
-const listResponse = paginated(productDto);
+const listResponse = dashboardPaginated(productDto);
 
 const storeIdParam = t.Object(
   { storeId: t.String({ format: "uuid" }) },
@@ -340,9 +344,7 @@ export const productRoutes = (
         params: storeIdParam,
         query: t.Object(
           {
-            page: pageQuery.page,
-            limit: pageQuery.limit,
-            search: pageQuery.search,
+            ...dashboardListQuery,
             status: t.Optional(productStatus),
             categoryId: t.Optional(t.String({ maxLength: 64 })),
           },

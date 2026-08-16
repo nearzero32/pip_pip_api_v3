@@ -13,10 +13,12 @@ import {
   dashboardListErrors,
   dashboardMutationErrors,
   dateSchema,
-  pageQuery,
-  paginated,
   requestIdOf,
 } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { ModifierService } from "./modifier.service";
 
 const catalogStatus = t.Union([
@@ -289,14 +291,12 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         params: storeIdParam,
         query: t.Object(
           {
-            page: pageQuery.page,
-            limit: pageQuery.limit,
-            search: pageQuery.search,
+            ...dashboardListQuery,
             status: t.Optional(catalogStatus),
           },
           { additionalProperties: false },
         ),
-        response: { 200: paginated(groupDto), ...listErrors },
+        response: { 200: dashboardPaginated(groupDto), ...listErrors },
         detail: {
           tags: ["Dashboard — Modifiers"],
           summary: "List Modifier Groups for a Store",

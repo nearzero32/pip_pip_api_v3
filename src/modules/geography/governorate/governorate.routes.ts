@@ -3,13 +3,15 @@ import type { AuthModule } from "../../auth/auth-module";
 import { dashboardContext } from "../../auth/core/context";
 import { parseAuthenticationBody } from "../../auth/http/shared";
 import {
+  dashboardPaginated,
+  dashboardListQuery,
+} from "../../dashboard-lists/query";
+import {
   assertAllowedBodyKeys,
   authIdentity,
   dashboardListErrors,
   dashboardMutationErrors,
   dateSchema,
-  pageQuery,
-  paginated,
   requestIdOf,
 } from "../shared";
 import type { GovernorateService } from "./governorate.service";
@@ -23,7 +25,7 @@ const govDto = t.Object({
   createdAt: dateSchema,
   updatedAt: dateSchema,
 });
-const govResponse = paginated(govDto);
+const govResponse = dashboardPaginated(govDto);
 const idParam = t.Object(
   { governorateId: t.String({ format: "uuid" }) },
   { additionalProperties: false },
@@ -60,9 +62,12 @@ export const governorateRoutes = (
       {
         query: t.Object(
           {
-            ...pageQuery,
+            ...dashboardListQuery,
             status: t.Optional(
-              t.Union([t.Literal("ACTIVE"), t.Literal("INACTIVE")]),
+              t.Union([t.Literal("ACTIVE"), t.Literal("INACTIVE")], {
+                description: "Filter by governorate status",
+                examples: ["ACTIVE"],
+              }),
             ),
           },
           { additionalProperties: false },

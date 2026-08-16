@@ -261,8 +261,8 @@ describe("store commission rates and dashboard Excel export", () => {
       jsonRequest("/api/v1/dashboard/store-commissions", { token: employeeToken }),
     );
     expect(allowed.status).toBe(200);
-    const body = (await allowed.json()) as { total: number; data: Array<{ platformCommissionRate: number }> };
-    expect(body.total).toBe(1);
+    const body = (await allowed.json()) as { pagination: { total: number }; data: Array<{ platformCommissionRate: number }> };
+    expect(body.pagination.total).toBe(1);
     expect(body.data[0]?.platformCommissionRate).toBe(0);
   });
 
@@ -348,8 +348,8 @@ describe("store commission rates and dashboard Excel export", () => {
       }),
     );
     expect(history.status).toBe(200);
-    const historyBody = (await history.json()) as { total: number; data: Array<{ previousRate: number; newRate: number }> };
-    expect(historyBody.total).toBe(1);
+    const historyBody = (await history.json()) as { pagination: { total: number }; data: Array<{ previousRate: number; newRate: number }> };
+    expect(historyBody.pagination.total).toBe(1);
     expect(historyBody.data[0]?.previousRate).toBe(0);
     expect(historyBody.data[0]?.newRate).toBe(15);
     await expectDatabaseRejection(
@@ -410,7 +410,7 @@ describe("store commission rates and dashboard Excel export", () => {
     const storesList = await h.app.handle(
       jsonRequest("/api/v1/dashboard/stores", { token: adminToken }),
     );
-    const listed = (await storesList.json()) as { total: number };
+    const listed = (await storesList.json()) as { pagination: { total: number } };
     const storesExport = await h.app.handle(
       jsonRequest("/api/v1/dashboard/stores/export", { token: adminToken }),
     );
@@ -419,13 +419,13 @@ describe("store commission rates and dashboard Excel export", () => {
       "spreadsheetml.sheet",
     );
     const storeBytes = new Uint8Array(await storesExport.arrayBuffer());
-    expect(xlsxRowCount(storeBytes)).toBe(listed.total);
+    expect(xlsxRowCount(storeBytes)).toBe(listed.pagination.total);
     expect(new TextDecoder().decode(storeBytes)).toContain("&apos;=HYPERLINK");
 
     const commissionList = await h.app.handle(
       jsonRequest("/api/v1/dashboard/store-commissions", { token: adminToken }),
     );
-    const commissionTotal = ((await commissionList.json()) as { total: number }).total;
+    const commissionTotal = ((await commissionList.json()) as { pagination: { total: number } }).pagination.total;
     await grant(h, adminToken, employeeId, ["stores.commission.read"]);
     const exportDenied = await h.app.handle(
       jsonRequest("/api/v1/dashboard/store-commissions/export", {
@@ -710,7 +710,7 @@ describe("store commission rates and dashboard Excel export", () => {
         jsonRequest(item.list, { token: item.token }),
       );
       expect(listed.status).toBe(200);
-      const total = ((await listed.json()) as { total: number }).total;
+      const total = ((await listed.json()) as { pagination: { total: number } }).pagination.total;
       const exported = await h.app.handle(
         jsonRequest(item.exp, { token: item.token }),
       );

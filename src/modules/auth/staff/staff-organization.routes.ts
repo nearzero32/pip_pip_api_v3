@@ -9,6 +9,10 @@ import {
   standardErrors,
 } from "../http/shared";
 import { assertAllowedBodyKeys } from "../../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../../dashboard-lists/query";
 import type { EmployeeRoleCode } from "./permissions";
 
 const permissionLiteral = t.String({ minLength: 1, maxLength: 80 });
@@ -133,17 +137,19 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
     )
     .get(
       "/api/v1/dashboard/admins",
-      async ({ request, set }) =>
+      async ({ request, set, query }) =>
         auth.staff.listAdmins(
           await auth.sessions.authenticate(
             bearer(request),
             dashboardContext,
             requestIdOf(set),
           ),
+          query,
         ),
       {
+        query: t.Object(dashboardListQuery, { additionalProperties: true }),
         response: {
-          200: t.Object({ data: t.Array(adminDto) }),
+          200: dashboardPaginated(adminDto),
           ...staffErrors,
         },
         detail: {
@@ -249,17 +255,19 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
     )
     .get(
       "/api/v1/dashboard/employees",
-      async ({ request, set }) =>
+      async ({ request, set, query }) =>
         auth.staff.listEmployees(
           await auth.sessions.authenticate(
             bearer(request),
             dashboardContext,
             requestIdOf(set),
           ),
+          query,
         ),
       {
+        query: t.Object(dashboardListQuery, { additionalProperties: true }),
         response: {
-          200: t.Object({ data: t.Array(employeeDto) }),
+          200: dashboardPaginated(employeeDto),
           ...staffErrors,
         },
         detail: {

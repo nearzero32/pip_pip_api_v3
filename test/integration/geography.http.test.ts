@@ -449,12 +449,10 @@ describe("M3-A Geography HTTP routes", () => {
       expect(listed.status).toBe(200);
       const page = (await listed.json()) as {
         data: { nameEn: string; displayOrder: number }[];
-        page: number;
-        limit: number;
-        total: number;
+        pagination: { page: number; limit: number; total: number };
       };
-      expect(page.page).toBe(1);
-      expect(page.limit).toBe(10);
+      expect(page.pagination.page).toBe(1);
+      expect(page.pagination.limit).toBe(10);
       expect(page.data.every((row) => row.nameEn.includes("Alpha"))).toBeTrue();
       const detail = await harness.app.handle(
         jsonRequest(`/api/v1/dashboard/cities/${cityId}`, {

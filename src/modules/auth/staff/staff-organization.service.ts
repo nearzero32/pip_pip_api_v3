@@ -11,6 +11,13 @@ import {
   type EmployeeRoleCode,
   type GrantablePermissionCode,
 } from "./permissions";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+  parseOptionalSearch,
+  parseOptionalUuid,
+} from "../../dashboard-lists/query";
 
 const cleanName = (value: string, field: string) => {
   const result = value.trim();
@@ -115,10 +122,19 @@ export class StaffOrganizationService {
     });
   }
 
-  async listAdmins(identity: AuthIdentity) {
+  async listAdmins(
+    identity: AuthIdentity,
+    input: { search?: string; cityId?: string; status?: string; page?: number; limit?: number } = {},
+  ) {
     requireSuperAdmin(identity);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select a.id as account_id, e.email_normalized, sp.display_name, sp.status as staff_status,
+    const p = dashboardPageOf(input.page, input.limit);
+    const offset = (p.page - 1) * p.limit;
+    const searchRaw = parseOptionalSearch(input.search);
+    const pattern = searchRaw ? likeContains(searchRaw) : null;
+    const cityId = parseOptionalUuid(input.cityId);
+    const status = input.status?.trim() || null;
+    const rows = (await this.client.unsafe(
+      `select a.id as account_id, e.email_normalized, sp.display_name, sp.status as staff_status,
         s.scope_reference_id::text as city_id, sp.created_at, sp.updated_at
       from staff_profiles sp
       join accounts a on a.id = sp.account_id
@@ -127,8 +143,28 @@ export class StaffOrganizationService {
       join roles r on r.id = ar.role_id and r.code = 'ADMIN'
       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
       where sp.managed_by_account_id is null
-      order by e.email_normalized asc, a.id asc`;
-    return { data: rows.map((row) => this.adminDto(row)) };
+        and ($1::text is null or e.email_normalized ilike $1 escape '\\' or coalesce(sp.display_name,'') ilike $1 escape '\\')
+        and ($2::uuid is null or s.scope_reference_id = $2::uuid)
+        and ($3::text is null or sp.status = $3::staff_profile_status)
+      order by e.email_normalized asc, a.id asc
+      limit $4::int offset $5::int`,
+      [pattern, cityId, status, p.limit, offset],
+    )) as Record<string, unknown>[];
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total
+      from staff_profiles sp
+      join accounts a on a.id = sp.account_id
+      join account_emails e on e.account_id = a.id and e.is_primary = true
+      join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
+      join roles r on r.id = ar.role_id and r.code = 'ADMIN'
+      join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
+      where sp.managed_by_account_id is null
+        and ($1::text is null or e.email_normalized ilike $1 escape '\\' or coalesce(sp.display_name,'') ilike $1 escape '\\')
+        and ($2::uuid is null or s.scope_reference_id = $2::uuid)
+        and ($3::text is null or sp.status = $3::staff_profile_status)`,
+      [pattern, cityId, status],
+    )) as { total: number }[];
+    return dashboardListResult(rows.map((row) => this.adminDto(row)), p.page, p.limit, count?.total ?? 0);
   }
 
   async getAdmin(identity: AuthIdentity, adminId: string, client: SQL = this.client) {
@@ -257,10 +293,19 @@ export class StaffOrganizationService {
     });
   }
 
-  async listEmployees(identity: AuthIdentity) {
+  async listEmployees(
+    identity: AuthIdentity,
+    input: { search?: string; status?: string; role?: string; page?: number; limit?: number } = {},
+  ) {
     requireCityAdmin(identity);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select a.id as account_id, e.email_normalized, sp.display_name, sp.status as staff_status,
+    const p = dashboardPageOf(input.page, input.limit);
+    const offset = (p.page - 1) * p.limit;
+    const searchRaw = parseOptionalSearch(input.search);
+    const pattern = searchRaw ? likeContains(searchRaw) : null;
+    const status = input.status?.trim() || null;
+    const role = input.role?.trim() || null;
+    const rows = (await this.client.unsafe(
+      `select a.id as account_id, e.email_normalized, sp.display_name, sp.status as staff_status,
         s.scope_reference_id::text as city_id, sp.created_at, sp.updated_at,
         coalesce((select array_agg(r2.code::text order by r2.code) from account_roles ar2 join roles r2 on r2.id=ar2.role_id where ar2.account_id=a.id and ar2.revoked_at is null), '{}') as roles,
         coalesce((select array_agg(p.code order by p.code) from account_permission_grants g join permissions p on p.id=g.permission_id where g.account_id=a.id and g.revoked_at is null), '{}') as permissions
@@ -269,9 +314,34 @@ export class StaffOrganizationService {
       join account_emails e on e.account_id = a.id and e.is_primary = true
       join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
       join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
-      where sp.managed_by_account_id = ${identity.accountId}
-      order by e.email_normalized asc, a.id asc`;
-    return { data: rows.map((row) => this.employeeDto(row)) };
+      where sp.managed_by_account_id = $1::uuid
+        and ($2::text is null or e.email_normalized ilike $2 escape '\\' or coalesce(sp.display_name,'') ilike $2 escape '\\')
+        and ($3::text is null or sp.status = $3::staff_profile_status)
+        and ($4::text is null or exists (
+          select 1 from account_roles ar3 join roles r3 on r3.id = ar3.role_id
+          where ar3.account_id = a.id and ar3.revoked_at is null and r3.code = $4::staff_role_code
+        ))
+      order by e.email_normalized asc, a.id asc
+      limit $5::int offset $6::int`,
+      [identity.accountId, pattern, status, role, p.limit, offset],
+    )) as Record<string, unknown>[];
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int as total
+      from staff_profiles sp
+      join accounts a on a.id = sp.account_id
+      join account_emails e on e.account_id = a.id and e.is_primary = true
+      join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
+      join account_role_scopes s on s.account_role_id = ar.id and s.scope_type = 'CITY'
+      where sp.managed_by_account_id = $1::uuid
+        and ($2::text is null or e.email_normalized ilike $2 escape '\\' or coalesce(sp.display_name,'') ilike $2 escape '\\')
+        and ($3::text is null or sp.status = $3::staff_profile_status)
+        and ($4::text is null or exists (
+          select 1 from account_roles ar3 join roles r3 on r3.id = ar3.role_id
+          where ar3.account_id = a.id and ar3.revoked_at is null and r3.code = $4::staff_role_code
+        ))`,
+      [identity.accountId, pattern, status, role],
+    )) as { total: number }[];
+    return dashboardListResult(rows.map((row) => this.employeeDto(row)), p.page, p.limit, count?.total ?? 0);
   }
 
   private async getOwnedEmployee(

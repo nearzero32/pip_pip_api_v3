@@ -9,7 +9,17 @@ import {
   lockCityGeography,
   lockZoneOverlap,
 } from "../geography-locks";
-import { clean, dateValue, pageOf } from "../shared";
+import { clean, dateValue } from "../shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+  parseAllowlistedSort,
+  parseOptionalDateRange,
+  parseOptionalSearch,
+  parseSortOrder,
+  sqlDir,
+} from "../../dashboard-lists/query";
 import {
   parseCoordinate,
   parseGeoJsonPolygon,
@@ -224,12 +234,22 @@ export class ZoneService {
 
   async list(
     identity: AuthIdentity,
-    input: { status?: string; search?: string; page?: number; limit?: number },
+    input: {
+      status?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: string;
+      createdFrom?: string;
+      createdTo?: string;
+    },
   ) {
     const cityId = await this.authorizeOperationalCity(identity, "zones.read");
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = input.search?.trim() || null;
+    const search = parseOptionalSearch(input.search);
+    const pattern = search ? likeContains(search) : null;
     const status = input.status?.trim() || null;
     if (
       status &&
@@ -239,30 +259,52 @@ export class ZoneService {
     ) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
+    const created = parseOptionalDateRange({
+      from: input.createdFrom,
+      to: input.createdTo,
+    });
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["name", "status", "createdAt"] as const,
+      "name",
+    );
+    const sortOrder = parseSortOrder(
+      input.sortOrder,
+      sortBy === "name" ? "asc" : "desc",
+    );
+    const orderSql = {
+      name: `z.name ${sqlDir(sortOrder)}, z.id ${sqlDir(sortOrder)}`,
+      status: `z.status ${sqlDir(sortOrder)}, z.name asc, z.id asc`,
+      createdAt: `z.created_at ${sqlDir(sortOrder)}, z.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
     const rows = (await this.client.unsafe(
       `select ${ZONE_COLUMNS}
        from zones z
        where z.city_id = $1::uuid
          and ($2::text is null or z.status = $2::zone_status)
-         and ($3::text is null or z.name ilike ('%' || $3 || '%'))
-       order by z.name asc, z.id asc
-       limit $4::int offset $5::int`,
-      [cityId, status, search, limit, offset],
+         and ($3::text is null or z.name ilike $3 escape '\\')
+         and ($4::timestamptz is null or z.created_at >= $4::timestamptz)
+         and ($5::timestamptz is null or z.created_at <= $5::timestamptz)
+       order by ${orderSql}
+       limit $6::int offset $7::int`,
+      [cityId, status, pattern, created.from, created.to, limit, offset],
     )) as ZoneRow[];
     const [count] = (await this.client.unsafe(
       `select count(*)::text as total
        from zones z
        where z.city_id = $1::uuid
          and ($2::text is null or z.status = $2::zone_status)
-         and ($3::text is null or z.name ilike ('%' || $3 || '%'))`,
-      [cityId, status, search],
+         and ($3::text is null or z.name ilike $3 escape '\\')
+         and ($4::timestamptz is null or z.created_at >= $4::timestamptz)
+         and ($5::timestamptz is null or z.created_at <= $5::timestamptz)`,
+      [cityId, status, pattern, created.from, created.to],
     )) as { total: string }[];
-    return {
-      data: rows.map((row) => zoneDto(row)),
+    return dashboardListResult(
+      rows.map((row) => zoneDto(row)),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   async get(identity: AuthIdentity, zoneId: string) {

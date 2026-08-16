@@ -12,6 +12,15 @@ import {
 } from "../geography-locks";
 import { revokeDashboardSessionsForCities } from "../operational-sessions";
 import { clean, dateValue, numberOrNull, numberValue, pageOf } from "../shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+  parseAllowlistedSort,
+  parseOptionalSearch,
+  parseSortOrder,
+  sqlDir,
+} from "../../dashboard-lists/query";
 
 /** Exact City → Governorate FK name from drizzle/0008_simple_nehzno.sql */
 export const CITY_GOVERNORATE_FK_CONSTRAINT =
@@ -90,20 +99,52 @@ export class CityService {
     search?: string;
     page?: number;
     limit?: number;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = input.search?.trim() || null;
-    const rows = await this
-      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where (${input.governorateId ?? null}::uuid is null or c.governorate_id=${input.governorateId ?? null}) and (${input.status ?? null}::text is null or c.status=${input.status ?? null}::city_status) and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
-    const [count] = await this
-      .client`select count(*)::text total from cities c join governorates g on g.id=c.governorate_id where (${input.governorateId ?? null}::uuid is null or c.governorate_id=${input.governorateId ?? null}) and (${input.status ?? null}::text is null or c.status=${input.status ?? null}::city_status) and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
-    return {
-      data: rows.map((row: Record<string, unknown>) => cityDto(row)),
+    const search = parseOptionalSearch(input.search);
+    const pattern = search ? likeContains(search) : null;
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["displayOrder", "nameEn", "nameAr", "status", "createdAt"] as const,
+      "displayOrder",
+    );
+    const sortOrder = parseSortOrder(
+      input.sortOrder,
+      sortBy === "displayOrder" ? "asc" : "desc",
+    );
+    const orderSql = {
+      displayOrder: `c.display_order ${sqlDir(sortOrder)}, c.name_en asc, c.id asc`,
+      nameEn: `c.name_en ${sqlDir(sortOrder)}, c.id ${sqlDir(sortOrder)}`,
+      nameAr: `c.name_ar ${sqlDir(sortOrder)}, c.id ${sqlDir(sortOrder)}`,
+      status: `c.status ${sqlDir(sortOrder)}, c.display_order asc, c.id asc`,
+      createdAt: `c.created_at ${sqlDir(sortOrder)}, c.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
+    const rows = await this.client.unsafe(
+      `select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status
+       from cities c join governorates g on g.id=c.governorate_id
+       where ($1::uuid is null or c.governorate_id=$1)
+         and ($2::text is null or c.status=$2::city_status)
+         and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
+       order by ${orderSql}
+       limit $4::int offset $5::int`,
+      [input.governorateId ?? null, input.status ?? null, pattern, limit, offset],
+    );
+    const [count] = (await this.client.unsafe(
+      `select count(*)::text total from cities c join governorates g on g.id=c.governorate_id
+       where ($1::uuid is null or c.governorate_id=$1)
+         and ($2::text is null or c.status=$2::city_status)
+         and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')`,
+      [input.governorateId ?? null, input.status ?? null, pattern],
+    )) as { total: string }[];
+    return dashboardListResult(
+      (rows as Record<string, unknown>[]).map((row) => cityDto(row)),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   /**

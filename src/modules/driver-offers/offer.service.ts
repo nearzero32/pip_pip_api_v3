@@ -8,7 +8,8 @@ import type { RateLimiter } from "../auth/rate-limit/rate-limiter";
 import { requireTrustedDriverCity } from "../auth/mobile/driver/driver-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
 import { requireCityPermission } from "../auth/staff/authorization";
-import { dateValue, pageOf } from "../geography/shared";
+import { dateValue } from "../geography/shared";
+import { dashboardListResult, dashboardPageOf } from "../dashboard-lists/query";
 import type { OrderService } from "../orders/order.service";
 import { insertOrderEvent } from "../orders/order-events";
 import type { OrderStatus } from "../orders/order-state-machine";
@@ -1619,7 +1620,7 @@ export class OfferService {
       identity,
       "orders.assign",
     );
-    const p = pageOf(page, limit);
+    const p = dashboardPageOf(page, limit);
     const offset = (p.page - 1) * p.limit;
 
     const [countRow] = await this.client<{ total: number }[]>`
@@ -1724,7 +1725,7 @@ export class OfferService {
       };
     });
 
-    return { data, page: p.page, limit: p.limit, total };
+    return dashboardListResult(data, p.page, p.limit, total);
   }
 
   async reconcileCityOffers(cityId: string, revision: number) {

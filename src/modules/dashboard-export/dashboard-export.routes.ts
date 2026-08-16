@@ -1,7 +1,11 @@
-import { Elysia } from "elysia";
+import { Elysia, t } from "elysia";
 import type { AuthModule } from "../auth/auth-module";
 import { dashboardContext } from "../auth/core/context";
 import { authIdentity, requestIdOf } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { DashboardExportService } from "./dashboard-export.service";
 
 const detail = (summary: string, description: string) => ({
@@ -23,6 +27,42 @@ export const dashboardExportRoutes = (
   ) => authIdentity(auth, request, dashboardContext, requestIdOf(set));
 
   return new Elysia({ name: "dashboard-export-routes" })
+    .get("/api/v1/dashboard/order-events", async ({ request, set, query }) =>
+      service.listOrderEvents(await identityOf(request, set), query as Query),
+      { query: t.Object({ ...dashboardListQuery, orderId: t.Optional(t.String()) }, { additionalProperties: false }),
+        response: { 200: dashboardPaginated(t.Any()) },
+        detail: { tags: ["Dashboard — Orders"], summary: "List order events", security: [{ bearerAuth: [] }] } },
+    )
+    .get("/api/v1/dashboard/order-assignments", async ({ request, set, query }) =>
+      service.listOrderAssignments(await identityOf(request, set), query as Query),
+      { query: t.Object({ ...dashboardListQuery, orderId: t.Optional(t.String()), driverId: t.Optional(t.String()) }, { additionalProperties: false }),
+        response: { 200: dashboardPaginated(t.Any()) },
+        detail: { tags: ["Dashboard — Orders"], summary: "List order assignments", security: [{ bearerAuth: [] }] } },
+    )
+    .get("/api/v1/dashboard/order-offer-rounds", async ({ request, set, query }) =>
+      service.listOrderOfferRounds(await identityOf(request, set), query as Query),
+      { query: t.Object({ ...dashboardListQuery, orderId: t.Optional(t.String()) }, { additionalProperties: false }),
+        response: { 200: dashboardPaginated(t.Any()) },
+        detail: { tags: ["Dashboard — Order Offers"], summary: "List offer rounds", security: [{ bearerAuth: [] }] } },
+    )
+    .get("/api/v1/dashboard/order-handoffs", async ({ request, set, query }) =>
+      service.listOrderHandoffs(await identityOf(request, set), query as Query),
+      { query: t.Object({ ...dashboardListQuery, orderId: t.Optional(t.String()) }, { additionalProperties: false }),
+        response: { 200: dashboardPaginated(t.Any()) },
+        detail: { tags: ["Dashboard — Orders"], summary: "List driver handoffs", security: [{ bearerAuth: [] }] } },
+    )
+    .get("/api/v1/dashboard/order-returns", async ({ request, set, query }) =>
+      service.listOrderReturns(await identityOf(request, set), query as Query),
+      { query: t.Object({ ...dashboardListQuery, orderId: t.Optional(t.String()) }, { additionalProperties: false }),
+        response: { 200: dashboardPaginated(t.Any()) },
+        detail: { tags: ["Dashboard — Orders"], summary: "List return workflows", security: [{ bearerAuth: [] }] } },
+    )
+    .get("/api/v1/dashboard/order-collections", async ({ request, set, query }) =>
+      service.listOrderCollections(await identityOf(request, set), query as Query),
+      { query: t.Object({ ...dashboardListQuery, orderId: t.Optional(t.String()) }, { additionalProperties: false }),
+        response: { 200: dashboardPaginated(t.Any()) },
+        detail: { tags: ["Dashboard — Orders"], summary: "List collections", security: [{ bearerAuth: [] }] } },
+    )
     .get("/api/v1/dashboard/governorates/export", async ({ request, set, query }) =>
       service.governorates(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export governorates", "SUPER_ADMIN plus governorates.export. Same filters as the governorates list.") },
@@ -71,8 +111,8 @@ export const dashboardExportRoutes = (
       service.merchants(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export merchants", "Requires merchants.read and merchants.export.") },
     )
-    .get("/api/v1/dashboard/orders/export", async ({ request, set }) =>
-      service.orders(await identityOf(request, set), requestIdOf(set)),
+    .get("/api/v1/dashboard/orders/export", async ({ request, set, query }) =>
+      service.orders(await identityOf(request, set), query as Query, requestIdOf(set)),
       { detail: detail("Export city orders", "Requires orders.read and orders.export.") },
     )
     .get("/api/v1/dashboard/order-events/export", async ({ request, set, query }) =>

@@ -7,13 +7,16 @@ import {
   standardErrors,
 } from "../../auth/http/shared";
 import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../../dashboard-lists/query";
+import {
   assertAllowedBodyKeys,
   authIdentity,
   dashboardDetailErrors,
   dashboardListErrors,
   dashboardMutationErrors,
   dateSchema,
-  pageQuery,
   paginated,
   requestIdOf,
 } from "../shared";
@@ -59,7 +62,7 @@ const publicCity = t.Object({
   longitude: t.Union([t.Number(), t.Null()]),
   governorate: publicGov,
 });
-const cityResponse = paginated(cityDto);
+const cityResponse = dashboardPaginated(cityDto);
 const publicCityResponse = paginated(publicCity);
 const cityCreateErrors = { ...standardErrors, 403: errorResponse };
 const cityTransitionErrors = {
@@ -143,8 +146,13 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
       {
         query: t.Object(
           {
-            governorateId: t.Optional(t.String({ format: "uuid" })),
-            ...pageQuery,
+            governorateId: t.Optional(
+              t.String({
+                format: "uuid",
+                description: "Filter by governorate",
+              }),
+            ),
+            ...dashboardListQuery,
             status: t.Optional(
               t.Union([
                 t.Literal("DRAFT"),

@@ -8,6 +8,18 @@ import {
   requireSuperAdminExport,
 } from "../auth/staff/authorization";
 import {
+  likeContains,
+  dashboardPageOf,
+  dashboardListResult,
+} from "../dashboard-lists/query";
+import {
+  parseOrderListQuery,
+  ORDER_LIST_WHERE_SQL,
+  orderListParams,
+  orderListPublicFilters,
+  type OrderListQuery,
+} from "../dashboard-lists/order-list-query";
+import {
   COMMISSION_STORE_WHERE_SQL,
   parseOptionalSearch,
   parseOptionalUuid,
@@ -272,12 +284,13 @@ export class DashboardExportService {
       this.client, identity, "stores.read", "stores.export",
     );
     const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
     const status = parseStoreStatusFilter(query.status);
     const mainCategoryId = parseOptionalUuid(query.mainCategoryId);
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from stores s
        where ${STORE_LIST_WHERE_SQL}`,
-      [cityId, status, mainCategoryId, search],
+      [cityId, status, mainCategoryId, pattern],
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
@@ -288,7 +301,7 @@ export class DashboardExportService {
        join main_categories mc on mc.id = s.main_category_id and mc.city_id = s.city_id
        where ${STORE_LIST_WHERE_SQL}
        order by s.display_order asc, s.created_at asc, s.id asc`,
-      [cityId, status, mainCategoryId, search],
+      [cityId, status, mainCategoryId, pattern],
     )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "stores",
@@ -325,11 +338,12 @@ export class DashboardExportService {
       this.client, identity, "stores.commission.read", "stores.commission.export",
     );
     const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
     const status = parseStoreStatusFilter(query.status);
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from stores s
        where ${COMMISSION_STORE_WHERE_SQL}`,
-      [cityId, status, search],
+      [cityId, status, pattern],
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
@@ -348,7 +362,7 @@ export class DashboardExportService {
        left join account_emails e on e.account_id = h.changed_by_account_id and e.is_primary = true
        where ${COMMISSION_STORE_WHERE_SQL}
        order by s.display_order asc, s.created_at asc, s.id asc`,
-      [cityId, status, search],
+      [cityId, status, pattern],
     )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "store-commissions",
@@ -766,26 +780,32 @@ export class DashboardExportService {
     })), requestId);
   }
 
-  async orders(identity: AuthIdentity, requestId: string) {
+  async orders(identity: AuthIdentity, query: OrderListQuery, requestId: string) {
     const cityId = await requireCityReadAndExport(
       this.client, identity, "orders.read", "orders.export",
     );
-    const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from orders where city_id = ${cityId}`;
+    const filters = parseOrderListQuery(query);
+    const params = orderListParams(cityId, filters);
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from orders o where ${ORDER_LIST_WHERE_SQL}`,
+      params,
+    )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
-    const rows = await this.client<Record<string, unknown>[]>`
-      select o.id::text, o.order_number, s.name as store_name, o.status::text,
+    const rows = (await this.client.unsafe(
+      `select o.id::text, o.order_number, s.name as store_name, o.status::text,
              o.payment_method::text, o.payment_status::text, o.products_subtotal,
              o.delivery_fee, o.total, o.store_commission_rate_snapshot, o.created_at
       from orders o join stores s on s.id = o.store_id
-      where o.city_id = ${cityId}
-      order by o.created_at desc, o.id desc`;
+      where ${ORDER_LIST_WHERE_SQL}
+      order by ${filters.orderSql}`,
+      params,
+    )) as Record<string, unknown>[];
     return this.file(identity, {
       resource: "orders",
       endpoint: "/api/v1/dashboard/orders/export",
       permission: "orders.export",
       filename: "orders.xlsx",
-      filters: {},
+      filters: orderListPublicFilters(filters),
       cityId: cityId,
     }, "الطلبات", [
       { key: "orderNumber", header: "رقم الطلب", type: "text", width: 16 },
@@ -1173,5 +1193,196 @@ export class DashboardExportService {
       pricePerKm: int(row.price_per_km), roundingStep: int(row.rounding_step),
       createdAt: iso(row.created_at), activatedAt: iso(row.activated_at),
     })), requestId);
+  }
+
+  async listOrderEvents(
+    identity: AuthIdentity,
+    query: { search?: string; orderId?: string; page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const p = dashboardPageOf(query.page, query.limit);
+    const offset = (p.page - 1) * p.limit;
+    const orderId = parseOptionalUuid(query.orderId);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const [count] = await this.client<{ total: number }[]>`
+      select count(*)::int total from order_events e
+      join orders o on o.id = e.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or e.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
+    const rows = await this.client<Record<string, unknown>[]>`
+      select e.id::text, o.order_number, e.event_type::text, e.actor_type::text,
+             e.source::text, e.reason, e.created_at
+      from order_events e join orders o on o.id = e.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or e.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
+      order by e.created_at desc, e.id desc
+      limit ${p.limit} offset ${offset}`;
+    return dashboardListResult(rows.map((row) => ({
+      id: text(row.id), orderNumber: text(row.order_number), eventType: text(row.event_type),
+      actorType: text(row.actor_type), source: text(row.source), reason: text(row.reason),
+      createdAt: iso(row.created_at),
+    })), p.page, p.limit, count?.total ?? 0);
+  }
+
+  async listOrderAssignments(
+    identity: AuthIdentity,
+    query: { search?: string; orderId?: string; driverId?: string; page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const p = dashboardPageOf(query.page, query.limit);
+    const offset = (p.page - 1) * p.limit;
+    const orderId = parseOptionalUuid(query.orderId);
+    const driverId = parseOptionalUuid(query.driverId);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const [count] = await this.client<{ total: number }[]>`
+      select count(*)::int total from order_driver_assignments a
+      join orders o on o.id = a.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or a.order_id = ${orderId})
+        and (${driverId}::uuid is null or a.driver_id = ${driverId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
+    const rows = await this.client<Record<string, unknown>[]>`
+      select a.id::text, o.order_number, a.driver_id::text, a.status::text,
+             a.assignment_sequence, a.assigned_at, a.completed_at
+      from order_driver_assignments a join orders o on o.id = a.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or a.order_id = ${orderId})
+        and (${driverId}::uuid is null or a.driver_id = ${driverId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
+      order by a.assigned_at desc, a.id desc
+      limit ${p.limit} offset ${offset}`;
+    return dashboardListResult(rows.map((row) => ({
+      id: text(row.id), orderNumber: text(row.order_number), driverId: text(row.driver_id),
+      status: text(row.status), sequence: int(row.assignment_sequence),
+      assignedAt: iso(row.assigned_at), completedAt: iso(row.completed_at),
+    })), p.page, p.limit, count?.total ?? 0);
+  }
+
+  async listOrderOfferRounds(
+    identity: AuthIdentity,
+    query: { search?: string; orderId?: string; page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(this.client, identity, "order_offers.read");
+    const p = dashboardPageOf(query.page, query.limit);
+    const offset = (p.page - 1) * p.limit;
+    const orderId = parseOptionalUuid(query.orderId);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const [count] = await this.client<{ total: number }[]>`
+      select count(*)::int total from order_offer_rounds r
+      join orders o on o.id = r.order_id
+      where r.city_id = ${cityId}
+        and (${orderId}::uuid is null or r.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
+    const rows = await this.client<Record<string, unknown>[]>`
+      select r.id::text, o.order_number, r.status::text, r.opened_at, r.closed_at, r.final_driver_fee
+      from order_offer_rounds r join orders o on o.id = r.order_id
+      where r.city_id = ${cityId}
+        and (${orderId}::uuid is null or r.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
+      order by r.opened_at desc, r.id desc
+      limit ${p.limit} offset ${offset}`;
+    return dashboardListResult(rows.map((row) => ({
+      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
+      finalDriverFee: int(row.final_driver_fee), openedAt: iso(row.opened_at), closedAt: iso(row.closed_at),
+    })), p.page, p.limit, count?.total ?? 0);
+  }
+
+  async listOrderHandoffs(
+    identity: AuthIdentity,
+    query: { search?: string; orderId?: string; page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const p = dashboardPageOf(query.page, query.limit);
+    const offset = (p.page - 1) * p.limit;
+    const orderId = parseOptionalUuid(query.orderId);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const [count] = await this.client<{ total: number }[]>`
+      select count(*)::int total from order_driver_handoffs h
+      join orders o on o.id = h.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or h.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
+    const rows = await this.client<Record<string, unknown>[]>`
+      select h.id::text, o.order_number, h.status::text, h.from_driver_id::text,
+             h.to_driver_id::text, h.created_at, h.completed_at
+      from order_driver_handoffs h join orders o on o.id = h.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or h.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
+      order by h.created_at desc, h.id desc
+      limit ${p.limit} offset ${offset}`;
+    return dashboardListResult(rows.map((row) => ({
+      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
+      fromDriverId: text(row.from_driver_id), toDriverId: text(row.to_driver_id),
+      createdAt: iso(row.created_at), completedAt: iso(row.completed_at),
+    })), p.page, p.limit, count?.total ?? 0);
+  }
+
+  async listOrderReturns(
+    identity: AuthIdentity,
+    query: { search?: string; orderId?: string; page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const p = dashboardPageOf(query.page, query.limit);
+    const offset = (p.page - 1) * p.limit;
+    const orderId = parseOptionalUuid(query.orderId);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const [count] = await this.client<{ total: number }[]>`
+      select count(*)::int total from order_return_workflows w
+      join orders o on o.id = w.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or w.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
+    const rows = await this.client<Record<string, unknown>[]>`
+      select w.id::text, o.order_number, w.status::text, w.created_at, w.completed_at
+      from order_return_workflows w join orders o on o.id = w.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or w.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
+      order by w.created_at desc, w.id desc
+      limit ${p.limit} offset ${offset}`;
+    return dashboardListResult(rows.map((row) => ({
+      id: text(row.id), orderNumber: text(row.order_number), status: text(row.status),
+      createdAt: iso(row.created_at), completedAt: iso(row.completed_at),
+    })), p.page, p.limit, count?.total ?? 0);
+  }
+
+  async listOrderCollections(
+    identity: AuthIdentity,
+    query: { search?: string; orderId?: string; page?: number; limit?: number },
+  ) {
+    const cityId = await requireCityPermission(this.client, identity, "orders.read");
+    const p = dashboardPageOf(query.page, query.limit);
+    const offset = (p.page - 1) * p.limit;
+    const orderId = parseOptionalUuid(query.orderId);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const [count] = await this.client<{ total: number }[]>`
+      select count(*)::int total from order_collections c
+      join orders o on o.id = c.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or c.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')`;
+    const rows = await this.client<Record<string, unknown>[]>`
+      select c.id::text, o.order_number, c.collecting_driver_id::text,
+             c.expected_amount, c.collected_amount, c.difference_amount, c.collected_at
+      from order_collections c join orders o on o.id = c.order_id
+      where o.city_id = ${cityId}
+        and (${orderId}::uuid is null or c.order_id = ${orderId})
+        and (${pattern}::text is null or o.order_number ilike ${pattern} escape '\\')
+      order by c.collected_at desc, c.id desc
+      limit ${p.limit} offset ${offset}`;
+    return dashboardListResult(rows.map((row) => ({
+      id: text(row.id), orderNumber: text(row.order_number), driverId: text(row.collecting_driver_id),
+      expectedAmount: int(row.expected_amount), collectedAmount: int(row.collected_amount),
+      differenceAmount: int(row.difference_amount), collectedAt: iso(row.collected_at),
+    })), p.page, p.limit, count?.total ?? 0);
   }
 }

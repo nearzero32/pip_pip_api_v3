@@ -20,6 +20,7 @@ import type { StoreService } from "../stores/store.service";
 import type { ModifierService } from "./modifier.service";
 import type { ProductService } from "./product.service";
 import type { StoreCategoryService } from "./store-category.service";
+import { toFlatPage } from "../dashboard-lists/query";
 
 const tag = ["Mobile — Merchant Catalog"];
 const storeTag = ["Mobile — Merchant Store"];
@@ -214,7 +215,7 @@ export const merchantCatalogRoutes = (
       async ({ request, set, query }) => {
         const id = requestIdOf(set);
         const { identity, storeId } = await trustedStore(auth, request, id);
-        return deps.products.list(identity, storeId, query);
+        return toFlatPage(await deps.products.list(identity, storeId, query));
       },
       {
         query: t.Object(
@@ -408,7 +409,7 @@ export const merchantCatalogRoutes = (
       async ({ request, set, query }) => {
         const id = requestIdOf(set);
         const { identity, storeId } = await trustedStore(auth, request, id);
-        return deps.modifiers.listGroups(identity, storeId, query);
+        return toFlatPage(await deps.modifiers.listGroups(identity, storeId, query));
       },
       {
         query: t.Object(

@@ -10,7 +10,12 @@ import {
   beginWithGeographyRetry,
   lockCityGeography,
 } from "../geography/geography-locks";
-import { dateValue, pageOf } from "../geography/shared";
+import { dateValue } from "../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+} from "../dashboard-lists/query";
 import {
   normalizeArabicCategoryName,
   validateDisplayOrder,
@@ -407,9 +412,10 @@ export class ModifierService {
       where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
 
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = input.search?.trim() || null;
+    const searchRaw = input.search?.trim() || null;
+    const search = searchRaw ? likeContains(searchRaw) : null;
     const status = input.status?.trim() || null;
     if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
@@ -422,7 +428,7 @@ export class ModifierService {
          and g.city_id = $2::uuid
          and ($3::text is null or g.status = $3::product_status)
          and ($3::text is not null or g.status <> 'ARCHIVED')
-         and ($4::text is null or g.name ilike ('%' || $4 || '%'))
+         and ($4::text is null or g.name ilike $4 escape '\\')
        order by g.created_at asc, g.id asc
        limit $5::int offset $6::int`,
       [storeId, cityId, status, search, limit, offset],
@@ -435,7 +441,7 @@ export class ModifierService {
          and g.city_id = $2::uuid
          and ($3::text is null or g.status = $3::product_status)
          and ($3::text is not null or g.status <> 'ARCHIVED')
-         and ($4::text is null or g.name ilike ('%' || $4 || '%'))`,
+         and ($4::text is null or g.name ilike $4 escape '\\')`,
       [storeId, cityId, status, search],
     )) as { total: string }[];
 
@@ -448,14 +454,12 @@ export class ModifierService {
       byGroup.set(option.modifier_group_id, list);
     }
 
-    return {
-      data: rows.map((row) =>
-        this.groupDto(row, byGroup.get(row.id) ?? []),
-      ),
+    return dashboardListResult(
+      rows.map((row) => this.groupDto(row, byGroup.get(row.id) ?? [])),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   private async loadGroupOptionsBatch(groupIds: string[]) {

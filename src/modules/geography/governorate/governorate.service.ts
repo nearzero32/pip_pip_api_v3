@@ -6,7 +6,16 @@ import type {
 } from "../../auth/sessions/session-service";
 import { beginWithGeographyRetry, lockGovernorateAndCities } from "../geography-locks";
 import { revokeDashboardSessionsForCities } from "../operational-sessions";
-import { dateValue, pageOf } from "../shared";
+import { dateValue } from "../shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+  parseAllowlistedSort,
+  parseOptionalSearch,
+  parseSortOrder,
+  sqlDir,
+} from "../../dashboard-lists/query";
 
 export const governorateDto = (row: Record<string, unknown>): any => ({
   id: row.id,
@@ -33,30 +42,50 @@ export class GovernorateService {
     status?: string;
     page?: number;
     limit?: number;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = input.search?.trim() || null;
-    const rows = await this.client<
-      {
-        id: string;
-        name_ar: string;
-        name_en: string;
-        status: string;
-        display_order: number;
-        created_at: Date;
-        updated_at: Date;
-      }[]
-    >`select id,name_ar,name_en,status,display_order,created_at,updated_at from governorates where (${search}::text is null or name_ar ilike ${`%${search ?? ""}%`} or name_en ilike ${`%${search ?? ""}%`}) and (${input.status ?? null}::text is null or status=${input.status ?? null}::governorate_status) order by display_order asc,name_en asc,id asc limit ${limit} offset ${offset}`;
-    const [count] = await this.client<
-      { total: string }[]
-    >`select count(*)::text total from governorates where (${search}::text is null or name_ar ilike ${`%${search ?? ""}%`} or name_en ilike ${`%${search ?? ""}%`}) and (${input.status ?? null}::text is null or status=${input.status ?? null}::governorate_status)`;
-    return {
-      data: rows.map((row) => governorateDto(row)),
+    const search = parseOptionalSearch(input.search);
+    const pattern = search ? likeContains(search) : null;
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["displayOrder", "nameEn", "nameAr", "status", "createdAt"] as const,
+      "displayOrder",
+    );
+    const sortOrder = parseSortOrder(
+      input.sortOrder,
+      sortBy === "displayOrder" ? "asc" : "desc",
+    );
+    const orderSql = {
+      displayOrder: `display_order ${sqlDir(sortOrder)}, name_en asc, id asc`,
+      nameEn: `name_en ${sqlDir(sortOrder)}, id ${sqlDir(sortOrder)}`,
+      nameAr: `name_ar ${sqlDir(sortOrder)}, id ${sqlDir(sortOrder)}`,
+      status: `status ${sqlDir(sortOrder)}, display_order asc, id asc`,
+      createdAt: `created_at ${sqlDir(sortOrder)}, id ${sqlDir(sortOrder)}`,
+    }[sortBy];
+    const rows = await this.client.unsafe(
+      `select id,name_ar,name_en,status,display_order,created_at,updated_at
+       from governorates
+       where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
+         and ($2::text is null or status=$2::governorate_status)
+       order by ${orderSql}
+       limit $3::int offset $4::int`,
+      [pattern, input.status ?? null, limit, offset],
+    );
+    const [count] = await this.client.unsafe(
+      `select count(*)::text total from governorates
+       where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
+         and ($2::text is null or status=$2::governorate_status)`,
+      [pattern, input.status ?? null],
+    ) as { total: string }[];
+    return dashboardListResult(
+      (rows as Record<string, unknown>[]).map((row) => governorateDto(row)),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   async update(

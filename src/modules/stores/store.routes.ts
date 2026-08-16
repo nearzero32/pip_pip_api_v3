@@ -14,10 +14,12 @@ import {
   dashboardListErrors,
   dashboardMutationErrors,
   dateSchema,
-  pageQuery,
-  paginated,
   requestIdOf,
 } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { StoreService } from "./store.service";
 import { document } from "../../openapi/document";
 import { catalogExamples } from "../../openapi/examples/catalog";
@@ -118,7 +120,7 @@ const publicStoreDto = t.Object({
   nextClosingAt: t.Nullable(t.String()),
 });
 
-const listResponse = paginated(storeDto);
+const listResponse = dashboardPaginated(storeDto);
 const publicListResponse = t.Object({ data: t.Array(publicStoreDto) });
 
 const storeIdParam = t.Object(
@@ -268,8 +270,7 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
       {
         query: t.Object(
           {
-            ...pageQuery,
-            search: t.Optional(t.String({ maxLength: 200 })),
+            ...dashboardListQuery,
             status: t.Optional(storeStatus),
             mainCategoryId: t.Optional(t.String({ format: "uuid" })),
           },

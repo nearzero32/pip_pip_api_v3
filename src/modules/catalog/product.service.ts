@@ -11,6 +11,11 @@ import {
   lockCityGeography,
 } from "../geography/geography-locks";
 import { dateValue, pageOf } from "../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+} from "../dashboard-lists/query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import {
@@ -905,9 +910,10 @@ export class ProductService {
       where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
 
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = input.search?.trim() || null;
+    const searchRaw = input.search?.trim() || null;
+    const search = searchRaw ? likeContains(searchRaw) : null;
     const status = input.status?.trim() || null;
     if (
       status &&
@@ -951,7 +957,7 @@ export class ProductService {
            or ($4::text = 'NULL' and p.category_id is null)
            or p.category_id = $4::uuid
          )
-         and ($5::text is null or p.name ilike ('%' || $5 || '%'))
+         and ($5::text is null or p.name ilike $5 escape '\\')
        order by p.display_order asc, p.created_at asc, p.id asc
        limit $6::int offset $7::int`,
       [storeId, cityId, status, categoryId, search, limit, offset],
@@ -969,7 +975,7 @@ export class ProductService {
            or ($4::text = 'NULL' and p.category_id is null)
            or p.category_id = $4::uuid
          )
-         and ($5::text is null or p.name ilike ('%' || $5 || '%'))`,
+         and ($5::text is null or p.name ilike $5 escape '\\')`,
       [storeId, cityId, status, categoryId, search],
     )) as { total: string }[];
 
@@ -998,8 +1004,8 @@ export class ProductService {
       availabilityByProduct.set(window.product_id, list);
     }
 
-    return {
-      data: rows.map((row) =>
+    return dashboardListResult(
+      rows.map((row) =>
         this.productDto(
           row,
           imagesByProduct.get(row.id) ?? [],
@@ -1009,8 +1015,8 @@ export class ProductService {
       ),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   async get(identity: AuthIdentity, storeId: string, productId: string) {

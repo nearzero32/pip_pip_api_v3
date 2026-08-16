@@ -274,6 +274,13 @@
       "when": 1786479000000,
       "tag": "0038_export_permission_closure",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786481000000,
+      "tag": "0039_dashboard_list_indexes",
+      "breakpoints": true
     }
   ]
 }

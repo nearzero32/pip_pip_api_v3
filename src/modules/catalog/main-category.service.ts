@@ -9,7 +9,12 @@ import {
   beginWithGeographyRetry,
   lockCityGeography,
 } from "../geography/geography-locks";
-import { dateValue, pageOf } from "../geography/shared";
+import { dateValue } from "../geography/shared";
+import {
+  dashboardListResult,
+  dashboardPageOf,
+  likeContains,
+} from "../dashboard-lists/query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import {
@@ -266,9 +271,10 @@ export class MainCategoryService {
     },
   ) {
     const cityId = await this.authorize(identity, "main_categories.read");
-    const { page, limit } = pageOf(input.page, input.limit);
+    const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const search = input.search?.trim() || null;
+    const searchRaw = input.search?.trim() || null;
+    const search = searchRaw ? likeContains(searchRaw) : null;
     const status = input.status?.trim() || null;
     if (
       status &&
@@ -286,7 +292,7 @@ export class MainCategoryService {
        where c.city_id = $1::uuid
          and ($2::text is null or c.status = $2::main_category_status)
          and ($2::text is not null or c.status <> 'ARCHIVED')
-         and ($3::text is null or c.name ilike ('%' || $3 || '%'))
+         and ($3::text is null or c.name ilike $3 escape '\\')
        order by c.display_order asc, c.created_at asc, c.id asc
        limit $4::int offset $5::int`,
       [cityId, status, search, limit, offset],
@@ -297,18 +303,16 @@ export class MainCategoryService {
        where c.city_id = $1::uuid
          and ($2::text is null or c.status = $2::main_category_status)
          and ($2::text is not null or c.status <> 'ARCHIVED')
-         and ($3::text is null or c.name ilike ('%' || $3 || '%'))`,
+         and ($3::text is null or c.name ilike $3 escape '\\')`,
       [cityId, status, search],
     )) as { total: string }[];
 
-    return {
-      data: rows.map((row) =>
-        mainCategoryDto(row, this.config.r2PublicBaseUrl),
-      ),
+    return dashboardListResult(
+      rows.map((row) => mainCategoryDto(row, this.config.r2PublicBaseUrl)),
       page,
       limit,
-      total: Number(count?.total ?? 0),
-    };
+      Number(count?.total ?? 0),
+    );
   }
 
   async get(identity: AuthIdentity, mainCategoryId: string) {

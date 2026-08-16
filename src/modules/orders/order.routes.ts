@@ -16,6 +16,10 @@ import {
   paginated,
   requestIdOf,
 } from "../geography/shared";
+import {
+  dashboardListQuery,
+  dashboardPaginated,
+} from "../dashboard-lists/query";
 import type { OrderService } from "./order.service";
 import type { OrderOpsService } from "./order-ops.service";
 import { document } from "../../openapi/document";
@@ -332,11 +336,30 @@ export const orderRoutes = (
           dashboardContext,
           requestIdOf(set),
         );
-        return service.listForDashboard(identity, query.page, query.limit);
+        return service.listForDashboard(identity, query);
       },
       {
-        query: t.Object(pageQuery, { additionalProperties: false }),
-        response: { 200: paginated(t.Any()), ...errors },
+        query: t.Object(
+          {
+            ...dashboardListQuery,
+            status: t.Optional(t.String({ examples: ["DELIVERED"] })),
+            storeId: t.Optional(uuid),
+            customerId: t.Optional(uuid),
+            driverId: t.Optional(uuid),
+            assignmentId: t.Optional(uuid),
+            custodyStatus: t.Optional(t.String()),
+            createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
+            createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
+            deliveredFrom: t.Optional(t.String()),
+            deliveredTo: t.Optional(t.String()),
+            cancelledFrom: t.Optional(t.String()),
+            cancelledTo: t.Optional(t.String()),
+            hasActiveHandoff: t.Optional(t.String()),
+            hasActiveReturn: t.Optional(t.String()),
+          },
+          { additionalProperties: false },
+        ),
+        response: { 200: dashboardPaginated(t.Any()), ...errors },
         detail: {
           tags: ["Dashboard — Orders"],
           summary: "List City orders",
