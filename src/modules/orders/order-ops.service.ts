@@ -435,6 +435,151 @@ export class OrderOpsService {
     });
   }
 
+  private mapOpsHandoff(row: Record<string, unknown> | undefined) {
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      status: String(row.status),
+      fromAssignmentId: String(row.from_assignment_id),
+      toAssignmentId: String(row.to_assignment_id),
+      fromDriverId: String(row.from_driver_id),
+      toDriverId: String(row.to_driver_id),
+      reason: String(row.reason),
+      startedAt: dateValue(row.started_at),
+      completedAt: dateValue(row.completed_at),
+      cancelledAt: dateValue(row.cancelled_at),
+    };
+  }
+
+  private mapOpsReturn(row: Record<string, unknown> | undefined) {
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      status: String(row.status),
+      assignmentId: String(row.assignment_id),
+      driverId: String(row.driver_id),
+      reason: String(row.reason),
+      startedAt: dateValue(row.started_at),
+      driverReturnedAt: dateValue(row.driver_returned_at),
+      storeConfirmedAt: dateValue(row.store_confirmed_at),
+      completedAt: dateValue(row.completed_at),
+      cancelledAt: dateValue(row.cancelled_at),
+    };
+  }
+
+  private async loadDashboardOpsState(
+    executor: SQL,
+    cityId: string,
+    orderId: string,
+  ) {
+    const [row] = await executor<Record<string, unknown>[]>`
+      select id::text, order_number, status::text, custody_status::text,
+             custody_driver_id::text, driver_account_id::text, locked_driver_fee,
+             store_ready_marked_at, version, status_changed_at, cancelled_at
+      from orders where id = ${orderId} and city_id = ${cityId}`;
+    if (!row) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+    const assignments = await executor<Record<string, unknown>[]>`
+      select id::text, driver_id::text, status::text, assignment_source::text,
+             assignment_reason, driver_fee, assignment_sequence,
+             offer_round_id::text, assigned_at, arrived_at_store_at, picked_up_at,
+             arrived_at_customer_at, completed_at, cancelled_at
+      from order_driver_assignments
+      where order_id = ${orderId} and city_id = ${cityId}
+      order by assigned_at desc, id desc`;
+    const [pendingHandoff] = await executor<Record<string, unknown>[]>`
+      select id::text, status::text, from_assignment_id::text, to_assignment_id::text,
+             from_driver_id::text, to_driver_id::text, reason, started_at,
+             completed_at, cancelled_at
+      from order_driver_handoffs
+      where order_id = ${orderId} and city_id = ${cityId} and status = 'PENDING'
+      order by started_at desc limit 1`;
+    const [latestHandoff] = pendingHandoff
+      ? [pendingHandoff]
+      : await executor<Record<string, unknown>[]>`
+          select id::text, status::text, from_assignment_id::text, to_assignment_id::text,
+                 from_driver_id::text, to_driver_id::text, reason, started_at,
+                 completed_at, cancelled_at
+          from order_driver_handoffs
+          where order_id = ${orderId} and city_id = ${cityId}
+          order by started_at desc limit 1`;
+    const [activeReturn] = await executor<Record<string, unknown>[]>`
+      select id::text, status::text, assignment_id::text, driver_id::text, reason,
+             started_at, driver_returned_at, store_confirmed_at, completed_at, cancelled_at
+      from order_return_workflows
+      where order_id = ${orderId} and city_id = ${cityId}
+        and status in ('WAITING_FOR_DRIVER_RETURN','WAITING_FOR_STORE_CONFIRMATION')
+      order by started_at desc limit 1`;
+    const [latestReturn] = activeReturn
+      ? [activeReturn]
+      : await executor<Record<string, unknown>[]>`
+          select id::text, status::text, assignment_id::text, driver_id::text, reason,
+                 started_at, driver_returned_at, store_confirmed_at, completed_at, cancelled_at
+          from order_return_workflows
+          where order_id = ${orderId} and city_id = ${cityId}
+          order by started_at desc limit 1`;
+    const [openRound] = await executor<Record<string, unknown>[]>`
+      select id::text, status::text, round_kind::text, opened_at,
+             pricing_version_snapshot, final_driver_fee
+      from order_offer_rounds
+      where order_id = ${orderId} and city_id = ${cityId} and status = 'OPEN'
+      limit 1`;
+    return {
+      orderId: String(row.id),
+      orderNumber: String(row.order_number),
+      status: String(row.status),
+      custodyStatus: String(row.custody_status),
+      custodyDriverId: row.custody_driver_id == null ? null : String(row.custody_driver_id),
+      driverAccountId:
+        row.driver_account_id == null ? null : String(row.driver_account_id),
+      lockedDriverFee:
+        row.locked_driver_fee == null ? null : Number(row.locked_driver_fee),
+      storeReadyMarkedAt: dateValue(row.store_ready_marked_at),
+      version: Number(row.version),
+      statusChangedAt: dateValue(row.status_changed_at),
+      cancelledAt: dateValue(row.cancelled_at),
+      assignments: assignments.map((a) => ({
+        id: String(a.id),
+        driverId: String(a.driver_id),
+        status: String(a.status),
+        assignmentSource: a.assignment_source == null ? null : String(a.assignment_source),
+        assignmentSequence: Number(a.assignment_sequence),
+        assignmentReason: a.assignment_reason == null ? null : String(a.assignment_reason),
+        driverFee: Number(a.driver_fee),
+        offerRoundId: a.offer_round_id == null ? null : String(a.offer_round_id),
+        assignedAt: dateValue(a.assigned_at),
+        arrivedAtStoreAt: dateValue(a.arrived_at_store_at),
+        pickedUpAt: dateValue(a.picked_up_at),
+        arrivedAtCustomerAt: dateValue(a.arrived_at_customer_at),
+        completedAt: dateValue(a.completed_at),
+        cancelledAt: dateValue(a.cancelled_at),
+      })),
+      handoff: this.mapOpsHandoff(latestHandoff),
+      returnWorkflow: this.mapOpsReturn(latestReturn),
+      openOfferRound: openRound
+        ? {
+            id: String(openRound.id),
+            status: String(openRound.status),
+            roundKind: String(openRound.round_kind),
+            openedAt: dateValue(openRound.opened_at),
+            pricingVersionSnapshot: Number(openRound.pricing_version_snapshot),
+            finalDriverFee:
+              openRound.final_driver_fee == null
+                ? null
+                : Number(openRound.final_driver_fee),
+          }
+        : null,
+    };
+  }
+
+  async getDashboardOps(identity: AuthIdentity, orderId: string) {
+    const cityId = await requireCityPermission(
+      this.client,
+      identity,
+      "orders.read",
+    );
+    return this.loadDashboardOpsState(this.client, cityId, orderId);
+  }
+
   private async orderResponse(tx: SQL, orderId: string, cityId: string) {
     const [row] = await tx<Record<string, unknown>[]>`
       select id::text, order_number, city_id::text, store_id::text, status::text,

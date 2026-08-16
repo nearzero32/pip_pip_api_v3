@@ -10,6 +10,8 @@ import { requireTrustedMerchantStore } from "../auth/merchant/merchant-access";
 import { errorResponse, standardErrors } from "../auth/http/shared";
 import { authIdentity, requestIdOf } from "../geography/shared";
 import type { MediaService } from "../media/media.service";
+import { document } from "../../openapi/document";
+import { orderExamples } from "../../openapi/examples/orders";
 import type { OrderOpsService } from "./order-ops.service";
 
 const uuid = t.String({ format: "uuid" });
@@ -45,12 +47,112 @@ const reasonBody = t.Object(
   { additionalProperties: false },
 );
 
+const nullableUuid = t.Nullable(uuid);
+const nullableInstant = t.Nullable(t.String());
+const assignmentStatus = t.String();
+const dashboardOpsAssignment = t.Object({
+  id: uuid,
+  driverId: uuid,
+  status: assignmentStatus,
+  assignmentSource: t.Nullable(t.String()),
+  assignmentSequence: t.Integer(),
+  assignmentReason: t.Nullable(t.String()),
+  driverFee: t.Integer(),
+  offerRoundId: nullableUuid,
+  assignedAt: nullableInstant,
+  arrivedAtStoreAt: nullableInstant,
+  pickedUpAt: nullableInstant,
+  arrivedAtCustomerAt: nullableInstant,
+  completedAt: nullableInstant,
+  cancelledAt: nullableInstant,
+});
+const dashboardOpsHandoff = t.Object({
+  id: uuid,
+  status: t.String(),
+  fromAssignmentId: uuid,
+  toAssignmentId: uuid,
+  fromDriverId: uuid,
+  toDriverId: uuid,
+  reason: t.String(),
+  startedAt: nullableInstant,
+  completedAt: nullableInstant,
+  cancelledAt: nullableInstant,
+});
+const dashboardOpsReturn = t.Object({
+  id: uuid,
+  status: t.String(),
+  assignmentId: uuid,
+  driverId: uuid,
+  reason: t.String(),
+  startedAt: nullableInstant,
+  driverReturnedAt: nullableInstant,
+  storeConfirmedAt: nullableInstant,
+  completedAt: nullableInstant,
+  cancelledAt: nullableInstant,
+});
+const dashboardOpsOfferRound = t.Object({
+  id: uuid,
+  status: t.String(),
+  roundKind: t.String(),
+  openedAt: nullableInstant,
+  pricingVersionSnapshot: t.Integer(),
+  finalDriverFee: t.Nullable(t.Integer()),
+});
+const dashboardOpsResponse = document(
+  t.Object({
+    orderId: uuid,
+    orderNumber: t.String(),
+    status: t.String(),
+    custodyStatus: t.String(),
+    custodyDriverId: nullableUuid,
+    driverAccountId: nullableUuid,
+    lockedDriverFee: t.Nullable(t.Integer()),
+    storeReadyMarkedAt: nullableInstant,
+    version: t.Integer(),
+    statusChangedAt: nullableInstant,
+    cancelledAt: nullableInstant,
+    assignments: t.Array(dashboardOpsAssignment),
+    handoff: t.Nullable(dashboardOpsHandoff),
+    returnWorkflow: t.Nullable(dashboardOpsReturn),
+    openOfferRound: t.Nullable(dashboardOpsOfferRound),
+  }),
+  orderExamples.dashboardOps,
+);
+
 export const orderOpsRoutes = (
   auth: AuthModule,
   ops: OrderOpsService,
   media: MediaService,
 ) =>
   new Elysia({ name: "order-ops-routes" })
+    .get(
+      "/api/v1/dashboard/orders/:orderId/ops",
+      async ({ request, set, params }) => {
+        const identity = await authIdentity(
+          auth,
+          request,
+          dashboardContext,
+          requestIdOf(set),
+        );
+        return ops.getDashboardOps(identity, params.orderId);
+      },
+      {
+        params: t.Object({ orderId: uuid }),
+        response: {
+          200: dashboardOpsResponse,
+          401: errorResponse,
+          403: errorResponse,
+          404: errorResponse,
+        },
+        detail: {
+          tags: ["Dashboard — Order Ops"],
+          summary: "Get City order operational state",
+          description:
+            "City-scoped read-only operational snapshot for dashboard staff with orders.read. SUPER_ADMIN is blocked. Returns assignment history (including HANDOFF_PENDING and RETURN_PENDING), the current or latest handoff (PENDING preferred so cancel/complete remain durable after reload), the active or latest return workflow (WAITING_FOR_DRIVER_RETURN, WAITING_FOR_STORE_CONFIRMATION, COMPLETED, CANCELLED), and the currently OPEN offer round (INITIAL or DRIVER_REPLACEMENT) if any. Does not require Idempotency-Key. Does not mutate state.",
+          security: [{ bearerAuth: [] }],
+        },
+      },
+    )
     .post(
       "/api/v1/dashboard/orders/:orderId/remove-driver",
       async ({ request, set, params, body }) => {

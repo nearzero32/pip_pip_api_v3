@@ -37,6 +37,11 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
   let merchantIdentity!: AuthIdentity;
   let adminIdentity!: AuthIdentity;
   let superIdentity!: AuthIdentity;
+  let adminToken = "";
+  let superToken = "";
+  let opsReadToken = "";
+  let opsNoPermToken = "";
+  let otherCityAdminToken = "";
   let superId = "";
 
   const driverIdentity = (id: string, cityId: string): AuthIdentity => ({
@@ -323,6 +328,72 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
       cityId: city,
       storeId: null,
     };
+    adminToken = (
+      await h.auth.dashboard.login({
+        email: "ops-admin@example.com",
+        password: "fixed dashboard password",
+        deviceName: "ops-admin",
+        ip: "ops-admin",
+        requestId: "ops-admin",
+      })
+    ).access_token;
+
+    const opsReadId = await createStaffAccount(h.auth, h.client, {
+      email: "ops-read-only@example.com",
+      password: "fixed dashboard password",
+      roles: ["OPERATIONS"],
+      cityId: city,
+      managedByAccountId: adminId,
+    });
+    await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/employees/${opsReadId}/permissions`, {
+        token: adminToken,
+        body: { permission: "orders.read" },
+      }),
+    );
+    opsReadToken = (
+      await h.auth.dashboard.login({
+        email: "ops-read-only@example.com",
+        password: "fixed dashboard password",
+        deviceName: "ops-read",
+        ip: "ops-read",
+        requestId: "ops-read",
+      })
+    ).access_token;
+
+    await createStaffAccount(h.auth, h.client, {
+      email: "ops-no-read@example.com",
+      password: "fixed dashboard password",
+      roles: ["OPERATIONS"],
+      cityId: city,
+      managedByAccountId: adminId,
+    });
+    opsNoPermToken = (
+      await h.auth.dashboard.login({
+        email: "ops-no-read@example.com",
+        password: "fixed dashboard password",
+        deviceName: "ops-noread",
+        ip: "ops-noread",
+        requestId: "ops-noread",
+      })
+    ).access_token;
+
+    const otherCity = await createActiveCity(h.client, "Ops Other City");
+    await createStaffAccount(h.auth, h.client, {
+      email: "ops-other-admin@example.com",
+      password: "fixed dashboard password",
+      roles: ["ADMIN"],
+      cityId: otherCity,
+    });
+    otherCityAdminToken = (
+      await h.auth.dashboard.login({
+        email: "ops-other-admin@example.com",
+        password: "fixed dashboard password",
+        deviceName: "ops-other",
+        ip: "ops-other",
+        requestId: "ops-other",
+      })
+    ).access_token;
 
     const superStaffId = await createStaffAccount(h.auth, h.client, {
       email: "ops-super@example.com",
@@ -338,6 +409,15 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
       cityId: null,
       storeId: null,
     };
+    superToken = (
+      await h.auth.dashboard.login({
+        email: "ops-super@example.com",
+        password: "fixed dashboard password",
+        deviceName: "ops-super",
+        ip: "ops-super",
+        requestId: "ops-super",
+      })
+    ).access_token;
 
     const [m] = await h.client<{ id: string }[]>`insert into accounts default values returning id`;
     await h.client`
@@ -1062,5 +1142,255 @@ describe("M4-C2 order ops: remove, handoff, return, reopen", () => {
     ).rejects.toMatchObject({
       publicCode: "DRIVER_ACTIVE_ASSIGNMENT_LIMIT_REACHED",
     });
+  });
+
+  test("dashboard GET ops returns assignment state without fake handoff/return", async () => {
+    const { order, driver, assignmentId, driverFee } = await approveAndClaim();
+    const res = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: adminToken,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.orderId).toBe(order.id);
+    expect(body.status).toBe("READY_FOR_PICKUP");
+    expect(body.custodyStatus).toBe("WITH_STORE");
+    expect(body.custodyDriverId).toBeNull();
+    expect(body.driverAccountId).toBe(driver.id);
+    expect(body.lockedDriverFee).toBe(driverFee);
+    expect(body.handoff).toBeNull();
+    expect(body.returnWorkflow).toBeNull();
+    expect(body.openOfferRound).toBeNull();
+    const assignments = body.assignments as Array<Record<string, unknown>>;
+    expect(assignments.some((row) => row.id === assignmentId)).toBe(true);
+    expect(body).not.toHaveProperty("recipientPhone");
+    expect(body).not.toHaveProperty("addressSnapshot");
+    expect(body).not.toHaveProperty("items");
+  });
+
+  test("dashboard GET ops returns PENDING handoff id after a separate reload-style GET", async () => {
+    const { order, driver, assignmentId } = await approveAndClaim();
+    await pickupOrder(order.id, driver, assignmentId);
+    const replacement = await freshDriver();
+    const started = await h.orderOps.startHandoffAssign(
+      adminIdentity,
+      order.id,
+      {
+        driverId: replacement.id,
+        reason: "نقل سائق",
+        idempotencyKey: crypto.randomUUID(),
+      },
+    );
+    const res = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: adminToken,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      handoff: {
+        id: string;
+        status: string;
+        fromAssignmentId: string;
+        toAssignmentId: string;
+        fromDriverId: string;
+        toDriverId: string;
+      } | null;
+      custodyStatus: string;
+    };
+    expect(body.custodyStatus).toBe("WITH_DRIVER");
+    expect(body.handoff).toMatchObject({
+      id: started.handoff!.id,
+      status: "PENDING",
+      fromAssignmentId: assignmentId,
+      fromDriverId: driver.id,
+      toDriverId: replacement.id,
+    });
+    expect(body.handoff?.toAssignmentId).toBeTruthy();
+  });
+
+  test("dashboard GET ops exposes active and completed return workflows", async () => {
+    const { order, driver, assignmentId } = await approveAndClaim();
+    await pickupOrder(order.id, driver, assignmentId);
+    const started = await h.orderOps.startReturnToStore(adminIdentity, order.id, {
+      reason: "إرجاع تشغيلي",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    const waitingDriver = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: adminToken,
+      }),
+    );
+    const waitingDriverBody = (await waitingDriver.json()) as {
+      status: string;
+      returnWorkflow: { id: string; status: string } | null;
+    };
+    expect(waitingDriverBody.status).toBe("PICKED_UP");
+    expect(waitingDriverBody.returnWorkflow?.status).toBe(
+      "WAITING_FOR_DRIVER_RETURN",
+    );
+    expect(waitingDriverBody.returnWorkflow?.id).toBe(
+      started.returnWorkflow!.id,
+    );
+
+    const returnFile = await putOpsProof(
+      driver.token,
+      order.id,
+      assignmentId,
+      "RETURN_PROOF",
+      { returnWorkflowId: started.returnWorkflow!.id },
+    );
+    await h.orderOps.confirmDriverReturn(
+      driver.identity,
+      order.id,
+      { fileId: returnFile, idempotencyKey: crypto.randomUUID() },
+      { kind: "DRIVER" },
+    );
+    const waitingStore = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: adminToken,
+      }),
+    );
+    const waitingStoreBody = (await waitingStore.json()) as {
+      returnWorkflow: { status: string } | null;
+    };
+    expect(waitingStoreBody.returnWorkflow?.status).toBe(
+      "WAITING_FOR_STORE_CONFIRMATION",
+    );
+
+    await h.orderOps.confirmStoreReturn(
+      merchantIdentity,
+      order.id,
+      { idempotencyKey: crypto.randomUUID() },
+      { kind: "MERCHANT", storeId: store },
+    );
+    const completed = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: adminToken,
+      }),
+    );
+    const completedBody = (await completed.json()) as {
+      returnWorkflow: { status: string } | null;
+      custodyStatus: string;
+    };
+    expect(completedBody.returnWorkflow?.status).toBe("COMPLETED");
+    expect(completedBody.custodyStatus).toBe("WITH_STORE");
+  });
+
+  test("dashboard GET ops exposes return started by commercial cancel with driver custody", async () => {
+    const { order, driver, assignmentId } = await approveAndClaim();
+    await pickupOrder(order.id, driver, assignmentId);
+    await h.orders.cancelByDashboard(adminIdentity, order.id, "إلغاء بعد الاستلام");
+    const res = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: adminToken,
+      }),
+    );
+    const body = (await res.json()) as {
+      status: string;
+      returnWorkflow: { status: string } | null;
+    };
+    expect(body.status).toBe("CANCELLED");
+    expect(body.returnWorkflow?.status).toBe("WAITING_FOR_DRIVER_RETURN");
+  });
+
+  test("dashboard GET ops returns open INITIAL and DRIVER_REPLACEMENT rounds", async () => {
+    const searching = await h.orders.create(customer, city, createBody());
+    await h.orders.approve(
+      merchantIdentity,
+      searching.id,
+      { kind: "MERCHANT", storeId: store },
+      crypto.randomUUID(),
+    );
+    const initial = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${searching.id}/ops`, {
+        token: adminToken,
+      }),
+    );
+    const initialBody = (await initial.json()) as {
+      openOfferRound: { roundKind: string; status: string } | null;
+      handoff: unknown;
+    };
+    expect(initialBody.openOfferRound).toMatchObject({
+      status: "OPEN",
+      roundKind: "INITIAL",
+    });
+    expect(initialBody.handoff).toBeNull();
+
+    const { order, driver, assignmentId } = await approveAndClaim();
+    await pickupOrder(order.id, driver, assignmentId);
+    await h.orderOps.reofferAfterPickup(adminIdentity, order.id, {
+      reason: "بحث عن بديل",
+      idempotencyKey: crypto.randomUUID(),
+    });
+    const replacement = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: adminToken,
+      }),
+    );
+    const replacementBody = (await replacement.json()) as {
+      openOfferRound: { roundKind: string } | null;
+      handoff: unknown;
+    };
+    expect(replacementBody.openOfferRound?.roundKind).toBe("DRIVER_REPLACEMENT");
+    expect(replacementBody.handoff).toBeNull();
+  });
+
+  test("dashboard GET ops is city-scoped, blocks SUPER_ADMIN, and requires only orders.read", async () => {
+    const { order, driver } = await approveAndClaim();
+    const cross = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: otherCityAdminToken,
+      }),
+    );
+    expect(cross.status).toBe(404);
+    expect(((await cross.json()) as { error: { code: string } }).error.code).toBe(
+      "ORDER_NOT_FOUND",
+    );
+
+    const superRes = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: superToken,
+      }),
+    );
+    expect(superRes.status).toBe(403);
+
+    const readRes = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: opsReadToken,
+      }),
+    );
+    expect(readRes.status).toBe(200);
+
+    const noPerm = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}/ops`, {
+        token: opsNoPermToken,
+      }),
+    );
+    expect(noPerm.status).toBe(403);
+
+    const detail = await h.app.handle(
+      jsonRequest(`/api/v1/dashboard/orders/${order.id}`, {
+        token: adminToken,
+      }),
+    );
+    expect(detail.status).toBe(200);
+    const detailBody = (await detail.json()) as { items: unknown };
+    expect(detailBody.items).toBeTruthy();
+
+    const driverOps = await h.app.handle(
+      jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/ops`, {
+        token: driver.token,
+      }),
+    );
+    expect(driverOps.status).toBe(200);
+    const otherDriver = await freshDriver();
+    const otherOps = await h.app.handle(
+      jsonRequest(`/api/v1/mobile/driver/orders/${order.id}/ops`, {
+        token: otherDriver.token,
+      }),
+    );
+    expect(otherOps.status).toBe(404);
   });
 });
