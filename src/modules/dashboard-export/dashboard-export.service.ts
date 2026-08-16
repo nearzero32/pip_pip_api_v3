@@ -725,10 +725,12 @@ export class DashboardExportService {
       "subcategories.export",
     );
     const search = query.search?.trim() || null;
-    const status = query.status?.trim() || null;
+    const status = parseOptionalAllowlisted(
+      query.status,
+      ["ACTIVE", "INACTIVE", "ARCHIVED"] as const,
+      "status",
+    );
     const mainCategoryId = query.mainCategoryId?.trim() || null;
-    if (status && !["ACTIVE", "INACTIVE", "ARCHIVED"].includes(status))
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     if (mainCategoryId) {
       const [parent] = await this.client<{ id: string }[]>`
         select id::text from main_categories where id = ${mainCategoryId} and city_id = ${cityId}`;
