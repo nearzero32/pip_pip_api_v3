@@ -59,6 +59,13 @@ export const dashboardListQuery = {
   ),
 };
 
+/** Excel export query: same search/sort as the list, without pagination. */
+export const dashboardExportQuery = {
+  search: dashboardListQuery.search,
+  sortBy: dashboardListQuery.sortBy,
+  sortOrder: dashboardListQuery.sortOrder,
+};
+
 export const dashboardPaginationSchema = t.Object({
   page: t.Integer({ minimum: 1 }),
   limit: t.Integer({ minimum: 1 }),

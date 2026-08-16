@@ -687,13 +687,61 @@ export class StoreService {
     )) as { total: string }[];
 
     const data = [];
+    const storeIds = rows.map((row) => row.id);
+    const zoneMap = new Map<string, string[]>();
+    const subcategoryMap = new Map<string, string[]>();
+    const hoursMap = new Map<string, WorkingHourPeriod[]>();
+    if (storeIds.length > 0) {
+      const zoneRows = await this.client<{ store_id: string; zone_id: string }[]>`
+        select store_id::text as store_id, zone_id::text as zone_id
+        from store_zones where store_id in ${this.client(storeIds)}
+        order by store_id, zone_id`;
+      for (const row of zoneRows) {
+        const list = zoneMap.get(row.store_id) ?? [];
+        list.push(row.zone_id);
+        zoneMap.set(row.store_id, list);
+      }
+      const subcategoryRows = await this.client<{ store_id: string; subcategory_id: string }[]>`
+        select store_id::text as store_id, subcategory_id::text as subcategory_id
+        from store_subcategories where store_id in ${this.client(storeIds)}
+        order by store_id, subcategory_id`;
+      for (const row of subcategoryRows) {
+        const list = subcategoryMap.get(row.store_id) ?? [];
+        list.push(row.subcategory_id);
+        subcategoryMap.set(row.store_id, list);
+      }
+      const hourRows = await this.client<{
+        store_id: string;
+        day_of_week: Weekday;
+        opens_at: string;
+        closes_at: string;
+      }[]>`
+        select store_id::text as store_id,
+               day_of_week::text as day_of_week,
+               to_char(opens_at, 'HH24:MI') as opens_at,
+               to_char(closes_at, 'HH24:MI') as closes_at
+        from store_working_hours
+        where store_id in ${this.client(storeIds)}
+        order by store_id, day_of_week, opens_at`;
+      for (const row of hourRows) {
+        const list = hoursMap.get(row.store_id) ?? [];
+        list.push({
+          dayOfWeek: row.day_of_week,
+          opensAt: row.opens_at,
+          closesAt: row.closes_at,
+        });
+        hoursMap.set(row.store_id, list);
+      }
+    }
     for (const row of rows) {
-      const [zoneIds, subcategoryIds, hours] = await Promise.all([
-        this.loadZoneIds(row.id),
-        this.loadSubcategoryIds(row.id),
-        this.loadHours(row.id),
-      ]);
-      data.push(this.storeDto(row, zoneIds, subcategoryIds, hours));
+      data.push(
+        this.storeDto(
+          row,
+          zoneMap.get(row.id) ?? [],
+          subcategoryMap.get(row.id) ?? [],
+          hoursMap.get(row.id) ?? [],
+        ),
+      );
     }
     return dashboardListResult(data, page, limit, Number(count?.total ?? 0));
   }

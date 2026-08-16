@@ -267,7 +267,7 @@ export const HANDOFF_LIST_WHERE_SQL = `
   and ($2::uuid is null or h.order_id = $2::uuid)
   and ($3::uuid is null or h.from_driver_id = $3::uuid)
   and ($4::uuid is null or h.to_driver_id = $4::uuid)
-  and ($5::text is null or h.status = $5::text)
+  and ($5::text is null or h.status::text = $5::text)
   and ($6::timestamptz is null or h.created_at >= $6::timestamptz)
   and ($7::timestamptz is null or h.created_at <= $7::timestamptz)
   and (
@@ -324,7 +324,7 @@ export const RETURN_LIST_WHERE_SQL = `
   o.city_id = $1::uuid
   and ($2::uuid is null or w.order_id = $2::uuid)
   and ($3::uuid is null or w.driver_id = $3::uuid)
-  and ($4::text is null or w.status = $4::text)
+  and ($4::text is null or w.status::text = $4::text)
   and ($5::timestamptz is null or w.created_at >= $5::timestamptz)
   and ($6::timestamptz is null or w.created_at <= $6::timestamptz)
   and (

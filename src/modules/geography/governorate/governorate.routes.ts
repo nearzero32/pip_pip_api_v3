@@ -56,8 +56,13 @@ export const governorateRoutes = (
     .get(
       "/api/v1/dashboard/governorates",
       async ({ request, set, query }) => {
-        await authIdentity(auth, request, dashboardContext, requestIdOf(set));
-        return service.list(query);
+        const identity = await authIdentity(
+          auth,
+          request,
+          dashboardContext,
+          requestIdOf(set),
+        );
+        return service.list(identity, query);
       },
       {
         query: t.Object(

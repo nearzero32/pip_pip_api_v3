@@ -14,6 +14,10 @@ import {
   dashboardListResult,
   dashboardPageOf,
   likeContains,
+  parseAllowlistedSort,
+  parseOptionalSearch,
+  parseSortOrder,
+  sqlDir,
 } from "../dashboard-lists/query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
@@ -268,12 +272,14 @@ export class MainCategoryService {
       status?: string;
       page?: number;
       limit?: number;
+      sortBy?: string;
+      sortOrder?: string;
     },
   ) {
     const cityId = await this.authorize(identity, "main_categories.read");
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const searchRaw = input.search?.trim() || null;
+    const searchRaw = parseOptionalSearch(input.search);
     const search = searchRaw ? likeContains(searchRaw) : null;
     const status = input.status?.trim() || null;
     if (
@@ -284,6 +290,20 @@ export class MainCategoryService {
     ) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["displayOrder", "name", "createdAt"] as const,
+      "displayOrder",
+    );
+    const sortOrder = parseSortOrder(
+      input.sortOrder,
+      sortBy === "displayOrder" || sortBy === "name" ? "asc" : "desc",
+    );
+    const orderSql = {
+      displayOrder: `c.display_order ${sqlDir(sortOrder)}, c.created_at asc, c.id asc`,
+      name: `c.name ${sqlDir(sortOrder)}, c.id ${sqlDir(sortOrder)}`,
+      createdAt: `c.created_at ${sqlDir(sortOrder)}, c.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
 
     const rows = (await this.client.unsafe(
       `select ${CATEGORY_SELECT}
@@ -293,7 +313,7 @@ export class MainCategoryService {
          and ($2::text is null or c.status = $2::main_category_status)
          and ($2::text is not null or c.status <> 'ARCHIVED')
          and ($3::text is null or c.name ilike $3 escape '\\')
-       order by c.display_order asc, c.created_at asc, c.id asc
+       order by ${orderSql}
        limit $4::int offset $5::int`,
       [cityId, status, search, limit, offset],
     )) as CategoryRow[];

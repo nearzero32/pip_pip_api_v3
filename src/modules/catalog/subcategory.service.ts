@@ -14,6 +14,10 @@ import {
   dashboardListResult,
   dashboardPageOf,
   likeContains,
+  parseAllowlistedSort,
+  parseOptionalSearch,
+  parseSortOrder,
+  sqlDir,
 } from "../dashboard-lists/query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
@@ -353,12 +357,14 @@ export class SubcategoryService {
       status?: string;
       page?: number;
       limit?: number;
+      sortBy?: string;
+      sortOrder?: string;
     },
   ) {
     const cityId = await this.authorize(identity, "subcategories.read");
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const searchRaw = input.search?.trim() || null;
+    const searchRaw = parseOptionalSearch(input.search);
     const search = searchRaw ? likeContains(searchRaw) : null;
     const status = input.status?.trim() || null;
     const mainCategoryId = input.mainCategoryId?.trim() || null;
@@ -382,6 +388,20 @@ export class SubcategoryService {
         );
       }
     }
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["displayOrder", "name", "createdAt"] as const,
+      "displayOrder",
+    );
+    const sortOrder = parseSortOrder(
+      input.sortOrder,
+      sortBy === "displayOrder" || sortBy === "name" ? "asc" : "desc",
+    );
+    const orderSql = {
+      displayOrder: `s.main_category_id asc, s.display_order ${sqlDir(sortOrder)}, s.created_at asc, s.id asc`,
+      name: `s.name ${sqlDir(sortOrder)}, s.id ${sqlDir(sortOrder)}`,
+      createdAt: `s.created_at ${sqlDir(sortOrder)}, s.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
 
     const rows = (await this.client.unsafe(
       `select ${SUBCATEGORY_SELECT}
@@ -393,7 +413,7 @@ export class SubcategoryService {
          and ($3::text is null or s.status = $3::main_category_status)
          and ($3::text is not null or s.status <> 'ARCHIVED')
          and ($4::text is null or s.name ilike $4 escape '\\')
-       order by s.main_category_id asc, s.display_order asc, s.created_at asc, s.id asc
+       order by ${orderSql}
        limit $5::int offset $6::int`,
       [cityId, mainCategoryId, status, search, limit, offset],
     )) as SubcategoryRow[];

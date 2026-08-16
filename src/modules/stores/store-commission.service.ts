@@ -13,6 +13,11 @@ import { dateValue } from "../geography/shared";
 import {
   dashboardListResult,
   dashboardPageOf,
+  likeContains,
+  parseAllowlistedSort,
+  parseOptionalSearch,
+  parseSortOrder,
+  sqlDir,
 } from "../dashboard-lists/query";
 import {
   COMMISSION_STORE_WHERE_SQL,
@@ -168,7 +173,13 @@ export class StoreCommissionService {
   async listHistory(
     identity: AuthIdentity,
     storeId: string,
-    input: { page?: number; limit?: number },
+    input: {
+      search?: string;
+      page?: number;
+      limit?: number;
+      sortBy?: string;
+      sortOrder?: string;
+    },
   ) {
     const cityId = await requireCityPermission(
       this.client,
@@ -180,8 +191,20 @@ export class StoreCommissionService {
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
-    const rows = await this.client<Record<string, unknown>[]>`
-      select h.id::text, h.store_id::text, s.name as store_name,
+    const search = parseOptionalSearch(input.search);
+    const pattern = search ? likeContains(search) : null;
+    const sortBy = parseAllowlistedSort(
+      input.sortBy,
+      ["changedAt", "newRate"] as const,
+      "changedAt",
+    );
+    const sortOrder = parseSortOrder(input.sortOrder, "desc");
+    const orderSql = {
+      changedAt: `h.changed_at ${sqlDir(sortOrder)}, h.id ${sqlDir(sortOrder)}`,
+      newRate: `h.new_rate ${sqlDir(sortOrder)}, h.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
+    const rows = (await this.client.unsafe(
+      `select h.id::text, h.store_id::text, s.name as store_name,
              h.city_id::text, h.previous_rate, h.new_rate, h.reason, h.note,
              h.changed_by_account_id::text, e.email_normalized as changed_by_email,
              h.changed_at
@@ -189,13 +212,27 @@ export class StoreCommissionService {
       join stores s on s.id = h.store_id and s.city_id = h.city_id
       left join account_emails e
         on e.account_id = h.changed_by_account_id and e.is_primary = true
-      where h.store_id = ${storeId} and h.city_id = ${cityId}
-      order by h.changed_at desc, h.id desc
-      limit ${limit} offset ${offset}`;
-    const [count] = await this.client<{ total: string }[]>`
-      select count(*)::text as total
-      from store_commission_rate_history
-      where store_id = ${storeId} and city_id = ${cityId}`;
+      where h.store_id = $1::uuid and h.city_id = $2::uuid
+        and (
+          $3::text is null
+          or h.reason ilike $3 escape '\\'
+          or coalesce(h.note, '') ilike $3 escape '\\'
+        )
+      order by ${orderSql}
+      limit $4::int offset $5::int`,
+      [storeId, cityId, pattern, limit, offset],
+    )) as Record<string, unknown>[];
+    const [count] = (await this.client.unsafe(
+      `select count(*)::text as total
+      from store_commission_rate_history h
+      where h.store_id = $1::uuid and h.city_id = $2::uuid
+        and (
+          $3::text is null
+          or h.reason ilike $3 escape '\\'
+          or coalesce(h.note, '') ilike $3 escape '\\'
+        )`,
+      [storeId, cityId, pattern],
+    )) as { total: string }[];
     return dashboardListResult(
       rows.map((row) => ({
         id: String(row.id),

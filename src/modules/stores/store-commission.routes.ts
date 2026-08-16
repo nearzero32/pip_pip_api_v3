@@ -82,7 +82,6 @@ export const storeCommissionRoutes = (
         query: t.Object(
           {
             ...dashboardListQuery,
-            search: t.Optional(t.String({ maxLength: 200 })),
             status: t.Optional(
               t.Union([
                 t.Literal("DRAFT"),
@@ -91,6 +90,10 @@ export const storeCommissionRoutes = (
                 t.Literal("ARCHIVED"),
               ]),
             ),
+            commissionRateMin: t.Optional(t.Integer({ minimum: 0, maximum: 100 })),
+            commissionRateMax: t.Optional(t.Integer({ minimum: 0, maximum: 100 })),
+            createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
+            createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
           },
           { additionalProperties: false },
         ),

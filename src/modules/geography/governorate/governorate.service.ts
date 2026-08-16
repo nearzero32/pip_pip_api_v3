@@ -38,7 +38,9 @@ export class GovernorateService {
     this.sessions.requireSuperAdmin(identity);
   }
 
-  async list(input: {
+  async list(
+    identity: AuthIdentity,
+    input: {
     search?: string;
     status?: string;
     page?: number;
@@ -47,7 +49,9 @@ export class GovernorateService {
     createdTo?: string;
     sortBy?: string;
     sortOrder?: string;
-  }) {
+  },
+  ) {
+    this.superAdmin(identity);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const search = parseOptionalSearch(input.search);

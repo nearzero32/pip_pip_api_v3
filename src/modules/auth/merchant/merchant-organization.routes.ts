@@ -126,13 +126,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
             dashboardContext,
             requestIdOf(set),
           ),
-          {
-            ...(query.status ? { status: query.status } : {}),
-            ...(query.storeId ? { storeId: query.storeId } : {}),
-            ...(query.search ? { search: query.search } : {}),
-            ...(query.page !== undefined ? { page: query.page } : {}),
-            ...(query.limit !== undefined ? { limit: query.limit } : {}),
-          },
+          query,
         ),
       {
         query: t.Object(

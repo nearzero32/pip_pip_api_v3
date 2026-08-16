@@ -47,4 +47,19 @@ describe("dashboard list query primitives", () => {
       parseOptionalDateRange({ from: "2026-08-16", to: "2026-08-01" }),
     ).toThrow(AppError);
   });
+
+  test("offset date-times are respected and midnight boundaries stay inclusive", () => {
+    const offset = parseOptionalDateRange({
+      from: "2026-08-01T00:00:00.000+03:00",
+      to: "2026-08-01T00:00:00.000+03:00",
+    });
+    expect(offset.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
+    expect(offset.to?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
+    const utc = parseOptionalDateRange({
+      from: "2026-07-31T21:00:00.000Z",
+      to: "2026-08-01T20:59:59.999Z",
+    });
+    expect(utc.from?.toISOString()).toBe("2026-07-31T21:00:00.000Z");
+    expect(utc.to?.toISOString()).toBe("2026-08-01T20:59:59.999Z");
+  });
 });
