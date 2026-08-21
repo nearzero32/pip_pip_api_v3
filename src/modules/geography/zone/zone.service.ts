@@ -184,7 +184,16 @@ export class ZoneService {
   private async authorizeOperationalCity(
     identity: AuthIdentity,
     permission: "zones.read" | "zones.create" | "zones.update" | "zones.archive",
+    requestedCityId?: string,
   ): Promise<string> {
+    if (identity.roles.includes("SUPER_ADMIN")) {
+      if (!requestedCityId)
+        throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
+      await assertActiveCity(this.client, requestedCityId);
+      return requestedCityId;
+    }
+    if (requestedCityId)
+      throw new AppError(403, "FORBIDDEN", "City selection is restricted");
     const cityId = await requireCityPermission(
       this.client,
       identity,
@@ -195,14 +204,12 @@ export class ZoneService {
   }
 
   async create(identity: AuthIdentity, body: unknown) {
-    const cityId = await this.authorizeOperationalCity(identity, "zones.create");
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
     }
     const input = body as Record<string, unknown>;
-    if ("cityId" in input) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
+    const cityId = await this.authorizeOperationalCity(identity, "zones.create", typeof input.cityId === "string" ? input.cityId : undefined);
+    if ("cityId" in input && !identity.roles.includes("SUPER_ADMIN")) throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     const name = clean(String(input.name ?? ""), "name");
     if (!input.boundary) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
@@ -244,6 +251,7 @@ export class ZoneService {
     identity: AuthIdentity,
     input: {
       status?: string;
+      cityId?: string;
       search?: string;
       page?: number;
       limit?: number;
@@ -253,7 +261,7 @@ export class ZoneService {
       createdTo?: string;
     },
   ) {
-    const cityId = await this.authorizeOperationalCity(identity, "zones.read");
+    const cityId = await this.authorizeOperationalCity(identity, "zones.read", input.cityId);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const search = parseOptionalSearch(input.search);
@@ -313,15 +321,15 @@ export class ZoneService {
     );
   }
 
-  async get(identity: AuthIdentity, zoneId: string) {
-    const cityId = await this.authorizeOperationalCity(identity, "zones.read");
+  async get(identity: AuthIdentity, zoneId: string, requestedCityId?: string) {
+    const cityId = await this.authorizeOperationalCity(identity, "zones.read", requestedCityId);
     const row = await fetchZone(this.client, zoneId, cityId);
     if (!row) throw new AppError(404, "ZONE_NOT_FOUND", "Zone not found");
     return zoneDto(row);
   }
 
-  async update(identity: AuthIdentity, zoneId: string, body: unknown) {
-    const cityId = await this.authorizeOperationalCity(identity, "zones.update");
+  async update(identity: AuthIdentity, zoneId: string, body: unknown, requestedCityId?: string) {
+    const cityId = await this.authorizeOperationalCity(identity, "zones.update", requestedCityId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
     }
@@ -396,10 +404,9 @@ export class ZoneService {
     });
   }
 
-  async archive(identity: AuthIdentity, zoneId: string) {
+  async archive(identity: AuthIdentity, zoneId: string, requestedCityId?: string) {
     const cityId = await this.authorizeOperationalCity(
-      identity,
-      "zones.archive",
+      identity, "zones.archive", requestedCityId,
     );
     return beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
