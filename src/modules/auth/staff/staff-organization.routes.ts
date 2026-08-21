@@ -26,6 +26,7 @@ const permissionLiteral = t.String({ minLength: 1, maxLength: 80 });
 
 const adminCreateKeys = new Set(["email", "password", "cityId", "displayName"]);
 const adminPatchKeys = new Set(["displayName", "cityId", "status"]);
+const adminPasswordKeys = new Set(["password"]);
 const employeeCreateKeys = new Set(["email", "password", "role", "displayName"]);
 const employeePatchKeys = new Set(["displayName", "status"]);
 const permissionGrantKeys = new Set(["permission"]);
@@ -78,6 +79,11 @@ const parseStaffBody = async (context: {
     allowed = adminCreateKeys;
   } else if (method === "PATCH" && /\/dashboard\/admins\/[^/]+$/.test(path)) {
     allowed = adminPatchKeys;
+  } else if (
+    method === "POST" &&
+    /\/dashboard\/admins\/[^/]+\/password$/.test(path)
+  ) {
+    allowed = adminPasswordKeys;
   } else if (method === "POST" && path.endsWith("/dashboard/employees")) {
     allowed = employeeCreateKeys;
   } else if (method === "PATCH" && /\/dashboard\/employees\/[^/]+$/.test(path)) {
@@ -316,6 +322,41 @@ export const staffOrganizationRoutes = (auth: AuthModule) =>
         detail: {
           tags: ["Dashboard — Staff"],
           security: [{ bearerAuth: [] }],
+        },
+      },
+    )
+    .post(
+      "/api/v1/dashboard/admins/:adminId/password",
+      async ({ request, set, params, body }) =>
+        auth.staff.resetAdminPassword(
+          await auth.sessions.authenticate(
+            bearer(request),
+            dashboardContext,
+            requestIdOf(set),
+          ),
+          params.adminId,
+          body.password,
+        ),
+      {
+        params: t.Object(
+          { adminId: t.String({ format: "uuid" }) },
+          { additionalProperties: false },
+        ),
+        parse: "json",
+        body: t.Object(
+          {
+            password: t.String({ minLength: 12, maxLength: 128 }),
+          },
+          { additionalProperties: false },
+        ),
+        response: {
+          200: t.Object({ reset: t.Literal(true) }),
+          ...staffErrors,
+        },
+        detail: {
+          tags: ["Dashboard — Staff"],
+          security: [{ bearerAuth: [] }],
+          summary: "SUPER_ADMIN city admin password reset (revokes Dashboard sessions)",
         },
       },
     )

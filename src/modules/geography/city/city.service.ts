@@ -1,5 +1,6 @@
 import type { SQL } from "bun";
 import { AppError } from "../../../errors/app-error";
+import { parseGeoJsonPolygonal, type GeoJsonPolygonal } from "../geometry";
 import type {
   AuthIdentity,
   SessionService,
@@ -55,7 +56,7 @@ const governorateSummary = (row: Record<string, unknown>) => ({
   status: row.governorate_status,
 });
 
-export const cityDto = (row: Record<string, unknown>): any => ({
+export const cityListDto = (row: Record<string, unknown>): any => ({
   id: row.id,
   governorateId: row.governorate_id,
   nameAr: row.name_ar,
@@ -67,8 +68,17 @@ export const cityDto = (row: Record<string, unknown>): any => ({
   createdAt: dateValue(row.created_at),
   updatedAt: dateValue(row.updated_at),
   archivedAt: dateValue(row.archived_at),
+  hasBoundary: Boolean(row.has_boundary),
   governorate: governorateSummary(row),
 });
+
+export const cityDetailDto = (row: Record<string, unknown>): any => ({
+  ...cityListDto(row),
+  boundary: row.boundary_geojson ? JSON.parse(String(row.boundary_geojson)) : null,
+});
+
+const CITY_COLUMNS = `c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,(c.boundary is not null) has_boundary,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status`;
+const CITY_DETAIL_COLUMNS = `${CITY_COLUMNS},ST_AsGeoJSON(c.boundary)::text boundary_geojson`;
 
 /** Pre-login selection DTO: no administrative or internal fields. */
 export const publicCityDto = (row: Record<string, unknown>): any => ({
@@ -136,7 +146,7 @@ export class CityService {
       createdAt: `c.created_at ${sqlDir(sortOrder)}, c.id ${sqlDir(sortOrder)}`,
     }[sortBy];
     const rows = await this.client.unsafe(
-      `select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status
+      `select ${CITY_COLUMNS}
        from cities c join governorates g on g.id=c.governorate_id
        where ($1::uuid is null or c.governorate_id=$1)
          and ($2::text is null or c.status=$2::city_status)
@@ -157,7 +167,7 @@ export class CityService {
       [input.governorateId ?? null, input.status ?? null, pattern, created.from, created.to],
     )) as { total: string }[];
     return dashboardListResult(
-      (rows as Record<string, unknown>[]).map((row) => cityDto(row)),
+      (rows as Record<string, unknown>[]).map((row) => cityListDto(row)),
       page,
       limit,
       Number(count?.total ?? 0),
@@ -187,9 +197,9 @@ export class CityService {
 
   async get(id: string) {
     const [row] = await this
-      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where c.id=${id}`;
+      .client.unsafe(`select ${CITY_DETAIL_COLUMNS} from cities c join governorates g on g.id=c.governorate_id where c.id=$1::uuid`, [id]);
     if (!row) throw new AppError(404, "CITY_NOT_FOUND", "City not found");
-    return cityDto(row as Record<string, unknown>);
+    return cityDetailDto(row as Record<string, unknown>);
   }
 
   async create(
@@ -201,6 +211,7 @@ export class CityService {
       latitude: number;
       longitude: number;
       displayOrder: number;
+      boundary: unknown;
     },
   ) {
     this.superAdmin(identity);
@@ -211,9 +222,17 @@ export class CityService {
     );
     const nameAr = clean(input.nameAr, "Arabic name"),
       nameEn = clean(input.nameEn, "English name");
+    const boundary = this.parseCityBoundary(input.boundary);
     try {
+      const geojson = JSON.stringify(boundary);
+      const [valid] = await this.client<{ valid: boolean; covered: boolean }[]>`
+        select ST_IsValid(g) and not ST_IsEmpty(g) and GeometryType(g)='MULTIPOLYGON' and ST_SRID(g)=4326 valid,
+          ST_Covers(g,ST_SetSRID(ST_MakePoint(${input.longitude},${input.latitude}),4326)) covered
+        from (select ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geojson}),4326)) g) x`;
+      if (!valid?.valid) throw new AppError(400, "INVALID_CITY_BOUNDARY", "City boundary is invalid");
+      if (!valid.covered) throw new AppError(422, "CITY_CENTER_OUTSIDE_BOUNDARY", "City center is outside the boundary");
       const [row] = await this
-        .client`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,status,display_order,archived_at) values(${input.governorateId},${nameAr},${nameEn},${input.latitude},${input.longitude},'DRAFT',${input.displayOrder},null) returning *`;
+        .client`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,boundary,status,display_order,archived_at) values(${input.governorateId},${nameAr},${nameEn},${input.latitude},${input.longitude},ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geojson}),4326)),'DRAFT',${input.displayOrder},null) returning *`;
       return this.get(String((row as Record<string, unknown>).id));
     } catch (error) {
       if (isCityGovernorateForeignKeyViolation(error))
@@ -232,6 +251,7 @@ export class CityService {
       latitude?: number;
       longitude?: number;
       displayOrder?: number;
+      boundary?: unknown;
     },
   ) {
     this.superAdmin(identity);
@@ -258,9 +278,28 @@ export class CityService {
       input.nameAr === undefined ? null : clean(input.nameAr, "Arabic name");
     const nameEn =
       input.nameEn === undefined ? null : clean(input.nameEn, "English name");
+    if ("boundary" in input && input.boundary === null)
+      throw new AppError(422, "INVALID_CITY_BOUNDARY", "City boundary cannot be null");
+    const boundary = input.boundary === undefined ? null : this.parseCityBoundary(input.boundary);
+    const boundaryJson = boundary ? JSON.stringify(boundary) : null;
 
     return beginWithGeographyRetry(this.client, async (tx) => {
       try {
+        // Reassignment acquires both governorate locks before the City lock.
+        // Do not pre-lock the City in that path or we would violate the shared order.
+        if (input.governorateId === undefined) await lockCityGeography(tx, id);
+        const [current] = await tx<{ latitude: string; longitude: string; boundary_geojson: string | null }[]>`select latitude::text latitude,longitude::text longitude,ST_AsGeoJSON(boundary)::text boundary_geojson from cities where id=${id} for update`;
+        if (!current) throw new AppError(404, "CITY_NOT_FOUND_OR_ARCHIVED", "City not found or archived");
+        const candidate = boundaryJson ?? current.boundary_geojson;
+        if (candidate) {
+          const [check] = await tx<{ valid: boolean; covered: boolean }[]>`select ST_IsValid(g) and not ST_IsEmpty(g) and GeometryType(g)='MULTIPOLYGON' and ST_SRID(g)=4326 valid,ST_Covers(g,ST_SetSRID(ST_MakePoint(${input.longitude ?? Number(current.longitude)},${input.latitude ?? Number(current.latitude)}),4326)) covered from (select ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${candidate}),4326)) g) x`;
+          if (!check?.valid) throw new AppError(400, "INVALID_CITY_BOUNDARY", "City boundary is invalid");
+          if (!check.covered) throw new AppError(422, "CITY_CENTER_OUTSIDE_BOUNDARY", "City center is outside the boundary");
+          if (boundaryJson) {
+            const [outside] = await tx<{ count: string }[]>`select count(*)::text count from zones where city_id=${id} and status <> 'ARCHIVED' and not ST_Covers(ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${boundaryJson}),4326)),boundary)`;
+            if (Number(outside?.count ?? 0)) throw new AppError(409, "CITY_BOUNDARY_EXCLUDES_ZONES", "City boundary excludes zones", undefined, undefined, { outsideZonesCount: Number(outside!.count) });
+          }
+        }
         if (input.governorateId !== undefined) {
           const { before } = await lockCityReassignment(
             tx,
@@ -288,6 +327,7 @@ export class CityService {
               latitude = coalesce(${input.latitude ?? null}, latitude),
               longitude = coalesce(${input.longitude ?? null}, longitude),
               display_order = coalesce(${input.displayOrder ?? null}, display_order),
+              boundary = coalesce(ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${boundaryJson}),4326)), boundary),
               updated_at = now()
             where id = ${id} and status <> 'ARCHIVED'
             returning id`;
@@ -315,6 +355,7 @@ export class CityService {
               latitude = coalesce(${input.latitude ?? null}, latitude),
               longitude = coalesce(${input.longitude ?? null}, longitude),
               display_order = coalesce(${input.displayOrder ?? null}, display_order),
+              boundary = coalesce(ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${boundaryJson}),4326)), boundary),
               updated_at = now()
             where id = ${id} and status <> 'ARCHIVED'
             returning id`;
@@ -332,9 +373,8 @@ export class CityService {
         throw error;
       }
 
-      const [full] =
-        await tx`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where c.id=${id}`;
-      return cityDto(full as Record<string, unknown>);
+      const [full] = await tx.unsafe(`select ${CITY_DETAIL_COLUMNS} from cities c join governorates g on g.id=c.governorate_id where c.id=$1::uuid`, [id]);
+      return cityDetailDto(full as Record<string, unknown>);
     });
   }
 
@@ -358,6 +398,12 @@ export class CityService {
       );
   }
 
+  private parseCityBoundary(value: unknown): GeoJsonPolygonal {
+    if (value === undefined || value === null)
+      throw new AppError(422, "CITY_BOUNDARY_REQUIRED", "City boundary is required");
+    return parseGeoJsonPolygonal(value, "INVALID_CITY_BOUNDARY");
+  }
+
   async transition(
     identity: AuthIdentity,
     id: string,
@@ -378,6 +424,10 @@ export class CityService {
           "INVALID_CITY_STATUS_TRANSITION",
           "Invalid city status transition",
         );
+      if (target === "ACTIVE") {
+        const [boundary] = await tx<{ exists: boolean }[]>`select boundary is not null exists from cities where id=${id}`;
+        if (!boundary?.exists) throw new AppError(409, "CITY_BOUNDARY_REQUIRED", "City boundary is required before activation");
+      }
       const [row] =
         await tx`update cities set status=${target}::city_status,archived_at=${target === "ARCHIVED" ? new Date() : null},updated_at=now() where id=${id} returning *`;
       const becameUnavailable =
@@ -391,9 +441,8 @@ export class CityService {
           "CITY_UNAVAILABLE",
         );
       }
-      const [full] =
-        await tx`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status from cities c join governorates g on g.id=c.governorate_id where c.id=${String((row as Record<string, unknown>).id)}`;
-      return cityDto(full as Record<string, unknown>);
+      const [full] = await tx.unsafe(`select ${CITY_DETAIL_COLUMNS} from cities c join governorates g on g.id=c.governorate_id where c.id=$1::uuid`, [String((row as Record<string, unknown>).id)]);
+      return cityDetailDto(full as Record<string, unknown>);
     });
   }
 }

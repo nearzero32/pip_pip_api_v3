@@ -167,7 +167,7 @@ describe("API foundation", () => {
     expect(document.paths["/api/v1/mobile/driver/cities"]).toBeUndefined();
     expect(document.paths["/api/v1/public/governorates"]).toBeUndefined();
     const geographyText=JSON.stringify(Object.fromEntries(Object.entries(document.paths).filter(([path])=>path.includes("governorates")||path.includes("/cities")).map(([path,operations])=>[path,Object.fromEntries(Object.entries(operations as Record<string,unknown>).map(([method,operation])=>[method,{requestBody:(operation as {requestBody?:unknown}).requestBody,parameters:(operation as {parameters?:unknown}).parameters}]))])));
-    for(const field of ["code","slug","isVisible","isDisplay","boundary","polygon","geometry","zoneId"]) expect(geographyText.includes(`\"${field}\"`)).toBeFalse();
+    for(const field of ["code","slug","isVisible","isDisplay","polygon","geometry","zoneId"]) expect(geographyText.includes(`\"${field}\"`)).toBeFalse();
   });
 
   test("M3-A OpenAPI contracts are typed without Any and document endpoint-specific errors", async () => {

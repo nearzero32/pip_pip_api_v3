@@ -293,6 +293,33 @@ export class StaffOrganizationService {
     });
   }
 
+  async resetAdminPassword(identity: AuthIdentity, adminId: string, password: string) {
+    requireSuperAdmin(identity);
+    if (password.length < 12)
+      throw new AppError(422, "VALIDATION_FAILED", "Invalid password");
+    const hash = await this.password.hash(password);
+    return this.client.begin(async (tx) => {
+      const [current] = await tx<{ account_id: string }[]>`
+        select a.id as account_id
+        from staff_profiles sp
+        join accounts a on a.id = sp.account_id
+        join account_roles ar on ar.account_id = a.id and ar.revoked_at is null
+        join roles r on r.id = ar.role_id and r.code = 'ADMIN'
+        where a.id = ${adminId} and sp.managed_by_account_id is null
+        for update of sp`;
+      if (!current) throw new AppError(404, "ADMIN_NOT_FOUND", "Admin not found");
+      await tx`
+        insert into password_credentials (account_id, argon2id_hash)
+        values (${adminId}, ${hash})
+        on conflict (account_id) do update set
+          argon2id_hash = excluded.argon2id_hash,
+          password_changed_at = now(),
+          updated_at = now()`;
+      await this.revokeAccounts(tx, [adminId], "ADMIN_PASSWORD_RESET");
+      return { reset: true as const };
+    });
+  }
+
   async createEmployee(
     identity: AuthIdentity,
     input: {

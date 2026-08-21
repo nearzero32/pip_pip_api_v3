@@ -21,11 +21,7 @@ import {
   parseSortOrder,
   sqlDir,
 } from "../../dashboard-lists/query";
-import {
-  parseCoordinate,
-  parseGeoJsonPolygon,
-  type GeoJsonPolygon,
-} from "./geometry";
+import { parseCoordinate, parseGeoJsonPolygon, type GeoJsonPolygon } from "../geometry";
 
 type ZoneStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -96,21 +92,31 @@ const fetchZone = async (
 const buildValidatedGeometry = async (tx: SQL, polygon: GeoJsonPolygon) => {
   const geojson = JSON.stringify(polygon);
   const [row] = await tx<{
-    is_valid: boolean;
+    is_valid: boolean; is_empty: boolean;
     geom_type: string;
     srid: number;
   }[]>`
     select
       ST_IsValid(g.geom) as is_valid,
+      ST_IsEmpty(g.geom) as is_empty,
       GeometryType(g.geom) as geom_type,
       ST_SRID(g.geom)::int as srid
     from (
       select ST_SetSRID(ST_GeomFromGeoJSON(${geojson}), 4326) as geom
     ) g`;
-  if (!row || !row.is_valid || row.geom_type !== "POLYGON" || row.srid !== 4326) {
+  if (!row || !row.is_valid || row.is_empty || row.geom_type !== "POLYGON" || row.srid !== 4326) {
     throw new AppError(400, "INVALID_ZONE_BOUNDARY", "Zone boundary is invalid");
   }
   return geojson;
+};
+
+const assertInsideCityBoundary = async (tx: SQL, cityId: string, geojson: string) => {
+  const [city] = await tx<{ boundary: string | null }[]>`select ST_AsGeoJSON(boundary)::text boundary from cities where id=${cityId}`;
+  if (!city?.boundary) throw new AppError(409, "CITY_BOUNDARY_REQUIRED", "City boundary is required");
+  const [covered] = await tx<{ covered: boolean }[]>`
+    select ST_Covers(c.boundary, ST_SetSRID(ST_GeomFromGeoJSON(${geojson}),4326)) covered
+    from cities c where c.id=${cityId}`;
+  if (!covered?.covered) throw new AppError(409, "ZONE_OUTSIDE_CITY_BOUNDARY", "Zone boundary is outside the city boundary");
 };
 
 /**
@@ -208,6 +214,7 @@ export class ZoneService {
       assertCityOperability(state);
       await lockZoneOverlap(tx, cityId);
       const geojson = await buildValidatedGeometry(tx, polygon);
+      await assertInsideCityBoundary(tx, cityId, geojson);
       await assertNoPositiveAreaOverlap(tx, cityId, geojson, null);
       let insertedId: string;
       try {
@@ -355,6 +362,7 @@ export class ZoneService {
       let geojson: string | null = null;
       if (polygon) {
         geojson = await buildValidatedGeometry(tx, polygon);
+        await assertInsideCityBoundary(tx, cityId, geojson);
         await assertNoPositiveAreaOverlap(tx, cityId, geojson, zoneId);
       }
 

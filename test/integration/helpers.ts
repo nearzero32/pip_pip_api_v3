@@ -412,8 +412,8 @@ export async function createActiveCity(
 ) {
   const [city] = await client<
     { id: string }[]
-  >`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,status,display_order)
-    values(${seededGovernorateId},${nameEn},${nameEn},33.3,44.4,'ACTIVE',1) returning id`;
+  >`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,boundary,status,display_order)
+    values(${seededGovernorateId},${nameEn},${nameEn},33.3,44.4,ST_GeomFromText('MULTIPOLYGON(((0 0,179 0,179 89,0 89,0 0)))',4326),'ACTIVE',1) returning id`;
   return city!.id;
 }
 

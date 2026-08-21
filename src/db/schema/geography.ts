@@ -19,6 +19,10 @@ const polygon4326 = customType<{ data: string; driverData: string }>({
     return "geometry(Polygon,4326)";
   },
 });
+/** PostGIS geometry(MultiPolygon, 4326). */
+export const multiPolygon4326 = customType<{ data: string; driverData: string }>({
+  dataType() { return "geometry(MultiPolygon,4326)"; },
+});
 
 export const governorates = pgTable("governorates", {
   id: uuid("id").primaryKey(),
@@ -41,6 +45,7 @@ export const cities = pgTable("cities", {
   nameEn: text("name_en").notNull(),
   latitude: numeric("latitude", { precision: 9, scale: 6 }).notNull(),
   longitude: numeric("longitude", { precision: 9, scale: 6 }).notNull(),
+  boundary: multiPolygon4326("boundary"),
   status: cityStatus("status").notNull().default("DRAFT"),
   displayOrder: integer("display_order").notNull().default(0),
   createdAt: instant("created_at").notNull().defaultNow(),
@@ -49,6 +54,7 @@ export const cities = pgTable("cities", {
 }, (table) => [
   index("cities_governorate_status_order_idx").on(table.governorateId, table.status, table.displayOrder, table.nameEn),
   index("cities_status_order_idx").on(table.status, table.displayOrder, table.nameEn),
+  index("cities_boundary_gix").using("gist", table.boundary),
   check("cities_display_order_nonnegative_chk", sql`${table.displayOrder} >= 0`),
   check("cities_coordinates_chk", sql`${table.latitude} between -90 and 90 and ${table.longitude} between -180 and 180`),
   check("cities_names_nonempty_chk", sql`length(btrim(${table.nameAr})) > 0 and length(btrim(${table.nameEn})) > 0`),

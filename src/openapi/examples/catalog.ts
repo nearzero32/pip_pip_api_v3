@@ -8,6 +8,7 @@ export const geographyExamples = {
     latitude: SAMPLE.baghdadLat,
     longitude: SAMPLE.baghdadLng,
     displayOrder: 1,
+    boundary: { type: "Polygon", coordinates: [[[44.3,33.2],[44.5,33.2],[44.5,33.4],[44.3,33.4],[44.3,33.2]]] },
   },
   cityPatch: {
     nameAr: "بغداد",
@@ -15,6 +16,7 @@ export const geographyExamples = {
     latitude: SAMPLE.baghdadLat,
     longitude: SAMPLE.baghdadLng,
     displayOrder: 1,
+    boundary: { type: "Polygon", coordinates: [[[44.3,33.2],[44.5,33.2],[44.5,33.4],[44.3,33.4],[44.3,33.2]]] },
   },
   governoratePatch: { status: "ACTIVE" },
   zoneCreate: {

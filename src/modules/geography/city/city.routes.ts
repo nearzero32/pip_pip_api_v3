@@ -30,7 +30,10 @@ const govSummary = t.Object({
   nameEn: t.String(),
   status: t.Union([t.Literal("ACTIVE"), t.Literal("INACTIVE")]),
 });
-const cityDto = t.Object({
+const geoJsonPolygon = t.Object({ type: t.Literal("Polygon"), coordinates: t.Array(t.Array(t.Tuple([t.Number({ minimum: -180, maximum: 180 }), t.Number({ minimum: -90, maximum: 90 })]), { minItems: 4 }), { minItems: 1 }) }, { additionalProperties: false });
+const geoJsonMultiPolygon = t.Object({ type: t.Literal("MultiPolygon"), coordinates: t.Array(t.Array(t.Array(t.Tuple([t.Number({ minimum: -180, maximum: 180 }), t.Number({ minimum: -90, maximum: 90 })]), { minItems: 4 }), { minItems: 1 }), { minItems: 1 }) }, { additionalProperties: false });
+const cityBoundaryInput = t.Union([geoJsonPolygon, geoJsonMultiPolygon]);
+const cityListDto = t.Object({
   id: t.String({ format: "uuid" }),
   governorateId: t.String({ format: "uuid" }),
   nameAr: t.String(),
@@ -47,8 +50,10 @@ const cityDto = t.Object({
   createdAt: dateSchema,
   updatedAt: dateSchema,
   archivedAt: t.Nullable(dateSchema),
+  hasBoundary: t.Boolean(),
   governorate: govSummary,
 });
+const cityDetailDto = t.Intersect([cityListDto, t.Object({ boundary: t.Nullable(geoJsonMultiPolygon) })]);
 const publicGov = t.Object({
   id: t.String({ format: "uuid" }),
   nameAr: t.String(),
@@ -62,7 +67,7 @@ const publicCity = t.Object({
   longitude: t.Union([t.Number(), t.Null()]),
   governorate: publicGov,
 });
-const cityResponse = dashboardPaginated(cityDto);
+const cityResponse = dashboardPaginated(cityListDto);
 const publicCityResponse = paginated(publicCity);
 const cityCreateErrors = { ...standardErrors, 403: errorResponse };
 const cityTransitionErrors = {
@@ -86,6 +91,7 @@ const cityBodyKeys = new Set([
   "latitude",
   "longitude",
   "displayOrder",
+  "boundary",
 ]);
 
 const parseCityBody = async (context: {
@@ -125,12 +131,13 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
               latitude: t.Number({ minimum: -90, maximum: 90 }),
               longitude: t.Number({ minimum: -180, maximum: 180 }),
               displayOrder: t.Integer({ minimum: 0 }),
+              boundary: cityBoundaryInput,
             },
             { additionalProperties: false },
           ),
           geographyExamples.cityCreate,
         ),
-        response: { 200: cityDto, ...cityCreateErrors },
+        response: { 200: cityDetailDto, ...cityCreateErrors },
         detail: {
           tags: ["Dashboard — Cities"],
           security: [{ bearerAuth: [] }],
@@ -186,7 +193,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
       },
       {
         params: cityIdParam,
-        response: { 200: cityDto, ...dashboardDetailErrors },
+        response: { 200: cityDetailDto, ...dashboardDetailErrors },
         detail: {
           tags: ["Dashboard — Cities"],
           security: [{ bearerAuth: [] }],
@@ -212,10 +219,11 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
             latitude: t.Optional(t.Number({ minimum: -90, maximum: 90 })),
             longitude: t.Optional(t.Number({ minimum: -180, maximum: 180 })),
             displayOrder: t.Optional(t.Integer({ minimum: 0 })),
+            boundary: t.Optional(cityBoundaryInput),
           },
           { additionalProperties: false, minProperties: 1 },
         ),
-        response: { 200: cityDto, ...dashboardMutationErrors },
+        response: { 200: cityDetailDto, ...dashboardMutationErrors },
         detail: {
           tags: ["Dashboard — Cities"],
           security: [{ bearerAuth: [] }],
@@ -232,7 +240,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
         ),
       {
         params: cityIdParam,
-        response: { 200: cityDto, ...cityTransitionErrors },
+        response: { 200: cityDetailDto, ...cityTransitionErrors },
         detail: {
           tags: ["Dashboard — Cities"],
           security: [{ bearerAuth: [] }],
@@ -249,7 +257,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
         ),
       {
         params: cityIdParam,
-        response: { 200: cityDto, ...cityTransitionErrors },
+        response: { 200: cityDetailDto, ...cityTransitionErrors },
         detail: {
           tags: ["Dashboard — Cities"],
           security: [{ bearerAuth: [] }],
@@ -266,7 +274,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
         ),
       {
         params: cityIdParam,
-        response: { 200: cityDto, ...cityTransitionErrors },
+        response: { 200: cityDetailDto, ...cityTransitionErrors },
         detail: {
           tags: ["Dashboard — Cities"],
           security: [{ bearerAuth: [] }],
