@@ -1,10 +1,8 @@
 import type { SQL } from "bun";
 import { AppError } from "../../../errors/app-error";
-import { requireCityPermission } from "../../auth/staff/authorization";
-import { assertActiveCity } from "../../auth/staff/dashboard-scope";
+import { requireSuperAdmin } from "../../auth/staff/authorization";
 import type { AuthIdentity } from "../../auth/sessions/session-service";
 import {
-  assertCityOperability,
   beginWithGeographyRetry,
   lockCityGeography,
   lockZoneOverlap,
@@ -34,6 +32,9 @@ type ZoneRow = {
   created_at: Date | string;
   updated_at: Date | string;
   archived_at: Date | string | null;
+  created_by_account_id: string | null;
+  updated_by_account_id: string | null;
+  archived_by_account_id: string | null;
 };
 
 const ZONE_COLUMNS = `z.id::text as id,
@@ -43,7 +44,10 @@ const ZONE_COLUMNS = `z.id::text as id,
   z.status::text as status,
   z.created_at,
   z.updated_at,
-  z.archived_at`;
+  z.archived_at,
+  z.created_by_account_id::text as created_by_account_id,
+  z.updated_by_account_id::text as updated_by_account_id,
+  z.archived_by_account_id::text as archived_by_account_id`;
 
 const parseBoundaryDto = (geojson: string): GeoJsonPolygon => {
   try {
@@ -63,6 +67,9 @@ export const zoneDto = (row: ZoneRow): any => ({
   createdAt: dateValue(row.created_at),
   updatedAt: dateValue(row.updated_at),
   archivedAt: dateValue(row.archived_at),
+  createdByAccountId: row.created_by_account_id,
+  updatedByAccountId: row.updated_by_account_id,
+  archivedByAccountId: row.archived_by_account_id,
 });
 
 export const publicZoneDto = (row: ZoneRow): any => ({
@@ -174,6 +181,26 @@ const isUniqueNameViolation = (error: unknown): boolean => {
   );
 };
 
+const writeZoneAudit = async (
+  tx: SQL,
+  identity: AuthIdentity,
+  requestId: string,
+  event: "ZONE_CREATED" | "ZONE_UPDATED" | "ZONE_ARCHIVED",
+  cityId: string,
+  zoneId: string,
+  changedFields: string[],
+) => {
+  await tx`
+    insert into audit_logs (
+      event_type, actor_account_id, actor_session_id, target_type, target_id,
+      outcome, request_correlation_id, redacted_metadata
+    ) values (
+      ${event}, ${identity.accountId}, ${identity.sessionId}, 'zone', ${zoneId},
+      'SUCCESS', ${requestId},
+      ${JSON.stringify({ targetCityId: cityId, zoneId, changedFields, boundaryChanged: changedFields.includes("boundary") })}::jsonb
+    )`;
+};
+
 export class ZoneService {
   constructor(private client: SQL) {}
 
@@ -181,35 +208,21 @@ export class ZoneService {
    * Early rejection only — authoritative operability is re-checked under
    * geography locks inside the mutation transaction.
    */
-  private async authorizeOperationalCity(
-    identity: AuthIdentity,
-    permission: "zones.read" | "zones.create" | "zones.update" | "zones.archive",
-    requestedCityId?: string,
-  ): Promise<string> {
-    if (identity.roles.includes("SUPER_ADMIN")) {
-      if (!requestedCityId)
-        throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
-      await assertActiveCity(this.client, requestedCityId);
-      return requestedCityId;
-    }
-    if (requestedCityId)
-      throw new AppError(403, "FORBIDDEN", "City selection is restricted");
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      permission,
-    );
-    await assertActiveCity(this.client, cityId);
+  private async requireTargetCity(identity: AuthIdentity, cityId?: string): Promise<string> {
+    requireSuperAdmin(identity);
+    if (!cityId) throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
+    const [city] = await this.client<{ status: string }[]>`select status::text status from cities where id=${cityId}`;
+    if (!city) throw new AppError(404, "CITY_NOT_FOUND", "City not found");
+    if (city.status === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
     return cityId;
   }
 
-  async create(identity: AuthIdentity, body: unknown) {
+  async create(identity: AuthIdentity, requestedCityId: string, body: unknown, requestId: string) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
     }
     const input = body as Record<string, unknown>;
-    const cityId = await this.authorizeOperationalCity(identity, "zones.create", typeof input.cityId === "string" ? input.cityId : undefined);
-    if ("cityId" in input && !identity.roles.includes("SUPER_ADMIN")) throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    const cityId = await this.requireTargetCity(identity, requestedCityId);
     const name = clean(String(input.name ?? ""), "name");
     if (!input.boundary) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
@@ -218,7 +231,7 @@ export class ZoneService {
 
     return beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
-      assertCityOperability(state);
+      if (state.cityStatus === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
       await lockZoneOverlap(tx, cityId);
       const geojson = await buildValidatedGeometry(tx, polygon);
       await assertInsideCityBoundary(tx, cityId, geojson);
@@ -226,12 +239,12 @@ export class ZoneService {
       let insertedId: string;
       try {
         const [inserted] = await tx<{ id: string }[]>`
-          insert into zones (city_id, name, boundary, status)
+          insert into zones (city_id, name, boundary, status, created_by_account_id, updated_by_account_id)
           values (
             ${cityId},
             ${name},
             ST_SetSRID(ST_GeomFromGeoJSON(${geojson}), 4326),
-            'ACTIVE'
+            'ACTIVE', ${identity.accountId}, ${identity.accountId}
           )
           returning id::text as id`;
         insertedId = inserted!.id;
@@ -241,6 +254,7 @@ export class ZoneService {
         }
         throw error;
       }
+      await writeZoneAudit(tx, identity, requestId, "ZONE_CREATED", cityId, insertedId, ["name", "boundary", "status"]);
       const row = await fetchZone(tx, insertedId, cityId);
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Zone create failed");
       return zoneDto(row);
@@ -261,7 +275,7 @@ export class ZoneService {
       createdTo?: string;
     },
   ) {
-    const cityId = await this.authorizeOperationalCity(identity, "zones.read", input.cityId);
+    const cityId = await this.requireTargetCity(identity, input.cityId);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const search = parseOptionalSearch(input.search);
@@ -322,14 +336,14 @@ export class ZoneService {
   }
 
   async get(identity: AuthIdentity, zoneId: string, requestedCityId?: string) {
-    const cityId = await this.authorizeOperationalCity(identity, "zones.read", requestedCityId);
+    const cityId = await this.requireTargetCity(identity, requestedCityId);
     const row = await fetchZone(this.client, zoneId, cityId);
     if (!row) throw new AppError(404, "ZONE_NOT_FOUND", "Zone not found");
     return zoneDto(row);
   }
 
-  async update(identity: AuthIdentity, zoneId: string, body: unknown, requestedCityId?: string) {
-    const cityId = await this.authorizeOperationalCity(identity, "zones.update", requestedCityId);
+  async update(identity: AuthIdentity, zoneId: string, body: unknown, requestedCityId: string | undefined, requestId: string) {
+    const cityId = await this.requireTargetCity(identity, requestedCityId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
     }
@@ -355,7 +369,7 @@ export class ZoneService {
 
     return beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
-      assertCityOperability(state);
+      if (state.cityStatus === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
       await lockZoneOverlap(tx, cityId);
       const [existing] = await tx<{ id: string; status: string }[]>`
         select id::text as id, status::text as status
@@ -381,6 +395,7 @@ export class ZoneService {
               name = coalesce(${name}, name),
               status = coalesce(${status}::zone_status, status),
               boundary = ST_SetSRID(ST_GeomFromGeoJSON(${geojson}), 4326),
+              updated_by_account_id = ${identity.accountId},
               updated_at = now()
             where id = ${zoneId} and city_id = ${cityId}`;
         } else {
@@ -388,6 +403,7 @@ export class ZoneService {
             update zones set
               name = coalesce(${name}, name),
               status = coalesce(${status}::zone_status, status),
+              updated_by_account_id = ${identity.accountId},
               updated_at = now()
             where id = ${zoneId} and city_id = ${cityId}`;
         }
@@ -398,19 +414,22 @@ export class ZoneService {
         throw error;
       }
 
+      await writeZoneAudit(
+        tx, identity, requestId, "ZONE_UPDATED", cityId, zoneId,
+        [hasName ? "name" : null, hasStatus ? "status" : null, hasBoundary ? "boundary" : null].filter((field): field is string => field !== null),
+      );
+
       const row = await fetchZone(tx, zoneId, cityId);
       if (!row) throw new AppError(404, "ZONE_NOT_FOUND", "Zone not found");
       return zoneDto(row);
     });
   }
 
-  async archive(identity: AuthIdentity, zoneId: string, requestedCityId?: string) {
-    const cityId = await this.authorizeOperationalCity(
-      identity, "zones.archive", requestedCityId,
-    );
+  async archive(identity: AuthIdentity, zoneId: string, requestedCityId: string | undefined, requestId: string) {
+    const cityId = await this.requireTargetCity(identity, requestedCityId);
     return beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
-      assertCityOperability(state);
+      if (state.cityStatus === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
       await lockZoneOverlap(tx, cityId);
       const [existing] = await tx<{ id: string; status: string }[]>`
         select id::text as id, status::text as status
@@ -423,8 +442,11 @@ export class ZoneService {
           update zones set
             status = 'ARCHIVED',
             archived_at = now(),
+            archived_by_account_id = ${identity.accountId},
+            updated_by_account_id = ${identity.accountId},
             updated_at = now()
           where id = ${zoneId} and city_id = ${cityId}`;
+        await writeZoneAudit(tx, identity, requestId, "ZONE_ARCHIVED", cityId, zoneId, ["status", "archivedAt"]);
       }
       const row = await fetchZone(tx, zoneId, cityId);
       return zoneDto(row!);

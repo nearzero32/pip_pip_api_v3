@@ -5,6 +5,7 @@ import {
   requireCityAdmin,
   requireCityPermission,
   requireCityReadAndExport,
+  requireSuperAdmin,
   requireSuperAdminExport,
 } from "../auth/staff/authorization";
 import {
@@ -133,6 +134,19 @@ export class DashboardExportService {
         out[key] = value;
     }
     return out;
+  }
+
+  /** Dashboard Zone exports are global-admin operations with an explicit target. */
+  private async requireZoneTargetCity(identity: AuthIdentity, cityId?: string) {
+    requireSuperAdmin(identity);
+    if (!cityId) throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
+    const [city] = await this.client<{ status: string }[]>`
+      select status::text as status from cities where id = ${cityId}`;
+    if (!city) throw new AppError(404, "CITY_NOT_FOUND", "City not found");
+    if (city.status === "ARCHIVED") {
+      throw new AppError(409, "CITY_ARCHIVED", "City is archived");
+    }
+    return cityId;
   }
 
   private async file(
@@ -313,27 +327,41 @@ export class DashboardExportService {
 
   async zones(
     identity: AuthIdentity,
-    query: { search?: string; status?: string },
+    query: {
+      cityId?: string; search?: string; status?: string;
+      createdFrom?: string; createdTo?: string; sortBy?: string; sortOrder?: string;
+    },
     requestId: string,
   ) {
-    const cityId = await requireCityReadAndExport(
-      this.client,
-      identity,
-      "zones.read",
-      "zones.export",
-    );
-    const search = query.search?.trim() || null;
+    const cityId = await this.requireZoneTargetCity(identity, query.cityId);
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
     const status = parseOptionalAllowlisted(
       query.status,
       ["ACTIVE", "INACTIVE", "ARCHIVED"] as const,
       "status",
     );
+    const created = parseOptionalDateRange({
+      from: query.createdFrom, to: query.createdTo,
+      fromField: "createdFrom", toField: "createdTo",
+    });
+    const sortBy = parseAllowlistedSort(
+      query.sortBy, ["name", "status", "createdAt"] as const, "name",
+    );
+    const sortOrder = parseSortOrder(query.sortOrder, sortBy === "name" ? "asc" : "desc");
+    const orderSql = {
+      name: `z.name ${sqlDir(sortOrder)}, z.id ${sqlDir(sortOrder)}`,
+      status: `z.status ${sqlDir(sortOrder)}, z.name asc, z.id asc`,
+      createdAt: `z.created_at ${sqlDir(sortOrder)}, z.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from zones z
        where z.city_id = $1::uuid
          and ($2::text is null or z.status = $2::zone_status)
-         and ($3::text is null or z.name ilike ('%' || $3 || '%'))`,
-      [cityId, status, search],
+         and ($3::text is null or z.name ilike $3 escape '\\')
+         and ($4::timestamptz is null or z.created_at >= $4::timestamptz)
+         and ($5::timestamptz is null or z.created_at < $5::timestamptz)`,
+      [cityId, status, pattern, created.from, created.to],
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
@@ -341,18 +369,20 @@ export class DashboardExportService {
        from zones z
        where z.city_id = $1::uuid
          and ($2::text is null or z.status = $2::zone_status)
-         and ($3::text is null or z.name ilike ('%' || $3 || '%'))
-       order by z.name asc, z.id asc`,
-      [cityId, status, search],
+         and ($3::text is null or z.name ilike $3 escape '\\')
+         and ($4::timestamptz is null or z.created_at >= $4::timestamptz)
+         and ($5::timestamptz is null or z.created_at < $5::timestamptz)
+       order by ${orderSql}`,
+      [cityId, status, pattern, created.from, created.to],
     )) as Record<string, unknown>[];
     return this.file(
       identity,
       {
         resource: "zones",
         endpoint: "/api/v1/dashboard/zones/export",
-        permission: "zones.export",
+        permission: "SUPER_ADMIN",
         filename: "zones.xlsx",
-        filters: { search, status },
+        filters: { search, status, createdFrom: query.createdFrom ?? null, createdTo: query.createdTo ?? null, sortBy, sortOrder },
         cityId: cityId,
       },
       "المناطق",

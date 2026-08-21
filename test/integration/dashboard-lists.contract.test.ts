@@ -82,7 +82,8 @@ describe("dashboard list closure inventory", () => {
     for (const ep of DASHBOARD_LIST_ENDPOINTS) {
       const path = resolve(ep.pathTemplate);
       const token = tokenOf(ep);
-      const ok = await getJson(path, token);
+      const target = ep.scope === "SUPER_ADMIN_EXPLICIT_CITY" ? { cityId: cityA } : {};
+      const ok = await getJson(`${path}${qs(target)}`, token);
       expect(ok.status, `${ep.id} default`).toBe(200);
       const page = ok.body as Page;
       expect(Array.isArray(page.data), `${ep.id} data`).toBe(true);
@@ -95,45 +96,45 @@ describe("dashboard list closure inventory", () => {
       const ids = page.data.map((row) => String(row[ep.idField] ?? ""));
       expect(new Set(ids).size, `${ep.id} duplicates`).toBe(ids.length);
 
-      const far = await getJson(`${path}${qs({ page: 9999 })}`, token);
+      const far = await getJson(`${path}${qs({ ...target, page: 9999 })}`, token);
       expect(far.status, `${ep.id} far page`).toBe(200);
       expect((far.body as Page).data).toEqual([]);
 
       for (const bad of ["page=0", "limit=0", "limit=101"]) {
-        const res = await getJson(`${path}?${bad}`, token);
+        const res = await getJson(`${path}${qs({ ...target })}${Object.keys(target).length ? "&" : "?"}${bad}`, token);
         expect(res.status, `${ep.id} ${bad}`).toBe(422);
       }
 
-      const hit = await getJson(`${path}${qs({ search: ep.searchHit })}`, token);
+      const hit = await getJson(`${path}${qs({ ...target, search: ep.searchHit })}`, token);
       expect(hit.status, `${ep.id} search`).toBe(200);
       expect((hit.body as Page).pagination.total, `${ep.id} search hit`).toBeGreaterThan(0);
 
-      const miss = await getJson(`${path}${qs({ search: "NO-SUCH-TERM-ZZZ" })}`, token);
+      const miss = await getJson(`${path}${qs({ ...target, search: "NO-SUCH-TERM-ZZZ" })}`, token);
       expect(miss.status).toBe(200);
       expect((miss.body as Page).pagination.total, `${ep.id} search miss`).toBe(0);
 
-      const percent = await getJson(`${path}${qs({ search: "%" })}`, token);
+      const percent = await getJson(`${path}${qs({ ...target, search: "%" })}`, token);
       expect(percent.status, `${ep.id} wildcard percent`).toBe(200);
       expect((percent.body as Page).pagination.total, `${ep.id} percent is literal`).toBe(0);
-      const backslash = await getJson(`${path}${qs({ search: "\\\\" })}`, token);
+      const backslash = await getJson(`${path}${qs({ ...target, search: "\\\\" })}`, token);
       expect(backslash.status).toBe(200);
       expect((backslash.body as Page).pagination.total, `${ep.id} backslash is literal`).toBe(0);
 
       const sortOk = await getJson(
-        `${path}${qs({ sortBy: ep.sortAllowlist[0], sortOrder: "asc" })}`,
+        `${path}${qs({ ...target, sortBy: ep.sortAllowlist[0], sortOrder: "asc" })}`,
         token,
       );
       expect(sortOk.status, `${ep.id} sort allowlist`).toBe(200);
-      const sortBad = await getJson(`${path}${qs({ sortBy: "password" })}`, token);
+      const sortBad = await getJson(`${path}${qs({ ...target, sortBy: "password" })}`, token);
       expect(sortBad.status, `${ep.id} invalid sort`).toBe(422);
 
       const reverseField = ep.sortAllowlist.find((f) => f === "createdAt") ?? ep.sortAllowlist[0]!;
       const asc = await getJson(
-        `${path}${qs({ sortBy: reverseField, sortOrder: "asc", limit: 25 })}`,
+        `${path}${qs({ ...target, sortBy: reverseField, sortOrder: "asc", limit: 25 })}`,
         token,
       );
       const desc = await getJson(
-        `${path}${qs({ sortBy: reverseField, sortOrder: "desc", limit: 25 })}`,
+        `${path}${qs({ ...target, sortBy: reverseField, sortOrder: "desc", limit: 25 })}`,
         token,
       );
       expect(asc.status).toBe(200);
@@ -144,19 +145,19 @@ describe("dashboard list closure inventory", () => {
         expect(ascIds, `${ep.id} asc/desc`).not.toEqual(descIds);
       }
       const again = await getJson(
-        `${path}${qs({ sortBy: reverseField, sortOrder: "asc", limit: 25 })}`,
+        `${path}${qs({ ...target, sortBy: reverseField, sortOrder: "asc", limit: 25 })}`,
         token,
       );
       expect((again.body as Page).data.map((row) => String(row[ep.idField]))).toEqual(ascIds);
 
       const andKeys = Object.keys(ep.andFilters);
       if (andKeys.length >= 1) {
-        const filtered = await getJson(`${path}${qs(ep.andFilters)}`, token);
+        const filtered = await getJson(`${path}${qs({ ...target, ...ep.andFilters })}`, token);
         expect(filtered.status, `${ep.id} resource filter`).toBe(200);
         expect((filtered.body as Page).pagination.total, `${ep.id} AND/filter`).toBeGreaterThan(0);
       }
 
-      const denied = await getJson(path, employeeToken);
+      const denied = await getJson(`${path}${qs(target)}`, employeeToken);
       expect(denied.status, `${ep.id} permission`).toBe(403);
 
       if (ep.scope === "CITY") {
@@ -172,6 +173,12 @@ describe("dashboard list closure inventory", () => {
         }
       } else {
         expect(denied.status, `${ep.id} city employee global`).toBe(403);
+        if (ep.scope === "SUPER_ADMIN_EXPLICIT_CITY") {
+          const missing = await getJson(path, superToken);
+          expect(missing.status, `${ep.id} cityId required`).toBe(422);
+          const adminDenied = await getJson(`${path}${qs(target)}`, adminToken);
+          expect(adminDenied.status, `${ep.id} admin denied`).toBe(403);
+        }
       }
     }
   }, 180_000);

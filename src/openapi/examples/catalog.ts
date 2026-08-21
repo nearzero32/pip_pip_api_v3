@@ -20,6 +20,7 @@ export const geographyExamples = {
   },
   governoratePatch: { status: "ACTIVE" },
   zoneCreate: {
+    cityId: "11111111-1111-4111-8111-000000000001",
     name: "Karrada",
     boundary: {
       type: "Polygon",

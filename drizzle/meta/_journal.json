@@ -288,6 +288,20 @@
       "when": 1786540000000,
       "tag": "0040_city_geographic_boundary",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786540000001,
+      "tag": "0041_revoke_zone_permission_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1786540000002,
+      "tag": "0042_zone_actor_attribution",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import type { AuthModule } from "../auth/auth-module";
+import { errorResponse } from "../auth/http/shared";
 import { dashboardContext } from "../auth/core/context";
 import { authIdentity, requestIdOf } from "../geography/shared";
 import {
@@ -137,8 +138,14 @@ export const dashboardExportRoutes = (
     )
     .get("/api/v1/dashboard/zones/export", async ({ request, set, query }) =>
       service.zones(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { query: eq({ status: opt(), createdFrom: opt(), createdTo: opt() }),
-        detail: detail("Export zones", "Requires zones.read and zones.export.") },
+      { query: eq({ cityId: t.String({ format: "uuid" }), status: opt(), createdFrom: opt(), createdTo: opt() }),
+        response: { 200: t.Any(), 401: errorResponse, 403: errorResponse, 404: errorResponse, 409: errorResponse, 422: errorResponse },
+        detail: {
+          tags: ["Dashboard — Exports"],
+          summary: "Export Zones for an explicitly targeted City",
+          description: "SUPER_ADMIN only. cityId query is required; it supports the same search, status, date, and sort filters as the Zone list. page and limit are not accepted. Dashboard does not use X-City-Id.",
+          security: [{ bearerAuth: [] }],
+        } },
     )
     .get("/api/v1/dashboard/stores/export", async ({ request, set, query }) =>
       service.stores(await identityOf(request, set), query as Query, requestIdOf(set)),

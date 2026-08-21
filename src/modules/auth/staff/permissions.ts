@@ -1,10 +1,5 @@
 /** Grantable City-operational permission codes. */
 export const GRANTABLE_PERMISSION_CODES = [
-  "zones.read",
-  "zones.create",
-  "zones.update",
-  "zones.archive",
-  "zones.export",
   "media.read",
   "media.create",
   "media.delete",

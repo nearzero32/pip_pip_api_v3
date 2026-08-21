@@ -5,6 +5,7 @@
 export const DASHBOARD_LIST_SCOPE = {
   GLOBAL: "GLOBAL",
   CITY: "CITY",
+  SUPER_ADMIN_EXPLICIT_CITY: "SUPER_ADMIN_EXPLICIT_CITY",
 } as const;
 
 export type DashboardListScope =
@@ -15,7 +16,7 @@ export type DashboardListEndpoint = {
   method: "GET";
   pathTemplate: string;
   scope: DashboardListScope;
-  /** Token used for the happy-path contract: super for GLOBAL, admin for CITY. */
+  /** Token used for the happy-path contract. */
   actor: "super" | "admin";
   readPermission: string | "SUPER_ADMIN" | "CITY_ADMIN";
   sortAllowlist: readonly string[];
@@ -68,12 +69,12 @@ export const DASHBOARD_LIST_ENDPOINTS: readonly DashboardListEndpoint[] = [
     id: "zones",
     method: "GET",
     pathTemplate: "/api/v1/dashboard/zones",
-    scope: "CITY",
-    actor: "admin",
-    readPermission: "zones.read",
+    scope: "SUPER_ADMIN_EXPLICIT_CITY",
+    actor: "super",
+    readPermission: "SUPER_ADMIN",
     sortAllowlist: ["name", "status", "createdAt"],
     defaultSortBy: "name",
-    filters: ["status", "createdFrom", "createdTo"],
+    filters: ["cityId", "status", "createdFrom", "createdTo"],
     unimplementedFilters: [],
     exportPathTemplate: "/api/v1/dashboard/zones/export",
     idField: "id",

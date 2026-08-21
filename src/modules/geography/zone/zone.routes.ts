@@ -56,6 +56,9 @@ const zoneDto = t.Object({
   createdAt: dateSchema,
   updatedAt: dateSchema,
   archivedAt: t.Nullable(dateSchema),
+  createdByAccountId: t.Nullable(t.String({ format: "uuid" })),
+  updatedByAccountId: t.Nullable(t.String({ format: "uuid" })),
+  archivedByAccountId: t.Nullable(t.String({ format: "uuid" })),
 });
 
 const publicZoneDto = t.Object({
@@ -112,7 +115,7 @@ const parseZoneBody = async (context: {
   const path = new URL(context.request.url).pathname;
   const method = context.request.method.toUpperCase();
   if (method === "POST" && path.endsWith("/dashboard/zones")) {
-    assertAllowedBodyKeys(body, new Set(["name", "boundary"]));
+    assertAllowedBodyKeys(body, new Set(["cityId", "name", "boundary"]));
   }
   if (method === "PATCH" && /\/dashboard\/zones\/[^/]+$/.test(path)) {
     assertAllowedBodyKeys(body, zoneBodyKeys);
@@ -132,13 +135,16 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
       async ({ request, set, body }) =>
         service.create(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
-          body,
+          (body as { cityId: string }).cityId,
+          (() => { const { cityId: _cityId, ...input } = body as Record<string, unknown>; return input; })(),
+          requestIdOf(set),
         ),
       {
         parse: "json",
         body: document(
           t.Object(
             {
+              cityId: t.String({ format: "uuid" }),
               name: t.String({ minLength: 1, maxLength: 200 }),
               boundary: geoJsonPolygon,
             },
@@ -149,7 +155,8 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
         response: { 200: zoneDto, ...zoneCreateErrors },
         detail: {
           tags: ["Dashboard — Zones"],
-          summary: "Create a Zone in the authenticated City",
+          summary: "Create a Zone in an explicitly targeted City",
+          description: "SUPER_ADMIN only. cityId is required in the body. DRAFT, ACTIVE, and SUSPENDED Cities are allowed; ARCHIVED Cities are rejected.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -164,6 +171,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
       {
         query: t.Object(
           {
+            cityId: t.String({ format: "uuid" }),
             ...dashboardListQuery,
             status: t.Optional(
               t.Union([
@@ -192,41 +200,48 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
         response: { 200: zoneListResponse, ...zoneListErrors },
         detail: {
           tags: ["Dashboard — Zones"],
-          summary: "List Zones for the authenticated City",
+          summary: "List Zones for an explicitly targeted City",
+          description: "SUPER_ADMIN only. cityId is required in the query; Dashboard endpoints do not use X-City-Id.",
           security: [{ bearerAuth: [] }],
         },
       },
     )
     .get(
       "/api/v1/dashboard/zones/:zoneId",
-      async ({ request, set, params }) =>
+      async ({ request, set, params, query }) =>
         service.get(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.zoneId,
+          query.cityId,
         ),
       {
         params: zoneIdParam,
+        query: t.Object({ cityId: t.String({ format: "uuid" }) }, { additionalProperties: false }),
         response: {
           200: zoneDto,
           ...zoneDetailErrors,
         },
         detail: {
           tags: ["Dashboard — Zones"],
-          summary: "Get a Zone in the authenticated City",
+          summary: "Get a Zone in an explicitly targeted City",
+          description: "SUPER_ADMIN only. cityId is required in the query; Zone reassignment is not supported.",
           security: [{ bearerAuth: [] }],
         },
       },
     )
     .patch(
       "/api/v1/dashboard/zones/:zoneId",
-      async ({ request, set, params, body }) =>
+      async ({ request, set, params, body, query }) =>
         service.update(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.zoneId,
           body,
+          query.cityId,
+          requestIdOf(set),
         ),
       {
         params: zoneIdParam,
+        query: t.Object({ cityId: t.String({ format: "uuid" }) }, { additionalProperties: false }),
         parse: "json",
         body: t.Object(
           {
@@ -241,24 +256,28 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
         response: { 200: zoneDto, ...zoneMutationErrors },
         detail: {
           tags: ["Dashboard — Zones"],
-          summary: "Update a Zone in the authenticated City",
+          summary: "Update a Zone in an explicitly targeted City",
+          description: "SUPER_ADMIN only. cityId is required in the query. body.cityId is not accepted and Zone reassignment is not supported.",
           security: [{ bearerAuth: [] }],
         },
       },
     )
     .delete(
       "/api/v1/dashboard/zones/:zoneId",
-      async ({ request, set, params }) =>
+      async ({ request, set, params, query }) =>
         service.archive(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.zoneId,
+          query.cityId,
+          requestIdOf(set),
         ),
       {
         params: zoneIdParam,
+        query: t.Object({ cityId: t.String({ format: "uuid" }) }, { additionalProperties: false }),
         response: { 200: zoneDto, ...zoneMutationErrors },
         detail: {
           tags: ["Dashboard — Zones"],
-          summary: "Soft-archive a Zone in the authenticated City",
+          summary: "Soft-archive a Zone in an explicitly targeted City",
           description:
             "Soft archive only. Idempotent when the Zone is already ARCHIVED.",
           security: [{ bearerAuth: [] }],

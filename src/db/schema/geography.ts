@@ -11,6 +11,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { instant } from "./columns";
+import { accounts } from "./accounts";
 import { cityStatus, governorateStatus, zoneStatus } from "./enums";
 
 /** PostGIS geometry(Polygon, 4326). Values are handled via raw SQL in the Zone service. */
@@ -70,6 +71,10 @@ export const zones = pgTable("zones", {
   createdAt: instant("created_at").notNull().defaultNow(),
   updatedAt: instant("updated_at").notNull().defaultNow(),
   archivedAt: instant("archived_at"),
+  /** Null only for Zones created before actor attribution was introduced. */
+  createdByAccountId: uuid("created_by_account_id").references(() => accounts.id),
+  updatedByAccountId: uuid("updated_by_account_id").references(() => accounts.id),
+  archivedByAccountId: uuid("archived_by_account_id").references(() => accounts.id),
 }, (table) => [
   index("zones_city_status_name_idx").on(table.cityId, table.status, table.name),
   index("zones_city_created_idx").on(table.cityId, table.createdAt, table.id),

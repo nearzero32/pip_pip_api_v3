@@ -99,6 +99,9 @@ describe("dashboard list/export parity", () => {
         sortBy: ep.defaultSortBy,
         sortOrder: "asc",
       };
+      if (ep.scope === "SUPER_ADMIN_EXPLICIT_CITY") {
+        query.cityId = world.cityA;
+      }
       if (ep.id === "store-commission-history") {
         query.storeId = world.storeId;
       }
