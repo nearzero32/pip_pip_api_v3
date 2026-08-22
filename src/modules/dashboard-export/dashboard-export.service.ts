@@ -136,8 +136,8 @@ export class DashboardExportService {
     return out;
   }
 
-  /** Dashboard Zone exports are global-admin operations with an explicit target. */
-  private async requireZoneTargetCity(identity: AuthIdentity, cityId?: string) {
+  /** Global-admin City-scoped exports always require an explicit target. */
+  private async requireExplicitTargetCity(identity: AuthIdentity, cityId?: string) {
     requireSuperAdmin(identity);
     if (!cityId) throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
     const [city] = await this.client<{ status: string }[]>`
@@ -333,7 +333,7 @@ export class DashboardExportService {
     },
     requestId: string,
   ) {
-    const cityId = await this.requireZoneTargetCity(identity, query.cityId);
+    const cityId = await this.requireExplicitTargetCity(identity, query.cityId);
     const search = parseOptionalSearch(query.search);
     const pattern = search ? likeContains(search) : null;
     const status = parseOptionalAllowlisted(
@@ -675,21 +675,37 @@ export class DashboardExportService {
 
   async mainCategories(
     identity: AuthIdentity,
-    query: { search?: string; status?: string },
+    query: {
+      cityId?: string;
+      search?: string;
+      status?: string;
+      sortBy?: string;
+      sortOrder?: string;
+    },
     requestId: string,
   ) {
-    const cityId = await requireCityReadAndExport(
-      this.client,
-      identity,
-      "main_categories.read",
-      "main_categories.export",
-    );
+    await requireSuperAdminExport(this.client, identity, "main_categories.export");
+    const cityId = await this.requireExplicitTargetCity(identity, query.cityId);
     const search = query.search?.trim() || null;
     const status = parseOptionalAllowlisted(
       query.status,
       ["ACTIVE", "INACTIVE", "ARCHIVED"] as const,
       "status",
     );
+    const sortBy = parseAllowlistedSort(
+      query.sortBy,
+      ["displayOrder", "name", "createdAt"] as const,
+      "displayOrder",
+    );
+    const sortOrder = parseSortOrder(
+      query.sortOrder,
+      sortBy === "displayOrder" || sortBy === "name" ? "asc" : "desc",
+    );
+    const orderSql = {
+      displayOrder: `c.display_order ${sqlDir(sortOrder)}, c.created_at asc, c.id asc`,
+      name: `c.name ${sqlDir(sortOrder)}, c.id ${sqlDir(sortOrder)}`,
+      createdAt: `c.created_at ${sqlDir(sortOrder)}, c.id ${sqlDir(sortOrder)}`,
+    }[sortBy];
     const [count] = (await this.client.unsafe(
       `select count(*)::int as total from main_categories c
        where c.city_id = $1::uuid
@@ -700,13 +716,14 @@ export class DashboardExportService {
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
-      `select c.id::text, c.name, c.status::text, c.display_order, c.created_at, c.updated_at
+      `select c.id::text, c.city_id::text, c.name, c.status::text, c.display_order, c.created_at, c.updated_at,
+              c.created_by_account_id::text, c.updated_by_account_id::text, c.archived_by_account_id::text
        from main_categories c
        where c.city_id = $1::uuid
          and ($2::text is null or c.status = $2::main_category_status)
          and ($2::text is not null or c.status <> 'ARCHIVED')
          and ($3::text is null or c.name ilike ('%' || $3 || '%'))
-       order by c.display_order asc, c.created_at asc, c.id asc`,
+       order by ${orderSql}`,
       [cityId, status, search],
     )) as Record<string, unknown>[];
     return this.file(
@@ -716,7 +733,7 @@ export class DashboardExportService {
         endpoint: "/api/v1/dashboard/main-categories/export",
         permission: "main_categories.export",
         filename: "main-categories.xlsx",
-        filters: { search, status },
+        filters: { search, status, sortBy, sortOrder },
         cityId: cityId,
       },
       "التصنيفات الرئيسية",
@@ -725,6 +742,10 @@ export class DashboardExportService {
         { key: "name", header: "الاسم", type: "text", width: 24 },
         { key: "status", header: "الحالة", type: "text" },
         { key: "displayOrder", header: "الترتيب", type: "integer" },
+        { key: "cityId", header: "معرف المدينة", type: "text", width: 38 },
+        { key: "createdByAccountId", header: "منشئ التصنيف", type: "text", width: 38 },
+        { key: "updatedByAccountId", header: "آخر تعديل", type: "text", width: 38 },
+        { key: "archivedByAccountId", header: "أرشفة بواسطة", type: "text", width: 38 },
         {
           key: "createdAt",
           header: "تاريخ الإنشاء",
@@ -737,6 +758,10 @@ export class DashboardExportService {
         name: text(row.name),
         status: text(row.status),
         displayOrder: int(row.display_order),
+        cityId: text(row.city_id),
+        createdByAccountId: text(row.created_by_account_id),
+        updatedByAccountId: text(row.updated_by_account_id),
+        archivedByAccountId: text(row.archived_by_account_id),
         createdAt: iso(row.created_at),
       })),
       requestId,

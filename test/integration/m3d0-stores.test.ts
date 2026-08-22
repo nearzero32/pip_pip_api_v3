@@ -98,12 +98,15 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     purpose: "CATEGORY_IMAGE" | "STORE_LOGO" | "STORE_IMAGE",
     fileName: string,
   ) => {
+    const city = token === adminBToken ? cityB : cityA;
+    const categoryImage = purpose === "CATEGORY_IMAGE";
     const intent = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/media/upload-intents", {
         method: "POST",
-        token,
+        token: categoryImage ? superToken : token,
         body: {
           purpose,
+          ...(categoryImage ? { cityId: city } : {}),
           fileName,
           contentType: "image/png",
           sizeBytes: pngBytes.length,
@@ -112,7 +115,6 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     );
     expect(intent.status).toBe(200);
     const body = (await intent.json()) as { asset: { id: string } };
-    const city = token === adminBToken ? cityB : cityA;
     const objectKey = await harness.media.getObjectKeyForTests(
       body.asset.id,
       city,
@@ -122,9 +124,9 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     expect(
       (
         await harness.app.handle(
-          jsonRequest(`/api/v1/dashboard/media/${body.asset.id}/confirm`, {
+          jsonRequest(`/api/v1/dashboard/media/${body.asset.id}/confirm${categoryImage ? `?cityId=${city}` : ""}`, {
             method: "POST",
-            token,
+            token: categoryImage ? superToken : token,
           }),
         )
       ).status,
@@ -140,8 +142,8 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     const response = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/zones", {
         method: "POST",
-        token,
-        body: { name, boundary },
+        token: superToken,
+        body: { cityId: token === adminBToken ? cityB : cityA, name, boundary },
       }),
     );
     expect(response.status).toBe(200);
@@ -156,8 +158,9 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     const response = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/main-categories", {
         method: "POST",
-        token,
+        token: superToken,
         body: {
+          cityId: token === adminBToken ? cityB : cityA,
           name,
           imageAssetId: await createReadyAsset(
             token,
@@ -273,10 +276,6 @@ describe("M3-D0 Stores, service zones & working hours", () => {
       "media.read",
       "media.create",
       "media.delete",
-      "zones.read",
-      "zones.create",
-      "main_categories.read",
-      "main_categories.create",
       "subcategories.read",
       "subcategories.create",
       "stores.read",
@@ -347,8 +346,6 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     await grant(harness, adminToken, empNo, [
       "media.read",
       "media.create",
-      "zones.read",
-      "main_categories.read",
       "subcategories.read",
     ]);
     const withMedia = (

@@ -35,6 +35,7 @@ describe("dashboard Excel sanitization", () => {
       "cities.export",
       "admins.export",
       "delivery_pricing.versions.export",
+      "main_categories.export",
     ]);
   });
 

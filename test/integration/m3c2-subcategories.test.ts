@@ -72,13 +72,17 @@ describe("M3-C2 Subcategories", () => {
   let parentA2 = "";
   let parentB = "";
 
+  const cityForToken = (token: string) => token === adminBToken ? cityB : cityA;
+
   const createReadyAsset = async (token: string, fileName: string) => {
+    const city = cityForToken(token);
     const intent = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/media/upload-intents", {
         method: "POST",
-        token,
+        token: superToken,
         body: {
           purpose: "CATEGORY_IMAGE",
+          cityId: city,
           fileName,
           contentType: "image/png",
           sizeBytes: pngBytes.length,
@@ -87,7 +91,6 @@ describe("M3-C2 Subcategories", () => {
     );
     expect(intent.status).toBe(200);
     const body = (await intent.json()) as { asset: { id: string } };
-    const city = token === adminBToken ? cityB : cityA;
     const objectKey = await harness.media.getObjectKeyForTests(
       body.asset.id,
       city,
@@ -97,9 +100,9 @@ describe("M3-C2 Subcategories", () => {
     expect(
       (
         await harness.app.handle(
-          jsonRequest(`/api/v1/dashboard/media/${body.asset.id}/confirm`, {
+          jsonRequest(`/api/v1/dashboard/media/${body.asset.id}/confirm?cityId=${city}`, {
             method: "POST",
-            token,
+            token: superToken,
           }),
         )
       ).status,
@@ -116,8 +119,9 @@ describe("M3-C2 Subcategories", () => {
     const response = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/main-categories", {
         method: "POST",
-        token,
+        token: superToken,
         body: {
+          cityId: cityForToken(token),
           name,
           imageAssetId: await createReadyAsset(token, `${name}.png`),
           status,
@@ -180,10 +184,6 @@ describe("M3-C2 Subcategories", () => {
       "media.read",
       "media.create",
       "media.delete",
-      "main_categories.read",
-      "main_categories.create",
-      "main_categories.update",
-      "main_categories.archive",
       "subcategories.read",
       "subcategories.create",
       "subcategories.update",
@@ -314,9 +314,9 @@ describe("M3-C2 Subcategories", () => {
 
     const archivedParent = await createMain(adminToken, "أب مؤرشف", 10);
     await harness.app.handle(
-      jsonRequest(`/api/v1/dashboard/main-categories/${archivedParent}`, {
+      jsonRequest(`/api/v1/dashboard/main-categories/${archivedParent}?cityId=${cityA}`, {
         method: "DELETE",
-        token: adminToken,
+        token: superToken,
       }),
     );
     const underArchived = await createSub(adminToken, {
@@ -391,9 +391,10 @@ describe("M3-C2 Subcategories", () => {
     const pending = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/media/upload-intents", {
         method: "POST",
-        token: adminToken,
+        token: superToken,
         body: {
           purpose: "CATEGORY_IMAGE",
+          cityId: cityA,
           fileName: "pending-sub.png",
           contentType: "image/png",
           sizeBytes: pngBytes.length,
@@ -671,9 +672,9 @@ describe("M3-C2 Subcategories", () => {
 
     const archivedParent = await createMain(adminToken, "هدف مؤرشف", 20);
     await harness.app.handle(
-      jsonRequest(`/api/v1/dashboard/main-categories/${archivedParent}`, {
+      jsonRequest(`/api/v1/dashboard/main-categories/${archivedParent}?cityId=${cityA}`, {
         method: "DELETE",
-        token: adminToken,
+        token: superToken,
       }),
     );
     const moveArchived = await harness.app.handle(
@@ -854,9 +855,9 @@ describe("M3-C2 Subcategories", () => {
     ).image.assetId;
 
     await harness.app.handle(
-      jsonRequest(`/api/v1/dashboard/main-categories/${parent}`, {
+      jsonRequest(`/api/v1/dashboard/main-categories/${parent}?cityId=${cityA}`, {
         method: "PATCH",
-        token: adminToken,
+        token: superToken,
         body: { status: "INACTIVE" },
       }),
     );
@@ -869,9 +870,9 @@ describe("M3-C2 Subcategories", () => {
     expect(inactivePublic.status).toBe(404);
 
     await harness.app.handle(
-      jsonRequest(`/api/v1/dashboard/main-categories/${parent}`, {
+      jsonRequest(`/api/v1/dashboard/main-categories/${parent}?cityId=${cityA}`, {
         method: "PATCH",
-        token: adminToken,
+        token: superToken,
         body: { status: "ACTIVE" },
       }),
     );
@@ -889,9 +890,9 @@ describe("M3-C2 Subcategories", () => {
     ).toBe(true);
 
     await harness.app.handle(
-      jsonRequest(`/api/v1/dashboard/main-categories/${parent}`, {
+      jsonRequest(`/api/v1/dashboard/main-categories/${parent}?cityId=${cityA}`, {
         method: "DELETE",
-        token: adminToken,
+        token: superToken,
       }),
     );
     const [childAfter] = await harness.client<
@@ -936,9 +937,9 @@ describe("M3-C2 Subcategories", () => {
         name: "طفل سباق",
       }),
       harness.app.handle(
-        jsonRequest(`/api/v1/dashboard/main-categories/${raceParent}`, {
+        jsonRequest(`/api/v1/dashboard/main-categories/${raceParent}?cityId=${cityA}`, {
           method: "DELETE",
-          token: adminToken,
+          token: superToken,
         }),
       ),
     ]);

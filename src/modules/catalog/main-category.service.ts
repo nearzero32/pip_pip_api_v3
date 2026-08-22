@@ -32,6 +32,9 @@ type CategoryRow = {
   created_at: Date | string;
   updated_at: Date | string;
   archived_at: Date | string | null;
+  created_by_account_id?: string;
+  updated_by_account_id?: string | null;
+  archived_by_account_id?: string | null;
   asset_object_key: string;
   asset_visibility: "PUBLIC" | "PRIVATE";
   asset_status: string;
@@ -47,6 +50,9 @@ const CATEGORY_SELECT = `
   c.created_at,
   c.updated_at,
   c.archived_at,
+  c.created_by_account_id::text as created_by_account_id,
+  c.updated_by_account_id::text as updated_by_account_id,
+  c.archived_by_account_id::text as archived_by_account_id,
   m.object_key as asset_object_key,
   m.visibility::text as asset_visibility,
   m.status::text as asset_status
@@ -82,6 +88,7 @@ export const mainCategoryDto = (
   publicBaseUrl: string,
 ): any => ({
   id: row.id,
+  cityId: row.city_id,
   name: row.name,
   status: row.status,
   displayOrder: row.display_order,
@@ -89,6 +96,9 @@ export const mainCategoryDto = (
   createdAt: dateValue(row.created_at),
   updatedAt: dateValue(row.updated_at),
   archivedAt: dateValue(row.archived_at),
+  createdByAccountId: row.created_by_account_id ?? null,
+  updatedByAccountId: row.updated_by_account_id ?? null,
+  archivedByAccountId: row.archived_by_account_id ?? null,
 });
 
 export const publicMainCategoryDto = (
@@ -214,13 +224,15 @@ export class MainCategoryService {
         });
         const [inserted] = await tx<{ id: string }[]>`
           insert into main_categories (
-            city_id, name, image_asset_id, status, display_order, created_by_account_id
+            city_id, name, image_asset_id, status, display_order,
+            created_by_account_id, updated_by_account_id
           ) values (
             ${cityId},
             ${name},
             ${imageAssetId},
             ${status}::main_category_status,
             ${displayOrder},
+            ${identity.accountId},
             ${identity.accountId}
           )
           returning id::text as id`;

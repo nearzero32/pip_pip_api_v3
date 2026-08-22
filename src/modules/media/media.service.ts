@@ -3,7 +3,7 @@ import type { MediaConfig } from "../../config/env";
 import { AppError } from "../../errors/app-error";
 import type { Logger } from "../../observability/logger";
 import { authorizeMerchantStoreScope } from "../auth/merchant/merchant-access";
-import { requireCityPermission } from "../auth/staff/authorization";
+import { requireCityPermission, requireSuperAdmin } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
 import { dateValue } from "../geography/shared";
@@ -144,6 +144,47 @@ export class MediaService {
     return cityId;
   }
 
+  private isGlobalSuperAdmin(identity: AuthIdentity): boolean {
+    return (
+      identity.applicationType === "DASHBOARD" &&
+      identity.roles.includes("SUPER_ADMIN") &&
+      identity.scopeType === "GLOBAL" &&
+      identity.cityId === null
+    );
+  }
+
+  /** CATEGORY_IMAGE is the one Dashboard media purpose with an explicit City target. */
+  private async authorizeCategoryImageTarget(
+    identity: AuthIdentity,
+    cityId?: string,
+  ): Promise<string> {
+    requireSuperAdmin(identity);
+    if (!cityId) {
+      throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
+    }
+    const [city] = await this.client<{ status: string }[]>`
+      select status::text as status from cities where id = ${cityId}`;
+    if (!city) throw new AppError(404, "CITY_NOT_FOUND", "City not found");
+    if (city.status === "ARCHIVED") {
+      throw new AppError(409, "CITY_ARCHIVED", "City is archived");
+    }
+    return cityId;
+  }
+
+  private async authorizeAssetOperation(
+    identity: AuthIdentity,
+    permission: "media.read" | "media.create" | "media.delete",
+    requestedCityId?: string,
+  ): Promise<{ cityId: string; categoryOnly: boolean }> {
+    if (this.isGlobalSuperAdmin(identity)) {
+      return {
+        cityId: await this.authorizeCategoryImageTarget(identity, requestedCityId),
+        categoryOnly: true,
+      };
+    }
+    return { cityId: await this.authorize(identity, permission), categoryOnly: false };
+  }
+
   private async loadCityScoped(
     assetId: string,
     cityId: string,
@@ -181,13 +222,11 @@ export class MediaService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "media.create");
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
     const input = body as Record<string, unknown>;
     for (const forbidden of [
-      "cityId",
       "objectKey",
       "visibility",
       "status",
@@ -217,6 +256,16 @@ export class MediaService {
       | "STORE_LOGO"
       | "STORE_IMAGE"
       | "PRODUCT_IMAGE";
+    if (purpose !== "CATEGORY_IMAGE" && "cityId" in input) {
+      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
+    }
+    const cityId =
+      purpose === "CATEGORY_IMAGE"
+        ? await this.authorizeCategoryImageTarget(
+            identity,
+            typeof input.cityId === "string" ? input.cityId : undefined,
+          )
+        : await this.authorize(identity, "media.create");
     const contentType = String(input.contentType ?? "");
     if (!isAllowedImageContentType(contentType)) {
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported media content type");
@@ -452,9 +501,21 @@ export class MediaService {
     };
   }
 
-  async confirm(identity: AuthIdentity, assetId: string, requestId: string) {
-    const cityId = await this.authorize(identity, "media.create");
+  async confirm(
+    identity: AuthIdentity,
+    assetId: string,
+    requestId: string,
+    requestedCityId?: string,
+  ) {
+    const { cityId, categoryOnly } = await this.authorizeAssetOperation(
+      identity,
+      "media.create",
+      requestedCityId,
+    );
     const existing = await this.loadCityScoped(assetId, cityId);
+    if (categoryOnly && existing.purpose !== "CATEGORY_IMAGE") {
+      throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
+    }
     if (
       identity.applicationType === "DRIVER_APP" &&
       existing.created_by_account_id !== identity.accountId
@@ -539,7 +600,7 @@ export class MediaService {
     }
     assertImageSignatureMatches(prefix!, existing.expected_content_type);
 
-    await assertActiveCity(this.client, cityId);
+    if (!categoryOnly) await assertActiveCity(this.client, cityId);
 
     const updated = await this.client.begin(async (tx) => {
       const [locked] = await tx<MediaRow[]>`
@@ -634,14 +695,30 @@ export class MediaService {
     return mediaAssetDto(updated, this.config.r2PublicBaseUrl);
   }
 
-  async get(identity: AuthIdentity, assetId: string) {
-    const cityId = await this.authorize(identity, "media.read");
+  async get(identity: AuthIdentity, assetId: string, requestedCityId?: string) {
+    const { cityId, categoryOnly } = await this.authorizeAssetOperation(
+      identity,
+      "media.read",
+      requestedCityId,
+    );
     const row = await this.loadCityScoped(assetId, cityId);
+    if (categoryOnly && row.purpose !== "CATEGORY_IMAGE") {
+      throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
+    }
     return mediaAssetDto(row, this.config.r2PublicBaseUrl);
   }
 
-  async delete(identity: AuthIdentity, assetId: string, requestId: string) {
-    const cityId = await this.authorize(identity, "media.delete");
+  async delete(
+    identity: AuthIdentity,
+    assetId: string,
+    requestId: string,
+    requestedCityId?: string,
+  ) {
+    const { cityId, categoryOnly } = await this.authorizeAssetOperation(
+      identity,
+      "media.delete",
+      requestedCityId,
+    );
     const result = await this.client.begin(async (tx) => {
       const [locked] = await tx<MediaRow[]>`
         select
@@ -669,6 +746,9 @@ export class MediaService {
         where id = ${assetId} and city_id = ${cityId}
         for update`;
       if (!locked) throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
+      if (categoryOnly && locked.purpose !== "CATEGORY_IMAGE") {
+        throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
+      }
       if (locked.attached_at != null) {
         throw new AppError(409, "MEDIA_IN_USE", "Media asset is attached and cannot be deleted");
       }

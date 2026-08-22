@@ -86,12 +86,15 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
     purpose: "CATEGORY_IMAGE" | "STORE_LOGO" | "PRODUCT_IMAGE",
     fileName: string,
   ) => {
+    const city = token === adminBToken ? cityB : cityA;
+    const categoryImage = purpose === "CATEGORY_IMAGE";
     const intent = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/media/upload-intents", {
         method: "POST",
-        token,
+        token: categoryImage ? superToken : token,
         body: {
           purpose,
+          ...(categoryImage ? { cityId: city } : {}),
           fileName,
           contentType: "image/png",
           sizeBytes: pngBytes.length,
@@ -100,7 +103,6 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
     );
     expect(intent.status).toBe(200);
     const body = (await intent.json()) as { asset: { id: string } };
-    const city = token === adminBToken ? cityB : cityA;
     const objectKey = await harness.media.getObjectKeyForTests(
       body.asset.id,
       city,
@@ -109,9 +111,9 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
     expect(
       (
         await harness.app.handle(
-          jsonRequest(`/api/v1/dashboard/media/${body.asset.id}/confirm`, {
+          jsonRequest(`/api/v1/dashboard/media/${body.asset.id}/confirm${categoryImage ? `?cityId=${city}` : ""}`, {
             method: "POST",
-            token,
+            token: categoryImage ? superToken : token,
           }),
         )
       ).status,
@@ -126,8 +128,9 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
     const zone = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/zones", {
         method: "POST",
-        token,
+        token: superToken,
         body: {
+          cityId: token === adminBToken ? cityB : cityA,
           name: `MZ-${phone.slice(-4)}`,
           boundary: square(west, south, west + 0.1, south + 0.1),
         },
@@ -138,8 +141,9 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
     const main = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/main-categories", {
         method: "POST",
-        token,
+        token: superToken,
         body: {
+          cityId: token === adminBToken ? cityB : cityA,
           name: `تصنيف-${phone.slice(-4)}`,
           imageAssetId: await createReadyAsset(
             token,

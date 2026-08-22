@@ -35,6 +35,7 @@ const imageDto = t.Object({
 
 const mainCategoryDto = t.Object({
   id: t.String({ format: "uuid" }),
+  cityId: t.String({ format: "uuid" }),
   name: t.String(),
   status: categoryStatus,
   displayOrder: t.Integer({ minimum: 0 }),
@@ -42,6 +43,9 @@ const mainCategoryDto = t.Object({
   createdAt: dateSchema,
   updatedAt: dateSchema,
   archivedAt: t.Nullable(dateSchema),
+  createdByAccountId: t.String({ format: "uuid" }),
+  updatedByAccountId: t.Nullable(t.String({ format: "uuid" })),
+  archivedByAccountId: t.Nullable(t.String({ format: "uuid" })),
 });
 
 const publicMainCategoryDto = t.Object({
@@ -158,9 +162,9 @@ export const mainCategoryRoutes = (
         response: { 200: mainCategoryDto, ...createErrors },
         detail: {
           tags: ["Dashboard — Main Categories"],
-          summary: "Create a Main Category in the authenticated City",
+          summary: "Create a Main Category in an explicitly targeted City",
           description:
-            "Requires a READY PUBLIC CATEGORY_IMAGE media asset. Claims the asset in the same transaction as the insert. City comes only from the signed Dashboard token.",
+            "SUPER_ADMIN only. cityId is required in the body. Requires a READY PUBLIC CATEGORY_IMAGE media asset and claims it in the same transaction as the insert.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -189,9 +193,9 @@ export const mainCategoryRoutes = (
         response: { 200: listResponse, ...listErrors },
         detail: {
           tags: ["Dashboard — Main Categories"],
-          summary: "List Main Categories for the authenticated City",
+          summary: "List Main Categories for an explicitly targeted City",
           description:
-            "Defaults to excluding ARCHIVED unless status=ARCHIVED is requested. City comes only from the signed Dashboard token.",
+            "SUPER_ADMIN only. cityId is required in query. Defaults to excluding ARCHIVED unless status=ARCHIVED is requested.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -210,7 +214,8 @@ export const mainCategoryRoutes = (
         response: { 200: mainCategoryDto, ...detailErrors },
         detail: {
           tags: ["Dashboard — Main Categories"],
-          summary: "Get a Main Category in the authenticated City",
+          summary: "Get a Main Category in an explicitly targeted City",
+          description: "SUPER_ADMIN only. cityId is required in query; reassignment is not supported.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -247,9 +252,9 @@ export const mainCategoryRoutes = (
         response: { 200: mainCategoryDto, ...mutationErrors },
         detail: {
           tags: ["Dashboard — Main Categories"],
-          summary: "Update a Main Category in the authenticated City",
+          summary: "Update a Main Category in an explicitly targeted City",
           description:
-            "Image replacement claims the new asset and releases the old asset in one transaction. ARCHIVED status is rejected — use DELETE to archive.",
+            "SUPER_ADMIN only. cityId is required in query. Image replacement claims the new asset and releases the old asset in one transaction. ARCHIVED status is rejected — use DELETE to archive.",
           security: [{ bearerAuth: [] }],
         },
       },
@@ -269,9 +274,9 @@ export const mainCategoryRoutes = (
         response: { 200: mainCategoryDto, ...mutationErrors },
         detail: {
           tags: ["Dashboard — Main Categories"],
-          summary: "Soft-archive a Main Category in the authenticated City",
+          summary: "Soft-archive a Main Category in an explicitly targeted City",
           description:
-            "Soft archive only. Idempotent when already ARCHIVED. Keeps the final image asset claimed and referenced.",
+            "SUPER_ADMIN only. cityId is required in query. Soft archive only. Idempotent when already ARCHIVED. Keeps the final image asset claimed and referenced.",
           security: [{ bearerAuth: [] }],
         },
       },

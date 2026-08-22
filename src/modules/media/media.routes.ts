@@ -59,7 +59,7 @@ const assetIdParam = t.Object(
   { additionalProperties: false },
 );
 
-const intentBodyKeys = new Set(["purpose", "fileName", "contentType", "sizeBytes"]);
+const intentBodyKeys = new Set(["purpose", "cityId", "fileName", "contentType", "sizeBytes"]);
 
 const mediaErrors = {
   ...standardErrors,
@@ -101,6 +101,7 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
         body: t.Object(
           {
             purpose: mediaPurpose,
+            cityId: t.Optional(t.String({ format: "uuid", description: "Required when purpose is CATEGORY_IMAGE; ignored/rejected by unmigrated purposes." })),
             fileName: t.String({ minLength: 1, maxLength: 255 }),
             contentType: t.String({ minLength: 1, maxLength: 100 }),
             sizeBytes: t.Integer({ minimum: 1 }),
@@ -119,14 +120,16 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
     )
     .post(
       "/api/v1/dashboard/media/:assetId/confirm",
-      async ({ request, set, params }) =>
+      async ({ request, set, params, query }) =>
         service.confirm(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.assetId,
           requestIdOf(set),
+          query.cityId,
         ),
       {
         params: assetIdParam,
+        query: t.Object({ cityId: t.Optional(t.String({ format: "uuid" })) }, { additionalProperties: false }),
         response: { 200: mediaAssetDto, ...mediaErrors },
         detail: {
           tags: ["Dashboard — Media"],
@@ -137,13 +140,15 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
     )
     .get(
       "/api/v1/dashboard/media/:assetId",
-      async ({ request, set, params }) =>
+      async ({ request, set, params, query }) =>
         service.get(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.assetId,
+          query.cityId,
         ),
       {
         params: assetIdParam,
+        query: t.Object({ cityId: t.Optional(t.String({ format: "uuid" })) }, { additionalProperties: false }),
         response: { 200: mediaAssetDto, ...mediaErrors },
         detail: {
           tags: ["Dashboard — Media"],
@@ -154,17 +159,19 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
     )
     .delete(
       "/api/v1/dashboard/media/:assetId",
-      async ({ request, set, params }) => {
+      async ({ request, set, params, query }) => {
         const body = await service.delete(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.assetId,
           requestIdOf(set),
+          query.cityId,
         );
         set.status = 202;
         return body;
       },
       {
         params: assetIdParam,
+        query: t.Object({ cityId: t.Optional(t.String({ format: "uuid" })) }, { additionalProperties: false }),
         response: { 202: mediaAssetDto, ...mediaErrors },
         detail: {
           tags: ["Dashboard — Media"],

@@ -167,8 +167,8 @@ export const dashboardExportRoutes = (
     )
     .get("/api/v1/dashboard/main-categories/export", async ({ request, set, query }) =>
       service.mainCategories(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { query: eq({ status: opt() }),
-        detail: detail("Export main categories", "Requires main_categories.read and main_categories.export.") },
+      { query: eq({ cityId: t.String({ format: "uuid" }), status: opt() }),
+        detail: { tags: ["Dashboard — Exports"], summary: "Export Main Categories for an explicitly targeted City", description: "SUPER_ADMIN plus main_categories.export. cityId query is required; page and limit are not accepted.", security: [{ bearerAuth: [] }] } },
     )
     .get("/api/v1/dashboard/subcategories/export", async ({ request, set, query }) =>
       service.subcategories(await identityOf(request, set), query as Query, requestIdOf(set)),

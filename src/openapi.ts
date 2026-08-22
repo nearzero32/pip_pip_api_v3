@@ -47,17 +47,17 @@ export const createOpenApiDocumentation = (options: OpenApiPluginOptions = {}) =
       {
         name: "Dashboard — Zones",
         description:
-          "City-scoped Zone administration for ADMIN and granted employees. SUPER_ADMIN has no Zone access.",
+          "SUPER_ADMIN Zone administration with an explicit cityId target. Dashboard Zone operations do not use X-City-Id.",
       },
       {
         name: "Dashboard — Media",
         description:
-          "City-scoped media upload intents, confirmation, and deletion for ADMIN and granted employees. SUPER_ADMIN has no Media access. Direct browser-to-R2 uploads via short-lived presigned PUT URLs.",
+          "City-scoped media for Dashboard staff, plus SUPER_ADMIN CATEGORY_IMAGE media with an explicit cityId target. Direct browser-to-R2 uploads use short-lived presigned PUT URLs.",
       },
       {
         name: "Dashboard — Main Categories",
         description:
-          "City-scoped Main Category administration for ADMIN and granted employees. SUPER_ADMIN has no Main Category access. Images are mandatory CATEGORY_IMAGE media assets.",
+          "SUPER_ADMIN Main Category administration with an explicit cityId target. Images are mandatory CATEGORY_IMAGE media assets.",
       },
       {
         name: "Dashboard — Subcategories",
