@@ -24,7 +24,7 @@ import {
   sqlDir,
 } from "../../dashboard-lists/query";
 import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../../localization/database";
-import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../../localization/localization";
+import { negotiateLocale, parseRequestLocales, resolveLocalizedText } from "../../../localization/localization";
 
 /** Exact City → Governorate FK name from drizzle/0008_simple_nehzno.sql */
 export const CITY_GOVERNORATE_FK_CONSTRAINT =
@@ -209,7 +209,7 @@ export class CityService {
     const offset = (page - 1) * limit;
     const search = input.search?.trim() || null;
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     const rows = await this
       .client`select c.id,c.governorate_id,c.name_ar,c.name_en,coalesce((select jsonb_object_agg(ct.locale,ct.name) from city_translations ct where ct.city_id=c.id),jsonb_build_object('ar',c.name_ar,'en',c.name_en)) names,c.latitude::text latitude,c.longitude::text longitude,g.name_ar governorate_name_ar,g.name_en governorate_name_en,coalesce((select jsonb_object_agg(gt.locale,gt.name) from governorate_translations gt where gt.governorate_id=g.id),jsonb_build_object('ar',g.name_ar,'en',g.name_en)) governorate_names,g.display_order governorate_display_order,c.display_order city_display_order from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}) or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by g.display_order asc,c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
     const [count] = await this

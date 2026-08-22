@@ -17,7 +17,7 @@ import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import { validateDisplayOrder } from "./arabic-name";
 import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
-import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
+import { negotiateLocale, parseRequestLocales, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
 
 type MainCategoryStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -548,7 +548,7 @@ export class MainCategoryService {
 
   async listPublic(cityId: string, request?: Request) {
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     const rows = (await this.client.unsafe(
       `select ${CATEGORY_SELECT}
        from main_categories c

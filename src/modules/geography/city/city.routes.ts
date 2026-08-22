@@ -293,6 +293,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
             page: t.Optional(t.Numeric({ minimum: 1 })),
             limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
             search: t.Optional(t.String({ maxLength: 100 })),
+            lang: t.Optional(t.String({ minLength: 2, maxLength: 35 })),
           },
           { additionalProperties: false },
         ),

@@ -21,7 +21,7 @@ import {
 } from "../../dashboard-lists/query";
 import { parseCoordinate, parseGeoJsonPolygon, type GeoJsonPolygon } from "../geometry";
 import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../../localization/database";
-import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../../localization/localization";
+import { negotiateLocale, parseRequestLocales, resolveLocalizedText } from "../../../localization/localization";
 
 type ZoneStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -469,7 +469,7 @@ export class ZoneService {
 
   async listPublic(cityId: string, request?: Request) {
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     const rows = (await this.client.unsafe(
       `select ${ZONE_COLUMNS}
        from zones z
@@ -507,7 +507,7 @@ export class ZoneService {
     const row = rows[0];
     if (!row) throw new AppError(404, "ZONE_NOT_FOUND", "Zone not found");
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     return publicZoneDto(row, resolveLocalizedText(Object.fromEntries((row.translations ?? []).map((translation) => [translation.locale, translation.name])), locale, locales).value ?? row.name);
   }
 }

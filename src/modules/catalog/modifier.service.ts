@@ -38,7 +38,7 @@ import {
 } from "../../localization/database";
 import type { LocalizedTranslation } from "../../localization/localization";
 import { activeLocales } from "../../localization/database";
-import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../localization/localization";
+import { negotiateLocale, parseRequestLocales, resolveLocalizedText } from "../../localization/localization";
 
 type CatalogStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -1506,7 +1506,7 @@ export class ModifierService {
     const { city } = await requirePublicCityContext(this.client, request);
     const cityId = city.id;
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
 
     const [product] = await this.client<
       {

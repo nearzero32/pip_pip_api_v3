@@ -8,7 +8,7 @@ import {
   validateDisplayOrder,
 } from "../catalog/arabic-name";
 import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
-import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../localization/localization";
+import { negotiateLocale, parseRequestLocales, resolveLocalizedText } from "../../localization/localization";
 import { archiveProductsForCategory } from "./product.service";
 import {
   assertCityOperability,
@@ -628,7 +628,7 @@ export class StoreCategoryService {
   /** Public Catalog: ACTIVE categories that have ≥1 public-visible Product. */
   async listPublic(cityId: string, storeId: string, request?: Request) {
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     const [store] = await this.client<{ id: string }[]>`
       select s.id::text as id
       from stores s

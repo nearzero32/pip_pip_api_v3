@@ -45,6 +45,14 @@ export function parseAcceptLanguage(header: string | null | undefined): string[]
     .map((item) => item.tag);
 }
 
+/** Public/mobile links may explicitly select the response language with `?lang=`. */
+export function parseRequestLocales(request: Request | undefined): string[] {
+  if (!request) return [];
+  const lang = new URL(request.url).searchParams.get("lang");
+  const explicit = lang ? normalizeLocale(lang) : null;
+  return explicit ? [explicit] : parseAcceptLanguage(request.headers.get("accept-language"));
+}
+
 /** Exact locale first, then base language; fallback is resolved separately. */
 export function negotiateLocale(requested: string[], supported: SupportedLocale[]): string {
   const active = supported.filter((locale) => locale.isActive);

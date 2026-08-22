@@ -286,7 +286,10 @@ export const subcategoryRoutes = (
       },
       {
         query: t.Object(
-          { mainCategoryId: t.String({ format: "uuid" }) },
+          {
+            mainCategoryId: t.String({ format: "uuid" }),
+            lang: t.Optional(t.String({ minLength: 2, maxLength: 35 })),
+          },
           { additionalProperties: false },
         ),
         headers: t.Object(

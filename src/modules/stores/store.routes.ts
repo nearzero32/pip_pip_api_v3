@@ -393,6 +393,7 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
           {
             zoneId: t.String({ format: "uuid" }),
             mainCategoryId: t.Optional(t.String({ format: "uuid" })),
+            lang: t.Optional(t.String({ minLength: 2, maxLength: 35 })),
           },
           { additionalProperties: false },
         ),

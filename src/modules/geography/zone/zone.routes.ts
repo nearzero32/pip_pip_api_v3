@@ -324,6 +324,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
           {
             longitude: t.Numeric({ minimum: -180, maximum: 180 }),
             latitude: t.Numeric({ minimum: -90, maximum: 90 }),
+            lang: t.Optional(t.String({ minLength: 2, maxLength: 35 })),
           },
           { additionalProperties: false },
         ),

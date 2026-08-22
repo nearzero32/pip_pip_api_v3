@@ -29,7 +29,7 @@ import { parseCoordinate } from "../geography/zone/geometry";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import { activeLocales, translationsInput, validateTranslationInput } from "../../localization/database";
-import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
+import { negotiateLocale, parseRequestLocales, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
 import { PUBLIC_STORE_ELIGIBILITY_SQL } from "./public-store-eligibility";
 import {
   computeIsAcceptingOrders,
@@ -1131,7 +1131,7 @@ export class StoreService {
     request?: Request,
   ) {
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     const [zone] = await this.client<{ id: string; status: string }[]>`
       select id::text as id, status::text as status from zones
       where id = ${input.zoneId} and city_id = ${cityId}
@@ -1163,7 +1163,7 @@ export class StoreService {
 
   async getPublic(cityId: string, storeId: string, request?: Request, now = new Date()) {
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     const rows = (await this.client.unsafe(
       `select ${STORE_SELECT}
        from stores s

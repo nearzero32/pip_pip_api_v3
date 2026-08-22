@@ -624,6 +624,7 @@ export const productRoutes = (
             limit: pageQuery.limit,
             search: pageQuery.search,
             categoryId: t.Optional(t.String({ format: "uuid" })),
+            lang: t.Optional(t.String({ minLength: 2, maxLength: 35 })),
           },
           { additionalProperties: false },
         ),

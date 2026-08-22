@@ -24,7 +24,7 @@ import type { MediaService } from "../media/media.service";
 import { validateDisplayOrder } from "./arabic-name";
 import { translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
 import { activeLocales } from "../../localization/database";
-import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../localization/localization";
+import { negotiateLocale, parseRequestLocales, resolveLocalizedText } from "../../localization/localization";
 import {
   assertAtLeastOnePatchField,
   assertPatchStatusNotArchived,
@@ -786,7 +786,7 @@ export class SubcategoryService {
 
   async listPublic(cityId: string, mainCategoryId: string, request?: Request) {
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     const [parent] = await this.client<
       { id: string; status: string; archived_at: Date | string | null }[]
     >`

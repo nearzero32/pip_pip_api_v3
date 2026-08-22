@@ -24,7 +24,7 @@ import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import { validateDisplayOrder } from "./arabic-name";
 import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
-import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
+import { negotiateLocale, parseRequestLocales, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
 import {
   parseIqdPrice,
   validateAvailabilityWindows,
@@ -2027,7 +2027,7 @@ export class ProductService {
     request?: Request,
   ) {
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     await this.assertPublicStore(cityId, storeId);
     const { page, limit } = pageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
@@ -2111,7 +2111,7 @@ export class ProductService {
   /** Public Product Details — temporarily unavailable Products remain readable. */
   async getPublic(cityId: string, storeId: string, productId: string, request?: Request) {
     const locales = await activeLocales(this.client);
-    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    const locale = negotiateLocale(parseRequestLocales(request), locales);
     const store = await this.assertPublicStore(cityId, storeId);
     const rows = (await this.client.unsafe(
       `select ${PRODUCT_SELECT}
