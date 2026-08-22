@@ -3,16 +3,14 @@ import { SAMPLE } from "../samples";
 export const geographyExamples = {
   cityCreate: {
     governorateId: SAMPLE.governorateId,
-    nameAr: "بغداد",
-    nameEn: "Baghdad",
+    translations: [{ locale: "ar", name: "بغداد" }, { locale: "en", name: "Baghdad" }],
     latitude: SAMPLE.baghdadLat,
     longitude: SAMPLE.baghdadLng,
     displayOrder: 1,
     boundary: { type: "Polygon", coordinates: [[[44.3,33.2],[44.5,33.2],[44.5,33.4],[44.3,33.4],[44.3,33.2]]] },
   },
   cityPatch: {
-    nameAr: "بغداد",
-    nameEn: "Baghdad",
+    translations: [{ locale: "ar", name: "بغداد" }, { locale: "en", name: "Baghdad" }],
     latitude: SAMPLE.baghdadLat,
     longitude: SAMPLE.baghdadLng,
     displayOrder: 1,
@@ -21,7 +19,7 @@ export const geographyExamples = {
   governoratePatch: { status: "ACTIVE" },
   zoneCreate: {
     cityId: "11111111-1111-4111-8111-000000000001",
-    name: "Karrada",
+    translations: [{ locale: "ar", name: "كرادة" }, { locale: "en", name: "Karrada" }],
     boundary: {
       type: "Polygon",
       coordinates: [
@@ -36,7 +34,7 @@ export const geographyExamples = {
     },
   },
   zonePatch: {
-    name: "Karrada",
+    translations: [{ locale: "ar", name: "كرادة" }, { locale: "en", name: "Karrada" }],
     status: "ACTIVE",
   },
 };
@@ -65,9 +63,11 @@ export const catalogExamples = {
   storeCategoryCreate: { name: "Burgers", parentId: null, displayOrder: 1 },
   storeCreate: {
     mainCategoryId: SAMPLE.mainCategoryId,
-    name: "Demo Grill",
+    translations: [
+      { locale: "ar", name: "مطعم تجريبي", address: "الكرادة، بغداد" },
+      { locale: "en", name: "Demo Grill", address: "Karrada, Baghdad" },
+    ],
     phone: SAMPLE.phone,
-    address: "Karrada, Baghdad",
     latitude: SAMPLE.baghdadLat,
     longitude: SAMPLE.baghdadLng,
     logoAssetId: SAMPLE.logoAssetId,
@@ -86,8 +86,10 @@ export const catalogExamples = {
     ],
   },
   productBasePrice: {
-    name: "Burger",
-    description: "Beef burger",
+    translations: [
+      { locale: "ar", name: "برغر", description: "برغر لحم" },
+      { locale: "en", name: "Burger", description: "Beef burger" },
+    ],
     categoryId: SAMPLE.storeCategoryId,
     modifierGroupId: SAMPLE.modifierGroupId,
     basePrice: 5000,
@@ -99,8 +101,10 @@ export const catalogExamples = {
     ],
   },
   productSized: {
-    name: "Pizza",
-    description: "Sized pizza",
+    translations: [
+      { locale: "ar", name: "بيتزا", description: "بيتزا بأحجام متعددة" },
+      { locale: "en", name: "Pizza", description: "Sized pizza" },
+    ],
     categoryId: SAMPLE.storeCategoryId,
     basePrice: null,
     status: "ACTIVE",

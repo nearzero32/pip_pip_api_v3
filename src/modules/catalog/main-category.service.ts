@@ -16,8 +16,8 @@ import {
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import { validateDisplayOrder } from "./arabic-name";
-import { translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
-import type { LocalizedTranslation } from "../../localization/localization";
+import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
+import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
 
 type MainCategoryStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -106,9 +106,20 @@ export const mainCategoryDto = (
 export const publicMainCategoryDto = (
   row: CategoryRow,
   publicBaseUrl: string,
+  locale = "ar",
+  locales: Awaited<ReturnType<typeof activeLocales>> = [],
 ): any => ({
   id: row.id,
-  name: row.name,
+  name: resolveLocalizedText(
+    Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name }]).map((translation) => [translation.locale, translation.name])),
+    locale,
+    locales,
+  ).value ?? row.name,
+  resolvedLocale: resolveLocalizedText(
+    Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name }]).map((translation) => [translation.locale, translation.name])),
+    locale,
+    locales,
+  ).resolvedLocale ?? locale,
   displayOrder: row.display_order,
   image: imageDto(row, publicBaseUrl),
 });
@@ -535,7 +546,9 @@ export class MainCategoryService {
     );
   }
 
-  async listPublic(cityId: string) {
+  async listPublic(cityId: string, request?: Request) {
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const rows = (await this.client.unsafe(
       `select ${CATEGORY_SELECT}
        from main_categories c
@@ -550,7 +563,7 @@ export class MainCategoryService {
     )) as CategoryRow[];
     return {
       data: rows.map((row) =>
-        publicMainCategoryDto(row, this.config.r2PublicBaseUrl),
+        publicMainCategoryDto(row, this.config.r2PublicBaseUrl, locale, locales),
       ),
     };
   }

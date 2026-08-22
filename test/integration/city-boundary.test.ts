@@ -28,7 +28,7 @@ describe("City Geographic Boundary", () => {
   afterAll(async () => { await db?.close(); await admin?.unsafe(`drop database if exists "${dbName}" with(force)`); await admin?.close(); });
 
   const create = (boundary: unknown, latitude = 33.3, longitude = 44.4) => service.create(identity, {
-    governorateId, nameAr: "اختبار", nameEn: crypto.randomUUID(), latitude, longitude, displayOrder: 1, boundary,
+    governorateId, translations: [{ locale: "ar", name: "اختبار" }, { locale: "en", name: crypto.randomUUID() }], latitude, longitude, displayOrder: 1, boundary,
   });
 
   test("normalizes Polygon to MultiPolygon 4326 and returns detail/list contracts", async () => {
@@ -36,6 +36,8 @@ describe("City Geographic Boundary", () => {
     expect(city.boundary.type).toBe("MultiPolygon"); expect(city.hasBoundary).toBeTrue();
     const [stored] = await db<{ type: string; srid: number }[]>`select GeometryType(boundary) type,ST_SRID(boundary)::int srid from cities where id=${city.id}`;
     expect(stored).toEqual({ type: "MULTIPOLYGON", srid: 4326 });
+    expect(city.translations).toEqual(expect.arrayContaining([{ locale: "ar", name: "اختبار" }]));
+    expect((await db<{ count: number }[]>`select count(*)::int count from city_translations where city_id=${city.id}`)[0]!.count).toBe(2);
     const detail = await service.get(city.id) as any; expect(detail.boundary.type).toBe("MultiPolygon");
     const list = await service.list(identity, {}) as any; const row = list.data.find((x: any) => x.id === city.id);
     expect(row.hasBoundary).toBeTrue(); expect("boundary" in row).toBeFalse();

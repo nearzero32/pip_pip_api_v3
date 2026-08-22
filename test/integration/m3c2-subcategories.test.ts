@@ -23,6 +23,10 @@ const pngBytes = Uint8Array.of(
 
 const errorOf = async (response: Response) =>
   ((await response.json()) as { error: { code: string } }).error;
+const translationsFor = (name: string) => [
+  { locale: "ar", name },
+  { locale: "en", name: `EN ${name}` },
+];
 
 const login = async (
   harness: IntegrationHarness,
@@ -122,7 +126,7 @@ describe("M3-C2 Subcategories", () => {
         token: superToken,
         body: {
           cityId: cityForToken(token),
-          name,
+          translations: translationsFor(name),
           imageAssetId: await createReadyAsset(token, `${name}.png`),
           status,
           displayOrder,
@@ -136,14 +140,19 @@ describe("M3-C2 Subcategories", () => {
   const createSub = (
     token: string,
     body: Record<string, unknown>,
-  ) =>
-    harness.app.handle(
+  ) => {
+    const { name, ...rest } = body;
+    return harness.app.handle(
       jsonRequest("/api/v1/dashboard/subcategories", {
         method: "POST",
         token,
-        body,
+        body: {
+          ...rest,
+          ...(typeof name === "string" ? { translations: translationsFor(name) } : {}),
+        },
       }),
     );
+  };
 
   beforeAll(async () => {
     harness = await createIntegrationHarness({
@@ -624,7 +633,7 @@ describe("M3-C2 Subcategories", () => {
       jsonRequest(`/api/v1/dashboard/subcategories/${id}`, {
         method: "PATCH",
         token: adminToken,
-        body: { name: "تم التحديث", status: "INACTIVE", displayOrder: 8 },
+        body: { translations: translationsFor("تم التحديث"), status: "INACTIVE", displayOrder: 8 },
       }),
     );
     expect(updated.status).toBe(200);
@@ -695,7 +704,7 @@ describe("M3-C2 Subcategories", () => {
       jsonRequest(`/api/v1/dashboard/subcategories/${id}`, {
         method: "PATCH",
         token: adminToken,
-        body: { mainCategoryId: parentA, name: "مانع النقل" },
+        body: { mainCategoryId: parentA, translations: translationsFor("مانع النقل") },
       }),
     );
     expect(moveConflict.status).toBe(409);
@@ -749,7 +758,7 @@ describe("M3-C2 Subcategories", () => {
       jsonRequest(`/api/v1/dashboard/subcategories/${id}`, {
         method: "PATCH",
         token: adminToken,
-        body: { imageAssetId: failNew, name: "مانع الاستبدال" },
+        body: { imageAssetId: failNew, translations: translationsFor("مانع الاستبدال") },
       }),
     );
     expect(failed.status).toBe(409);
@@ -913,7 +922,7 @@ describe("M3-C2 Subcategories", () => {
           jsonRequest(`/api/v1/dashboard/subcategories/${childId}`, {
             method: "PATCH",
             token: adminToken,
-            body: { name: "لا تحديث" },
+            body: { translations: translationsFor("لا تحديث") },
           }),
         )
       ).status,

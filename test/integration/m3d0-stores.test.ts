@@ -37,6 +37,10 @@ const square = (west: number, south: number, east: number, north: number) => ({
 
 const errorOf = async (response: Response) =>
   ((await response.json()) as { error: { code: string } }).error;
+const translationsFor = (name: string, address = "بغداد - الكرادة") => [
+  { locale: "ar", name, address },
+  { locale: "en", name: `EN ${name}`, address: `EN ${address}` },
+];
 
 const login = async (
   harness: IntegrationHarness,
@@ -143,7 +147,7 @@ describe("M3-D0 Stores, service zones & working hours", () => {
       jsonRequest("/api/v1/dashboard/zones", {
         method: "POST",
         token: superToken,
-        body: { cityId: token === adminBToken ? cityB : cityA, name, boundary },
+        body: { cityId: token === adminBToken ? cityB : cityA, translations: [{ locale: "ar", name }, { locale: "en", name: `EN ${name}` }], boundary },
       }),
     );
     expect(response.status).toBe(200);
@@ -161,7 +165,7 @@ describe("M3-D0 Stores, service zones & working hours", () => {
         token: superToken,
         body: {
           cityId: token === adminBToken ? cityB : cityA,
-          name,
+          translations: [{ locale: "ar", name }, { locale: "en", name: `EN ${name}` }],
           imageAssetId: await createReadyAsset(
             token,
             "CATEGORY_IMAGE",
@@ -185,7 +189,7 @@ describe("M3-D0 Stores, service zones & working hours", () => {
       jsonRequest("/api/v1/dashboard/subcategories", {
         method: "POST",
         token,
-        body: { mainCategoryId, name, status: "ACTIVE", displayOrder: 1 },
+        body: { mainCategoryId, translations: [{ locale: "ar", name }, { locale: "en", name: `EN ${name}` }], status: "ACTIVE", displayOrder: 1 },
       }),
     );
     expect(response.status).toBe(200);
@@ -195,11 +199,14 @@ describe("M3-D0 Stores, service zones & working hours", () => {
   const baseStoreBody = async (
     overrides: Record<string, unknown> = {},
     token = adminToken,
-  ) => ({
+  ) => {
+    const { name, address, translations, ...rest } = overrides;
+    const resolvedName = typeof name === "string" ? name : "متجر تجريبي";
+    const resolvedAddress = typeof address === "string" ? address : "بغداد - الكرادة";
+    return {
     mainCategoryId: mainA,
-    name: "متجر تجريبي",
+    translations: translations ?? translationsFor(resolvedName, resolvedAddress),
     phone: "+9647700000001",
-    address: "بغداد - الكرادة",
     latitude: 33.15,
     longitude: 44.15,
     logoAssetId: await createReadyAsset(token, "STORE_LOGO", "logo.png"),
@@ -216,8 +223,9 @@ describe("M3-D0 Stores, service zones & working hours", () => {
       { dayOfWeek: "MONDAY", opensAt: "09:00", closesAt: "17:00" },
       { dayOfWeek: "TUESDAY", opensAt: "09:00", closesAt: "17:00" },
     ],
-    ...overrides,
-  });
+    ...rest,
+    };
+  };
 
   const createStore = async (
     token: string,
@@ -763,6 +771,20 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     expect(byId[draftId]).toBeUndefined();
     expect(byId[inactiveId]).toBeUndefined();
     expect(byId[archivedId]).toBeUndefined();
+
+    const english = await harness.app.handle(
+      jsonRequest(`/api/v1/public/stores?zoneId=${zoneA1}`, {
+        headers: { "x-city-id": cityA, "accept-language": "en" },
+      }),
+    );
+    const englishOpen = ((await english.json()) as {
+      data: Array<{ id: string; name: string; address: string; resolvedLocale: string }>;
+    }).data.find((row) => row.id === openId);
+    expect(englishOpen).toMatchObject({
+      name: "EN مفتوح",
+      address: "EN بغداد - الكرادة",
+      resolvedLocale: "en",
+    });
   });
 
   test("employee can create with granted stores.create", async () => {

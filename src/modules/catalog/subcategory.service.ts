@@ -23,6 +23,8 @@ import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import { validateDisplayOrder } from "./arabic-name";
 import { translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
+import { activeLocales } from "../../localization/database";
+import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../localization/localization";
 import {
   assertAtLeastOnePatchField,
   assertPatchStatusNotArchived,
@@ -113,9 +115,20 @@ export const subcategoryDto = (
 export const publicSubcategoryDto = (
   row: SubcategoryRow,
   publicBaseUrl: string,
+  locale = "ar",
+  locales: Awaited<ReturnType<typeof activeLocales>> = [],
 ): any => ({
   id: row.id,
-  name: row.name,
+  name: resolveLocalizedText(
+    Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name }]).map((translation) => [translation.locale, translation.name])),
+    locale,
+    locales,
+  ).value ?? row.name,
+  resolvedLocale: resolveLocalizedText(
+    Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name }]).map((translation) => [translation.locale, translation.name])),
+    locale,
+    locales,
+  ).resolvedLocale ?? locale,
   displayOrder: row.display_order,
   image: imageDto(row, publicBaseUrl),
 });
@@ -771,7 +784,9 @@ export class SubcategoryService {
     );
   }
 
-  async listPublic(cityId: string, mainCategoryId: string) {
+  async listPublic(cityId: string, mainCategoryId: string, request?: Request) {
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const [parent] = await this.client<
       { id: string; status: string; archived_at: Date | string | null }[]
     >`
@@ -811,7 +826,7 @@ export class SubcategoryService {
 
     return {
       data: rows.map((row) =>
-        publicSubcategoryDto(row, this.config.r2PublicBaseUrl),
+        publicSubcategoryDto(row, this.config.r2PublicBaseUrl, locale, locales),
       ),
     };
   }

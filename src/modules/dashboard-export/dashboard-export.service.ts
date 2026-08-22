@@ -204,13 +204,13 @@ export class DashboardExportService {
     const status = query.status?.trim() || null;
     const [count] = await this.client<{ total: number }[]>`
       select count(*)::int total from governorates g
-      where (${search}::text is null or exists (select 1 from governorate_translations gt where gt.governorate_id=g.id and gt.name ilike ${`%${search ?? ""}%`}))
+      where (${search}::text is null or exists (select 1 from governorate_translations gt where gt.governorate_id=g.id and gt.name ilike ${`%${search ?? ""}%`}) or g.name_ar ilike ${`%${search ?? ""}%`} or g.name_en ilike ${`%${search ?? ""}%`})
         and (${status}::text is null or status=${status}::governorate_status)`;
     this.assertLimit(count?.total ?? 0);
     const rows = await this.client<Record<string, unknown>[]>`
       select g.id::text, coalesce((select gt.name from governorate_translations gt where gt.governorate_id=g.id and gt.locale='ar'),g.name_ar) name_ar, coalesce((select gt.name from governorate_translations gt where gt.governorate_id=g.id and gt.locale='en'),g.name_en) name_en, g.status::text, g.display_order, g.created_at, g.updated_at
       from governorates g
-      where (${search}::text is null or exists (select 1 from governorate_translations gt where gt.governorate_id=g.id and gt.name ilike ${`%${search ?? ""}%`}))
+      where (${search}::text is null or exists (select 1 from governorate_translations gt where gt.governorate_id=g.id and gt.name ilike ${`%${search ?? ""}%`}) or g.name_ar ilike ${`%${search ?? ""}%`} or g.name_en ilike ${`%${search ?? ""}%`})
         and (${status}::text is null or status=${status}::governorate_status)
       order by display_order asc, name_en asc, id asc`;
     return this.file(
@@ -270,7 +270,7 @@ export class DashboardExportService {
       join governorates g on g.id = c.governorate_id
       where (${governorateId}::uuid is null or c.governorate_id = ${governorateId})
         and (${status}::text is null or c.status = ${status}::city_status)
-        and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}))`;
+        and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}) or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
     this.assertLimit(count?.total ?? 0);
     const rows = await this.client<Record<string, unknown>[]>`
       select c.id::text, c.governorate_id::text,
@@ -280,7 +280,7 @@ export class DashboardExportService {
       from cities c join governorates g on g.id = c.governorate_id
       where (${governorateId}::uuid is null or c.governorate_id = ${governorateId})
         and (${status}::text is null or c.status = ${status}::city_status)
-        and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}))
+        and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}) or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})
       order by c.display_order asc, c.name_en asc, c.id asc`;
     return this.file(
       identity,
@@ -443,8 +443,9 @@ export class DashboardExportService {
     )) as { total: number }[];
     this.assertLimit(count?.total ?? 0);
     const rows = (await this.client.unsafe(
-      `select s.id::text, s.name, s.phone, s.address, s.status::text,
-              s.order_acceptance_status::text, s.display_order, mc.name as main_category_name,
+      `select s.id::text, coalesce((select st.name from store_translations st where st.store_id=s.id and st.locale='ar'),s.name) name,
+              s.phone, coalesce((select st.address from store_translations st where st.store_id=s.id and st.locale='ar'),s.address) address, s.status::text,
+              s.order_acceptance_status::text, s.display_order, coalesce((select mt.name from main_category_translations mt where mt.main_category_id=mc.id and mt.locale='ar'),mc.name) as main_category_name,
               s.created_at, s.updated_at, s.archived_at
        from stores s
        join main_categories mc on mc.id = s.main_category_id and mc.city_id = s.city_id

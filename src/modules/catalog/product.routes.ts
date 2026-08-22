@@ -614,7 +614,7 @@ export const productRoutes = (
       "/api/v1/public/stores/:storeId/products",
       async ({ request, params, query }) => {
         const { city } = await requirePublicCityContext(auth.client, request);
-        return service.listPublic(city.id, params.storeId, query);
+        return service.listPublic(city.id, params.storeId, query, request);
       },
       {
         params: storeIdParam,
@@ -634,6 +634,7 @@ export const productRoutes = (
               storeId: t.String({ format: "uuid" }),
               categoryId: t.Nullable(t.String({ format: "uuid" })),
               name: t.String(),
+              resolvedLocale: t.String(),
               basePrice: t.Nullable(t.Integer({ exclusiveMinimum: 0 })),
               price: t.Nullable(t.Integer({ exclusiveMinimum: 0 })),
               isAvailable: t.Boolean(),
@@ -679,6 +680,7 @@ export const productRoutes = (
           city.id,
           params.storeId,
           params.productId,
+          request,
         );
         const mods = modifiers
           ? await modifiers.publicProductModifiers(

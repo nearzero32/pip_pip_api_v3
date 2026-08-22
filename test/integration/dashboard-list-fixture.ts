@@ -90,9 +90,11 @@ export async function seedDashboardListWorld(
   const [main] = await h.client<{ id: string }[]>`
     insert into main_categories(city_id, name, image_asset_id, status, created_by_account_id)
     values (${cityA}, 'ZXQ-MAIN-HIT', ${media!.id}, 'ACTIVE', ${adminAccountId}) returning id`;
-  await h.client`
+  await h.client`insert into main_category_translations(main_category_id,city_id,locale,name) values(${main!.id},${cityA},'ar','ZXQ-MAIN-HIT'),(${main!.id},${cityA},'en','ZXQ-MAIN-HIT')`;
+  const [sub] = await h.client<{ id: string }[]>`
     insert into subcategories(city_id, main_category_id, name, status, created_by_account_id)
-    values (${cityA}, ${main!.id}, 'ZXQ-SUB-HIT', 'ACTIVE', ${adminAccountId})`;
+    values (${cityA}, ${main!.id}, 'ZXQ-SUB-HIT', 'ACTIVE', ${adminAccountId}) returning id`;
+  await h.client`insert into subcategory_translations(subcategory_id,city_id,main_category_id,locale,name) values(${sub!.id},${cityA},${main!.id},'ar','ZXQ-SUB-HIT'),(${sub!.id},${cityA},${main!.id},'en','ZXQ-SUB-HIT')`;
   const [zone] = await h.client<{ id: string }[]>`
     insert into zones(city_id, name, boundary, status)
     values (
@@ -100,6 +102,7 @@ export async function seedDashboardListWorld(
       ST_GeomFromText('POLYGON((44 33,45 33,45 34,44 34,44 33))', 4326),
       'ACTIVE'
     ) returning id`;
+  await h.client`insert into zone_translations(zone_id,city_id,locale,name) values(${zone!.id},${cityA},'ar','ZXQ-ZONE-HIT'),(${zone!.id},${cityA},'en','ZXQ-ZONE-HIT')`;
   const [store] = await h.client<{ id: string }[]>`
     insert into stores(
       city_id, main_category_id, name, phone, address, location, logo_asset_id,
@@ -110,6 +113,7 @@ export async function seedDashboardListWorld(
       'ACTIVE', 'ACCEPTING', ${adminAccountId}, 12
     ) returning id`;
   const storeId = store!.id;
+  await h.client`insert into store_translations(store_id,city_id,locale,name,address) values(${storeId},${cityA},'ar','ZXQ-STORE-HIT','Address'),(${storeId},${cityA},'en','ZXQ-STORE-HIT','Address')`;
   await h.client`insert into store_zones(store_id, zone_id, city_id) values (${storeId}, ${zone!.id}, ${cityA})`;
   await h.client`
     insert into store_commission_rate_history(
@@ -118,12 +122,15 @@ export async function seedDashboardListWorld(
   const [scat] = await h.client<{ id: string }[]>`
     insert into store_categories(store_id, city_id, name, status, created_by_account_id)
     values (${storeId}, ${cityA}, 'ZXQ-SCAT-HIT', 'ACTIVE', ${adminAccountId}) returning id`;
-  await h.client`
+  await h.client`insert into store_category_translations(store_category_id,store_id,locale,name) values(${scat!.id},${storeId},'ar','ZXQ-SCAT-HIT'),(${scat!.id},${storeId},'en','ZXQ-SCAT-HIT')`;
+  const [product] = await h.client<{ id: string }[]>`
     insert into products(store_id, city_id, category_id, name, base_price, is_available, status, created_by_account_id)
-    values (${storeId}, ${cityA}, ${scat!.id}, 'ZXQ-PROD-HIT', 1000, true, 'ACTIVE', ${adminAccountId})`;
-  await h.client`
+    values (${storeId}, ${cityA}, ${scat!.id}, 'ZXQ-PROD-HIT', 1000, true, 'ACTIVE', ${adminAccountId}) returning id`;
+  await h.client`insert into product_translations(product_id,store_id,city_id,locale,name) values(${product!.id},${storeId},${cityA},'ar','ZXQ-PROD-HIT'),(${product!.id},${storeId},${cityA},'en','ZXQ-PROD-HIT')`;
+  const [modifierGroup] = await h.client<{ id: string }[]>`
     insert into modifier_groups(store_id, city_id, name, min_select, max_select, status, created_by_account_id)
-    values (${storeId}, ${cityA}, 'ZXQ-MOD-HIT', 0, 1, 'ACTIVE', ${adminAccountId})`;
+    values (${storeId}, ${cityA}, 'ZXQ-MOD-HIT', 0, 1, 'ACTIVE', ${adminAccountId}) returning id`;
+  await h.client`insert into modifier_group_translations(modifier_group_id,store_id,city_id,locale,name) values(${modifierGroup!.id},${storeId},${cityA},'ar','ZXQ-MOD-HIT'),(${modifierGroup!.id},${storeId},${cityA},'en','ZXQ-MOD-HIT')`;
 
   const [merchant] = await h.client<{ id: string }[]>`insert into accounts default values returning id`;
   await h.client`insert into account_phones(account_id, phone_e164, verified_at, is_primary)

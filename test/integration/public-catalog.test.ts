@@ -33,11 +33,20 @@ const square = (west: number, south: number, east: number, north: number) => ({
 
 const errorOf = async (response: Response) =>
   ((await response.json()) as { error: { code: string } }).error;
+const nameTranslations = (name: string) => [
+  { locale: "ar", name },
+  { locale: "en", name: `EN ${name}` },
+];
+const productTranslations = (name: string) => [
+  { locale: "ar", name },
+  { locale: "en", name: `EN ${name}` },
+];
 
 describe("Public Product Catalog", () => {
   let harness: IntegrationHarness;
   let cityA = "";
   let cityB = "";
+  let superToken = "";
   let adminToken = "";
   let adminBToken = "";
   let storeA = "";
@@ -70,9 +79,10 @@ describe("Public Product Catalog", () => {
     const intent = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/media/upload-intents", {
         method: "POST",
-        token,
+        token: purpose === "CATEGORY_IMAGE" ? superToken : token,
         body: {
           purpose,
+          ...(purpose === "CATEGORY_IMAGE" ? { cityId: city } : {}),
           fileName,
           contentType: "image/png",
           sizeBytes: pngBytes.length,
@@ -89,9 +99,9 @@ describe("Public Product Catalog", () => {
     expect(
       (
         await harness.app.handle(
-          jsonRequest(`/api/v1/dashboard/media/${body.asset.id}/confirm`, {
+          jsonRequest(`/api/v1/dashboard/media/${body.asset.id}/confirm${purpose === "CATEGORY_IMAGE" ? `?cityId=${city}` : ""}`, {
             method: "POST",
-            token,
+            token: purpose === "CATEGORY_IMAGE" ? superToken : token,
           }),
         )
       ).status,
@@ -112,9 +122,10 @@ describe("Public Product Catalog", () => {
     const zone = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/zones", {
         method: "POST",
-        token,
+        token: superToken,
         body: {
-          name: `PZ-${phone.slice(-4)}`,
+          cityId: city,
+          translations: nameTranslations(`PZ-${phone.slice(-4)}`),
           boundary: square(west, south, west + 0.1, south + 0.1),
         },
       }),
@@ -124,9 +135,10 @@ describe("Public Product Catalog", () => {
     const main = await harness.app.handle(
       jsonRequest("/api/v1/dashboard/main-categories", {
         method: "POST",
-        token,
+        token: superToken,
         body: {
-          name: `م-${phone.slice(-4)}`,
+          cityId: city,
+          translations: nameTranslations(`م-${phone.slice(-4)}`),
           imageAssetId: await createReadyAsset(
             token,
             "CATEGORY_IMAGE",
@@ -146,7 +158,7 @@ describe("Public Product Catalog", () => {
         token,
         body: {
           mainCategoryId: mainId,
-          name: `ف-${phone.slice(-4)}`,
+          translations: nameTranslations(`ف-${phone.slice(-4)}`),
           status: "ACTIVE",
           displayOrder: 1,
         },
@@ -160,9 +172,11 @@ describe("Public Product Catalog", () => {
         token,
         body: {
           mainCategoryId: mainId,
-          name,
+          translations: [
+            { locale: "ar", name, address: "عنوان" },
+            { locale: "en", name: `EN ${name}`, address: "EN عنوان" },
+          ],
           phone,
-          address: "عنوان",
           latitude: south + 0.02,
           longitude: west + 0.02,
           logoAssetId: await createReadyAsset(
@@ -191,7 +205,7 @@ describe("Public Product Catalog", () => {
       jsonRequest(`/api/v1/dashboard/stores/${storeId}/categories`, {
         method: "POST",
         token: adminToken,
-        body: { name, status, displayOrder: 1 },
+        body: { translations: nameTranslations(name), status, displayOrder: 1 },
       }),
     );
     expect(response.status).toBe(200);
@@ -214,7 +228,7 @@ describe("Public Product Catalog", () => {
         method: "POST",
         token: adminToken,
         body: {
-          name,
+          translations: productTranslations(name),
           basePrice: 2500,
           images: [{ assetId: imageAssetId, isPrimary: true, displayOrder: 0 }],
           ...extras,
@@ -229,9 +243,9 @@ describe("Public Product Catalog", () => {
     };
   };
 
-  const publicGet = (path: string, city = cityA) =>
+  const publicGet = (path: string, city = cityA, language?: string) =>
     harness.app.handle(
-      jsonRequest(path, { headers: { "X-City-Id": city } }),
+      jsonRequest(path, { headers: { "X-City-Id": city, ...(language ? { "Accept-Language": language } : {}) } }),
     );
 
   beforeAll(async () => {
@@ -240,6 +254,11 @@ describe("Public Product Catalog", () => {
     });
     cityA = await createActiveCity(harness.client, "Pub Cat City A");
     cityB = await createActiveCity(harness.client, "Pub Cat City B");
+    await createStaffAccount(harness.auth, harness.client, {
+      email: "pub-super@example.com",
+      password,
+      roles: ["SUPER_ADMIN"],
+    });
     await createStaffAccount(harness.auth, harness.client, {
       email: "pub-admin@example.com",
       password,
@@ -252,6 +271,7 @@ describe("Public Product Catalog", () => {
       roles: ["ADMIN"],
       cityId: cityB,
     });
+    superToken = (await login("pub-super@example.com", "super")).access_token;
     adminToken = (await login("pub-admin@example.com", "admin")).access_token;
     adminBToken = (await login("pub-admin-b@example.com", "admin-b"))
       .access_token;
@@ -324,7 +344,7 @@ describe("Public Product Catalog", () => {
         method: "POST",
         token: adminToken,
         body: {
-          name: "منتج متجر آخر",
+          translations: productTranslations("منتج متجر آخر"),
           basePrice: 1000,
           images: [{ assetId: otherImage, isPrimary: true }],
         },
@@ -338,12 +358,12 @@ describe("Public Product Catalog", () => {
         method: "POST",
         token: adminToken,
         body: {
-          name: "إضافات عامة",
+          translations: nameTranslations("إضافات عامة"),
           minSelect: 0,
           maxSelect: 2,
           options: [
-            { name: "ثلج", displayOrder: 0 },
-            { name: "نعناع", displayOrder: 1 },
+            { translations: nameTranslations("ثلج"), displayOrder: 0 },
+            { translations: nameTranslations("نعناع"), displayOrder: 1 },
           ],
         },
       }),
@@ -468,6 +488,19 @@ describe("Public Product Catalog", () => {
     expect(available.isOrderable).toBe(true);
     expect(available.price).toBe(2500);
     expect(available.primaryImage?.url).toBeTruthy();
+
+    const english = await publicGet(
+      `/api/v1/public/stores/${storeA}/products?search=EN%20عصير%20برتقال`,
+      cityA,
+      "en",
+    );
+    const englishAvailable = ((await english.json()) as {
+      data: Array<{ id: string; name: string; resolvedLocale: string }>;
+    }).data.find((row) => row.id === productAvailable);
+    expect(englishAvailable).toMatchObject({
+      name: "EN عصير برتقال",
+      resolvedLocale: "en",
+    });
 
     // displayOrder: unavailable(1) before available(2)
     const idxUnavail = body.data.findIndex((r) => r.id === productUnavailable);

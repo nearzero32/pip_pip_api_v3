@@ -23,8 +23,8 @@ import {
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
 import { validateDisplayOrder } from "./arabic-name";
-import { translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
-import type { LocalizedTranslation } from "../../localization/localization";
+import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
+import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
 import {
   parseIqdPrice,
   validateAvailabilityWindows,
@@ -773,9 +773,7 @@ export class ProductService {
       "createdAt",
       "updatedAt",
       "createdByAccountId",
-      "translations",
       "description",
-      "translations",
     ]) {
       if (forbidden in input) {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
@@ -1029,8 +1027,7 @@ export class ProductService {
       }
     }
     const keys = [
-      "name",
-      "description",
+      "translations",
       "categoryId",
       "modifierGroupId",
       "basePrice",
@@ -1950,7 +1947,8 @@ export class ProductService {
         is_available,
         is_default,
         display_order,
-        archived_at
+        archived_at,
+        coalesce((select jsonb_agg(jsonb_build_object('locale',pst.locale,'name',pst.name) order by pst.locale) from product_size_translations pst where pst.product_size_id=product_sizes.id),'[]'::jsonb) as translations
       from product_sizes
       where product_id = any(${ids})
         and status = 'ACTIVE'
@@ -1971,6 +1969,8 @@ export class ProductService {
     row: ProductRow,
     images: ImageRow[],
     sizes: SizeRow[],
+    locale: string,
+    locales: Awaited<ReturnType<typeof activeLocales>>,
   ) {
     const primary =
       images.find((image) => image.is_primary) ?? images[0] ?? null;
@@ -1979,7 +1979,16 @@ export class ProductService {
       id: row.id,
       storeId: row.store_id,
       categoryId: row.category_id,
-      name: row.name,
+      name: resolveLocalizedText(
+        Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name }]).map((translation) => [translation.locale, translation.name])),
+        locale,
+        locales,
+      ).value ?? row.name,
+      resolvedLocale: resolveLocalizedText(
+        Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name }]).map((translation) => [translation.locale, translation.name])),
+        locale,
+        locales,
+      ).resolvedLocale ?? locale,
       basePrice: row.base_price == null ? null : Number(row.base_price),
       price: this.resolveListPrice(
         row.base_price == null ? null : Number(row.base_price),
@@ -2015,7 +2024,10 @@ export class ProductService {
       page?: number;
       limit?: number;
     },
+    request?: Request,
   ) {
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     await this.assertPublicStore(cityId, storeId);
     const { page, limit } = pageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
@@ -2055,7 +2067,7 @@ export class ProductService {
            )
          )
          and ($3::uuid is null or p.category_id = $3::uuid)
-         and ($4::text is null or p.name ilike ('%' || $4 || '%'))
+         and ($4::text is null or exists (select 1 from product_translations pt where pt.product_id=p.id and pt.name ilike ('%' || $4 || '%')) or p.name ilike ('%' || $4 || '%'))
        order by p.display_order asc, p.created_at asc, p.id asc
        limit $5::int offset $6::int`,
       [storeId, cityId, categoryId, search, limit, offset],
@@ -2086,6 +2098,8 @@ export class ProductService {
           row,
           imagesByProduct.get(row.id) ?? [],
           sizesByProduct.get(row.id) ?? [],
+          locale,
+          locales,
         ),
       ),
       page,
@@ -2095,7 +2109,9 @@ export class ProductService {
   }
 
   /** Public Product Details — temporarily unavailable Products remain readable. */
-  async getPublic(cityId: string, storeId: string, productId: string) {
+  async getPublic(cityId: string, storeId: string, productId: string, request?: Request) {
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const store = await this.assertPublicStore(cityId, storeId);
     const rows = (await this.client.unsafe(
       `select ${PRODUCT_SELECT}
@@ -2128,14 +2144,16 @@ export class ProductService {
       this.loadPublicSizes([productId]),
       this.loadAvailability([productId]),
       row.category_id
-        ? this.client<{ id: string; name: string }[]>`
-            select id::text as id, name from store_categories
+        ? this.client<{ id: string; name: string; translations: LocalizedTranslation[] }[]>`
+            select id::text as id, name,
+              coalesce((select jsonb_agg(jsonb_build_object('locale',ct.locale,'name',ct.name) order by ct.locale) from store_category_translations ct where ct.store_category_id=store_categories.id),'[]'::jsonb) translations
+            from store_categories
             where id = ${row.category_id}
               and store_id = ${storeId}
               and city_id = ${cityId}
               and status = 'ACTIVE'
               and archived_at is null`
-        : Promise.resolve([] as { id: string; name: string }[]),
+        : Promise.resolve([] as { id: string; name: string; translations: LocalizedTranslation[] }[]),
     ]);
 
     const isAvailable = Boolean(row.is_available);
@@ -2144,11 +2162,16 @@ export class ProductService {
       storeId: row.store_id,
       categoryId: row.category_id,
       category: category[0]
-        ? { id: category[0].id, name: category[0].name }
+        ? {
+            id: category[0].id,
+            name: resolveLocalizedText(Object.fromEntries((category[0].translations ?? [{ locale: "ar", name: category[0].name }]).map((translation) => [translation.locale, translation.name])), locale, locales).value ?? category[0].name,
+            resolvedLocale: resolveLocalizedText(Object.fromEntries((category[0].translations ?? [{ locale: "ar", name: category[0].name }]).map((translation) => [translation.locale, translation.name])), locale, locales).resolvedLocale ?? locale,
+          }
         : null,
       modifierGroupId: row.modifier_group_id,
-      name: row.name,
-      description: row.description,
+      name: resolveLocalizedText(Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name, description: row.description }]).map((translation) => [translation.locale, translation.name])), locale, locales).value ?? row.name,
+      description: resolveLocalizedText(Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name, description: row.description }]).map((translation) => [translation.locale, translation.description ?? ""])), locale, locales).value ?? row.description,
+      resolvedLocale: resolveLocalizedText(Object.fromEntries((row.translations ?? [{ locale: "ar", name: row.name, description: row.description }]).map((translation) => [translation.locale, translation.name])), locale, locales).resolvedLocale ?? locale,
       basePrice: row.base_price == null ? null : Number(row.base_price),
       price: this.resolveListPrice(
         row.base_price == null ? null : Number(row.base_price),
@@ -2160,7 +2183,7 @@ export class ProductService {
       images: images.map((image) => this.imageDto(image)),
       sizes: sizes.map((size) => ({
         id: size.id,
-        name: size.name,
+        name: resolveLocalizedText(Object.fromEntries((size.translations ?? [{ locale: "ar", name: size.name }]).map((translation) => [translation.locale, translation.name])), locale, locales).value ?? size.name,
         price: Number(size.price),
         isAvailable: Boolean(size.is_available),
         isDefault: Boolean(size.is_default),

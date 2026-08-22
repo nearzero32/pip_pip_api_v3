@@ -15,7 +15,7 @@ describe("M3-B1 Zones — SUPER_ADMIN explicit City contract", () => {
     const u = new URL(`http://localhost${path}`); u.searchParams.set("cityId", cityId);
     return jsonRequest(u.pathname + u.search, { ...init, method });
   };
-  const create = (name: string, boundary: unknown, cityId = active, token = superToken) => h.app.handle(request("/api/v1/dashboard/zones", { method: "POST", token, body: { name, boundary } }, cityId));
+  const create = (name: string, boundary: unknown, cityId = active, token = superToken) => h.app.handle(request("/api/v1/dashboard/zones", { method: "POST", token, body: { translations: [{ locale: "ar", name }, { locale: "en", name }], boundary } }, cityId));
   const login = (email: string) => h.auth.dashboard.login({ email, password, deviceName: email, ip: "test", requestId: crypto.randomUUID() });
 
   beforeAll(async () => {
@@ -46,7 +46,7 @@ describe("M3-B1 Zones — SUPER_ADMIN explicit City contract", () => {
     const zone = await made.json() as { id: string; cityId: string; boundary: { type: string } }; expect(zone.cityId).toBe(active); expect(zone.boundary.type).toBe("Polygon");
     expect((await h.app.handle(request("/api/v1/dashboard/zones", { token: superToken }))).status).toBe(200);
     expect((await h.app.handle(request(`/api/v1/dashboard/zones/${zone.id}`, { token: superToken }))).status).toBe(200);
-    expect((await h.app.handle(request(`/api/v1/dashboard/zones/${zone.id}`, { method: "PATCH", token: superToken, body: { name: "renamed" } }))).status).toBe(200);
+    expect((await h.app.handle(request(`/api/v1/dashboard/zones/${zone.id}`, { method: "PATCH", token: superToken, body: { translations: [{ locale: "ar", name: "renamed" }, { locale: "en", name: "renamed" }] } }))).status).toBe(200);
     expect((await h.app.handle(request(`/api/v1/dashboard/zones/${zone.id}`, { method: "DELETE", token: superToken }))).status).toBe(200);
   });
 
@@ -64,8 +64,9 @@ describe("M3-B1 Zones — SUPER_ADMIN explicit City contract", () => {
     await h.client`update cities set boundary=null where id=${draft}`;
     const missing = await create("no-boundary", square(50,20), draft); expect(missing.status).toBe(409); expect(await code(missing)).toBe("CITY_BOUNDARY_REQUIRED");
     const [legacy] = await h.client<{ id: string }[]>`insert into zones(city_id,name,boundary,status) values(${draft},'legacy',ST_GeomFromText('POLYGON((51 20,51.4 20,51.4 20.4,51 20.4,51 20))',4326),'ACTIVE') returning id::text id`;
+    await h.client`insert into zone_translations(zone_id,city_id,locale,name) values(${legacy!.id},${draft},'ar','legacy'),(${legacy!.id},${draft},'en','legacy')`;
     expect((await h.app.handle(request(`/api/v1/dashboard/zones/${legacy!.id}`, { token:superToken }, draft))).status).toBe(200);
-    expect((await h.app.handle(request(`/api/v1/dashboard/zones/${legacy!.id}`, { method:"PATCH", token:superToken, body:{name:"legacy-2"} }, draft))).status).toBe(200);
+    expect((await h.app.handle(request(`/api/v1/dashboard/zones/${legacy!.id}`, { method:"PATCH", token:superToken, body:{translations:[{ locale:"ar", name:"legacy-2" },{ locale:"en", name:"legacy-2" }]} }, draft))).status).toBe(200);
     expect((await h.app.handle(request(`/api/v1/dashboard/zones/${legacy!.id}`, { method:"DELETE", token:superToken }, draft))).status).toBe(200);
     await h.client`update cities set boundary=ST_GeomFromText('MULTIPOLYGON(((0 0,179 0,179 89,0 89,0 0)))',4326) where id=${draft}`;
   });
@@ -76,7 +77,7 @@ describe("M3-B1 Zones — SUPER_ADMIN explicit City contract", () => {
       expect((await create("denied", square(53,20), active, token)).status).toBe(403);
       expect((await h.app.handle(request("/api/v1/dashboard/zones", {token}))).status).toBe(403);
       expect((await h.app.handle(request(`/api/v1/dashboard/zones/${id}`, {token}))).status).toBe(403);
-      expect((await h.app.handle(request(`/api/v1/dashboard/zones/${id}`, {method:"PATCH",token,body:{name:"x"}}))).status).toBe(403);
+      expect((await h.app.handle(request(`/api/v1/dashboard/zones/${id}`, {method:"PATCH",token,body:{translations:[{locale:"ar",name:"x"},{locale:"en",name:"x"}]}}))).status).toBe(403);
       expect((await h.app.handle(request(`/api/v1/dashboard/zones/${id}`, {method:"DELETE",token}))).status).toBe(403);
     }
     expect((await h.app.handle(request("/api/v1/dashboard/zones", {}))).status).toBe(401);

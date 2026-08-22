@@ -32,6 +32,7 @@ describe("Store Categories unit", () => {
       storeId: "22222222-2222-4222-8222-222222222222",
       parentCategoryId: null,
       name: "برغر",
+      translations: [{ locale: "ar", name: "برغر" }],
       status: "ACTIVE",
       displayOrder: 1,
       createdAt: "2026-01-01T00:00:00.000Z",

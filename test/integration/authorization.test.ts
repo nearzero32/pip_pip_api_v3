@@ -19,6 +19,8 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
   const password = "fixed staff password";
   let cityId = "";
   let cityAdminId = "";
+  const cityBoundary = { type: "Polygon", coordinates: [[[44, 33], [45, 33], [45, 34], [44, 34], [44, 33]]] };
+  const cityTranslations = (ar: string, en: string) => [{ locale: "ar", name: ar }, { locale: "en", name: en }];
 
   beforeAll(async () => {
     harness = await createIntegrationHarness({
@@ -77,11 +79,11 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
         token: session.access_token,
         body: {
           governorateId: seededGovernorateId,
-          nameAr: "مدينة اختبار صلاحيات",
-          nameEn: "Authz HTTP City",
+          translations: cityTranslations("مدينة اختبار صلاحيات", "Authz HTTP City"),
           latitude: 33.3,
           longitude: 44.4,
           displayOrder: 1,
+          boundary: cityBoundary,
         },
       }),
     );
@@ -133,11 +135,11 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
         token: customer.access_token,
         body: {
           governorateId: seededGovernorateId,
-          nameAr: "x",
-          nameEn: "x",
-          latitude: 1,
-          longitude: 1,
+          translations: cityTranslations("x", "x"),
+          latitude: 33.2,
+          longitude: 44.2,
           displayOrder: 0,
+          boundary: cityBoundary,
         },
       }),
     );
@@ -204,11 +206,11 @@ describe("Token-based SUPER_ADMIN authorization (full HTTP path)", () => {
         token: forged,
         body: {
           governorateId: seededGovernorateId,
-          nameAr: "y",
-          nameEn: "y",
-          latitude: 1,
-          longitude: 1,
+          translations: cityTranslations("y", "y"),
+          latitude: 33.2,
+          longitude: 44.2,
           displayOrder: 0,
+          boundary: cityBoundary,
         },
       }),
     );

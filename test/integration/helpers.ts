@@ -410,11 +410,12 @@ export async function createActiveCity(
   client: SQL,
   nameEn = `City ${crypto.randomUUID().slice(0, 8)}`,
 ) {
-  const [city] = await client<
-    { id: string }[]
-  >`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,boundary,status,display_order)
-    values(${seededGovernorateId},${nameEn},${nameEn},33.3,44.4,ST_GeomFromText('MULTIPOLYGON(((0 0,179 0,179 89,0 89,0 0)))',4326),'ACTIVE',1) returning id`;
-  return city!.id;
+  return client.begin(async (tx) => {
+    const [city] = await tx<{ id: string }[]>`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,boundary,status,display_order)
+      values(${seededGovernorateId},${nameEn},${nameEn},33.3,44.4,ST_GeomFromText('MULTIPOLYGON(((0 0,179 0,179 89,0 89,0 0)))',4326),'ACTIVE',1) returning id::text as id`;
+    await tx`insert into city_translations(city_id,locale,name) values (${city!.id},'ar',${nameEn}),(${city!.id},'en',${nameEn})`;
+    return city!.id;
+  });
 }
 
 export async function createDriverAccount(

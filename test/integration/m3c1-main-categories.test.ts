@@ -4,6 +4,10 @@ import { createActiveCity, createIntegrationHarness, createStaffAccount, jsonReq
 const password = "fixed staff password";
 const pngBytes = Uint8Array.of(0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,0xde,0x00,0x00,0x00,0x0c,0x49,0x44,0x41,0x54,0x08,0xd7,0x63,0xf8,0xff,0xff,0x3f,0x00,0x05,0xfe,0x02,0xfe,0xdc,0xcc,0x59,0xe7,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82);
 const errorOf = async (response: Response) => ((await response.json()) as { error: { code: string } }).error;
+const translationsFor = (name: string) => [
+  { locale: "ar", name },
+  { locale: "en", name: `EN ${name}` },
+];
 
 describe("M3-C1 Main Categories — SUPER_ADMIN explicit City contract", () => {
   let harness: IntegrationHarness, cityA = "", cityB = "", superToken = "", adminToken = "", superAccountId = "";
@@ -20,7 +24,14 @@ describe("M3-C1 Main Categories — SUPER_ADMIN explicit City contract", () => {
     expect(confirmed.status).toBe(200);
     return payload.asset.id;
   };
-  const createCategory = (cityId: string, body: Record<string, unknown>, token = superToken) => harness.app.handle(jsonRequest("/api/v1/dashboard/main-categories", { method: "POST", token, body: { cityId, ...body } }));
+  const createCategory = (cityId: string, body: Record<string, unknown>, token = superToken) => {
+    const { name, ...rest } = body;
+    return harness.app.handle(jsonRequest("/api/v1/dashboard/main-categories", {
+      method: "POST",
+      token,
+      body: { cityId, ...rest, ...(typeof name === "string" ? { translations: translationsFor(name) } : {}) },
+    }));
+  };
 
   beforeAll(async () => {
     harness = await createIntegrationHarness({ databasePrefix: "pip_pip_v3_m3c1" });
@@ -67,7 +78,7 @@ describe("M3-C1 Main Categories — SUPER_ADMIN explicit City contract", () => {
     const category = (await created.json()) as { id: string };
     const cross = await harness.app.handle(jsonRequest(queryCity(`/api/v1/dashboard/main-categories/${category.id}`, cityB), { token: superToken }));
     expect(cross.status).toBe(404); expect((await errorOf(cross)).code).toBe("MAIN_CATEGORY_NOT_FOUND");
-    const updated = await harness.app.handle(jsonRequest(queryCity(`/api/v1/dashboard/main-categories/${category.id}`), { method: "PATCH", token: superToken, body: { name: "تم التحديث", displayOrder: 7 } }));
+    const updated = await harness.app.handle(jsonRequest(queryCity(`/api/v1/dashboard/main-categories/${category.id}`), { method: "PATCH", token: superToken, body: { translations: translationsFor("تم التحديث"), displayOrder: 7 } }));
     expect(updated.status).toBe(200);
     const updateBody = (await updated.json()) as { createdByAccountId: string; updatedByAccountId: string };
     expect(updateBody.createdByAccountId).toBe(superAccountId); expect(updateBody.updatedByAccountId).toBe(superAccountId);
@@ -98,6 +109,9 @@ describe("M3-C1 Main Categories — SUPER_ADMIN explicit City contract", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { data: Array<{ id: string; name: string }> };
     expect(body.data.some((row) => row.id === activeId)).toBe(true); expect(body.data.some((row) => row.name === "غير علني")).toBe(false); expect(JSON.stringify(body)).not.toContain("ByAccountId");
+    const english = await harness.app.handle(new Request("http://localhost/api/v1/public/main-categories", { headers: { "X-City-Id": cityA, "Accept-Language": "en" } }));
+    const englishRows = ((await english.json()) as { data: Array<{ id: string; name: string; resolvedLocale: string }> }).data;
+    expect(englishRows.find((row) => row.id === activeId)).toMatchObject({ name: "EN علني", resolvedLocale: "en" });
   });
 
   test("OpenAPI documents the same Dashboard and Public paths", async () => {

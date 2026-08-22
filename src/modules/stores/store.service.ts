@@ -7,7 +7,6 @@ import { requireCityPermission } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
 import {
-  normalizeArabicCategoryName,
   validateDisplayOrder,
 } from "../catalog/arabic-name";
 import {
@@ -29,6 +28,8 @@ import {
 import { parseCoordinate } from "../geography/zone/geometry";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
+import { activeLocales, translationsInput, validateTranslationInput } from "../../localization/database";
+import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText, type LocalizedTranslation } from "../../localization/localization";
 import { PUBLIC_STORE_ELIGIBILITY_SQL } from "./public-store-eligibility";
 import {
   computeIsAcceptingOrders,
@@ -66,6 +67,28 @@ type StoreRow = {
   cover_object_key: string | null;
   cover_visibility: string | null;
   cover_status: string | null;
+  translations?: Array<{ locale: string; name: string; address: string }>;
+  main_category_translations?: LocalizedTranslation[];
+};
+
+type StoreTranslation = { locale: string; name: string; address: string };
+
+const storeTranslationsInput = (
+  value: unknown,
+  options: { required: boolean },
+): StoreTranslation[] | undefined => {
+  const names = translationsInput(value, options);
+  if (!names) return undefined;
+  const raw = value as Array<Record<string, unknown>>;
+  return names.map((translation, index) => {
+    const address = raw[index]?.address;
+    if (typeof address !== "string" || !address.trim() || address.trim().length > 500) {
+      throw new AppError(422, "INVALID_TRANSLATION", "Invalid translations", undefined, undefined, {
+        fields: [{ field: `translations[${index}].address`, code: "INVALID_TRANSLATION", message: "Address is required and must be at most 500 characters" }],
+      });
+    }
+    return { ...translation, address: address.trim() };
+  });
 };
 
 const STORE_SELECT = `
@@ -93,6 +116,8 @@ const STORE_SELECT = `
   cover.object_key as cover_object_key,
   cover.visibility::text as cover_visibility,
   cover.status::text as cover_status
+  ,coalesce((select jsonb_agg(jsonb_build_object('locale',st.locale,'name',st.name,'address',st.address) order by st.locale) from store_translations st where st.store_id=s.id),'[]'::jsonb) as translations
+  ,coalesce((select jsonb_agg(jsonb_build_object('locale',mt.locale,'name',mt.name) order by mt.locale) from main_category_translations mt where mt.main_category_id=mc.id),'[]'::jsonb) as main_category_translations
 `;
 
 const sortUuidAsc = (ids: string[]) =>
@@ -139,6 +164,21 @@ export class StoreService {
     );
     await assertActiveCity(this.client, cityId);
     return cityId;
+  }
+
+  private async upsertTranslations(
+    tx: SQL,
+    storeId: string,
+    cityId: string,
+    translations: StoreTranslation[],
+  ) {
+    for (const translation of translations) {
+      await tx`
+        insert into store_translations(store_id, city_id, locale, name, address)
+        values (${storeId}, ${cityId}, ${translation.locale}, ${translation.name}, ${translation.address})
+        on conflict(store_id, locale) do update set
+          name = excluded.name, address = excluded.address, updated_at = now()`;
+    }
   }
 
   /** Merchant-only: toggle Store order acceptance (open/closed operational state). */
@@ -252,6 +292,9 @@ export class StoreService {
       mainCategory: {
         id: row.main_category_id,
         name: row.main_category_name,
+        translations: row.main_category_translations ?? [
+          { locale: "ar", name: row.main_category_name },
+        ],
       },
       name: row.name,
       phone: row.phone,
@@ -293,27 +336,46 @@ export class StoreService {
       createdAt: dateValue(row.created_at),
       updatedAt: dateValue(row.updated_at),
       archivedAt: dateValue(row.archived_at),
+      translations: row.translations ?? [
+        { locale: "ar", name: row.name, address: row.address },
+      ],
     };
   }
 
   private publicDto(
     row: StoreRow,
     hours: WorkingHourPeriod[],
+    locale: string,
+    locales: Awaited<ReturnType<typeof activeLocales>>,
     now = new Date(),
   ): any {
     const schedule = evaluateStoreSchedule(hours, now);
+    const translations = row.translations ?? [
+      { locale: "ar", name: row.name, address: row.address },
+    ];
+    const names = Object.fromEntries(translations.map((translation) => [translation.locale, translation.name]));
+    const addresses = Object.fromEntries(translations.map((translation) => [translation.locale, translation.address]));
+    const localizedName = resolveLocalizedText(names, locale, locales);
+    const localizedAddress = resolveLocalizedText(addresses, locale, locales);
+    const mainCategoryName = resolveLocalizedText(
+      Object.fromEntries((row.main_category_translations ?? [{ locale: "ar", name: row.main_category_name }]).map((translation) => [translation.locale, translation.name])),
+      locale,
+      locales,
+    );
     return {
       id: row.id,
-      name: row.name,
+      name: localizedName.value ?? row.name,
+      resolvedLocale: localizedName.resolvedLocale ?? locale,
       phone: row.phone,
-      address: row.address,
+      address: localizedAddress.value ?? row.address,
       location: {
         latitude: Number(row.latitude),
         longitude: Number(row.longitude),
       },
       mainCategory: {
         id: row.main_category_id,
-        name: row.main_category_name,
+        name: mainCategoryName.value ?? row.main_category_name,
+        resolvedLocale: mainCategoryName.resolvedLocale ?? locale,
       },
       logo: mediaImage(
         row.logo_asset_id,
@@ -540,10 +602,8 @@ export class StoreService {
     if (input.coverAssetId === null) {
       throw new AppError(422, "VALIDATION_FAILED", "coverAssetId cannot be null on create");
     }
-    const name = normalizeArabicCategoryName(input.name);
+    const translations = storeTranslationsInput(input.translations, { required: true })!;
     const phone = normalizePhone(String(input.phone ?? ""));
-    const address = String(input.address ?? "").trim();
-    if (!address) throw new AppError(422, "VALIDATION_FAILED", "Invalid address");
     const latitude = parseCoordinate(input.latitude, "latitude");
     const longitude = parseCoordinate(input.longitude, "longitude");
     const status = (input.status as StoreStatus | undefined) ?? "DRAFT";
@@ -578,6 +638,8 @@ export class StoreService {
 
     const mainCategoryId = String(input.mainCategoryId);
     const storeId = await beginWithGeographyRetry(this.client, async (tx) => {
+      await validateTranslationInput(tx, translations, { requireAllRequired: true, maxName: 100 });
+      const arabic = translations.find((translation) => translation.locale === "ar")!;
       const state = await lockCityGeography(tx, cityId);
       assertCityOperability(state);
       await this.lockMainCategory(tx, cityId, mainCategoryId);
@@ -611,9 +673,9 @@ export class StoreService {
         ) values (
           ${cityId},
           ${mainCategoryId},
-          ${name},
+          ${arabic.name},
           ${phone},
-          ${address},
+          ${arabic.address},
           ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326),
           ${logoAssetId},
           ${coverAssetId},
@@ -624,6 +686,7 @@ export class StoreService {
         )
         returning id::text as id`;
       const id = inserted!.id;
+      await this.upsertTranslations(tx, id, cityId, translations);
       await this.replaceZones(tx, id, cityId, lockedZones);
       await this.replaceSubcategories(
         tx,
@@ -777,9 +840,8 @@ export class StoreService {
     }
     const keys = [
       "mainCategoryId",
-      "name",
+      "translations",
       "phone",
-      "address",
       "latitude",
       "longitude",
       "logoAssetId",
@@ -907,15 +969,13 @@ export class StoreService {
         throw new AppError(422, "VALIDATION_FAILED", "Logo and cover must differ");
       }
 
-      const name =
-        "name" in input ? normalizeArabicCategoryName(input.name) : null;
+      const translations = storeTranslationsInput(input.translations, { required: false });
+      if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 100 });
+      const arabic = translations?.find((translation) => translation.locale === "ar");
+      const name = arabic?.name ?? null;
       const phone =
         "phone" in input ? normalizePhone(String(input.phone)) : null;
-      const address =
-        "address" in input ? String(input.address).trim() : null;
-      if (address !== null && !address) {
-        throw new AppError(422, "VALIDATION_FAILED", "Invalid address");
-      }
+      const address = arabic?.address ?? null;
       const status =
         "status" in input ? (input.status as StoreStatus) : null;
       if (status && !["DRAFT", "ACTIVE", "INACTIVE"].includes(status)) {
@@ -937,6 +997,7 @@ export class StoreService {
         // reject the parent update while old subcategory rows still reference the prior main.
         await tx`delete from store_subcategories where store_id = ${storeId}`;
       }
+      if (translations) await this.upsertTranslations(tx, storeId, cityId, translations);
 
       if (longitude != null && latitude != null) {
         await tx`
@@ -1067,7 +1128,10 @@ export class StoreService {
   async listPublic(
     cityId: string,
     input: { zoneId: string; mainCategoryId?: string; now?: Date },
+    request?: Request,
   ) {
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const [zone] = await this.client<{ id: string; status: string }[]>`
       select id::text as id, status::text as status from zones
       where id = ${input.zoneId} and city_id = ${cityId}
@@ -1092,12 +1156,14 @@ export class StoreService {
     const now = input.now ?? new Date();
     const data = [];
     for (const row of rows) {
-      data.push(this.publicDto(row, await this.loadHours(row.id), now));
+      data.push(this.publicDto(row, await this.loadHours(row.id), locale, locales, now));
     }
     return { data };
   }
 
-  async getPublic(cityId: string, storeId: string, now = new Date()) {
+  async getPublic(cityId: string, storeId: string, request?: Request, now = new Date()) {
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const rows = (await this.client.unsafe(
       `select ${STORE_SELECT}
        from stores s
@@ -1110,6 +1176,6 @@ export class StoreService {
     )) as StoreRow[];
     const row = rows[0];
     if (!row) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
-    return this.publicDto(row, await this.loadHours(storeId), now);
+    return this.publicDto(row, await this.loadHours(storeId), locale, locales, now);
   }
 }

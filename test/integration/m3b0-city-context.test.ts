@@ -31,6 +31,7 @@ describe("M3-B0 trusted City context and staff authorization", () => {
   let harness: IntegrationHarness;
   let cityA = "";
   let cityB = "";
+  let inactiveCity = "";
   let superToken = "";
   let adminAToken = "";
   let adminAId = "";
@@ -43,6 +44,8 @@ describe("M3-B0 trusted City context and staff authorization", () => {
     });
     cityA = await createActiveCity(harness.client, "City A");
     cityB = await createActiveCity(harness.client, "City B");
+    inactiveCity = await createActiveCity(harness.client, "Draft City");
+    await harness.client`update cities set status = 'DRAFT' where id = ${inactiveCity}`;
     await createStaffAccount(harness.auth, harness.client, {
       email: "m3b0-super@example.com",
       password,
@@ -94,7 +97,7 @@ describe("M3-B0 trusted City context and staff authorization", () => {
   });
 
   describe("public X-City-Id context", () => {
-    test("missing, malformed, unknown, and inactive cities are rejected", async () => {
+    test("missing, malformed, and unknown cities are rejected", async () => {
       await expect(
         requirePublicCityContext(
           harness.client,
@@ -133,16 +136,13 @@ describe("M3-B0 trusted City context and staff authorization", () => {
         ),
       ).rejects.toMatchObject({ publicCode: "CITY_NOT_FOUND", statusCode: 404 });
 
-      const [draft] = await harness.client<
-        { id: string }[]
-      >`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,status,display_order)
-        values('11111111-1111-4111-8111-000000000001','مسودة','Draft City',1,1,'DRAFT',9) returning id`;
+    });
+
+    test("inactive cities are rejected", async () => {
       await expect(
         requirePublicCityContext(
           harness.client,
-          new Request("http://localhost/", {
-            headers: { "x-city-id": draft!.id },
-          }),
+          new Request("http://localhost/", { headers: { "x-city-id": inactiveCity } }),
         ),
       ).rejects.toMatchObject({ publicCode: "CITY_NOT_ACTIVE", statusCode: 409 });
     });
@@ -170,7 +170,7 @@ describe("M3-B0 trusted City context and staff authorization", () => {
         "Insufficient privileges",
       );
       await expect(
-        requireCityPermission(harness.client, superIdentity, "zones.read"),
+        requireCityPermission(harness.client, superIdentity, "stores.read"),
       ).rejects.toMatchObject({ publicCode: "FORBIDDEN" });
     });
 
@@ -183,7 +183,7 @@ describe("M3-B0 trusted City context and staff authorization", () => {
       });
       expect(requireCityAdmin(adminIdentity)).toBe(cityA);
       expect(
-        await requireCityPermission(harness.client, adminIdentity, "zones.read"),
+        await requireCityPermission(harness.client, adminIdentity, "stores.read"),
       ).toBe(cityA);
 
       const employeeId = await createStaffAccount(harness.auth, harness.client, {
@@ -200,7 +200,7 @@ describe("M3-B0 trusted City context and staff authorization", () => {
         cityId: cityA,
       });
       await expect(
-        requireCityPermission(harness.client, employeeIdentity, "zones.read"),
+        requireCityPermission(harness.client, employeeIdentity, "stores.read"),
       ).rejects.toMatchObject({ publicCode: "FORBIDDEN" });
 
       await harness.auth.staff.grantEmployeePermission(
@@ -214,10 +214,10 @@ describe("M3-B0 trusted City context and staff authorization", () => {
           storeId: null,
         },
         employeeId,
-        "zones.read",
+        "stores.read",
       );
       expect(
-        await requireCityPermission(harness.client, employeeIdentity, "zones.read"),
+        await requireCityPermission(harness.client, employeeIdentity, "stores.read"),
       ).toBe(cityA);
     });
   });
@@ -302,8 +302,15 @@ describe("M3-B0 trusted City context and staff authorization", () => {
     });
 
     test("permission grant and revoke take effect immediately on the same access token", async () => {
+      await createStaffAccount(harness.auth, harness.client, {
+        email: "m3b0-permission-employee@example.com",
+        password,
+        roles: ["SUPPORT"],
+        cityId: cityA,
+        managedByAccountId: adminAId,
+      });
       const employeeSession = await harness.auth.dashboard.login({
-        email: "m3b0-support-a@example.com",
+        email: "m3b0-permission-employee@example.com",
         password,
         deviceName: "e",
         ip: "e",
@@ -323,7 +330,7 @@ describe("M3-B0 trusted City context and staff authorization", () => {
       );
 
       await expect(
-        requireCityPermission(harness.client, employeeIdentity, "zones.create"),
+        requireCityPermission(harness.client, employeeIdentity, "stores.create"),
       ).rejects.toMatchObject({ publicCode: "FORBIDDEN" });
 
       const employeeId = employeeIdentity.accountId;
@@ -331,21 +338,21 @@ describe("M3-B0 trusted City context and staff authorization", () => {
         jsonRequest(`/api/v1/dashboard/employees/${employeeId}/permissions`, {
           method: "POST",
           token: adminAToken,
-          body: { permission: "zones.create" },
+          body: { permission: "stores.create" },
         }),
       );
       expect(
-        await requireCityPermission(harness.client, employeeIdentity, "zones.create"),
+        await requireCityPermission(harness.client, employeeIdentity, "stores.create"),
       ).toBe(cityA);
 
       await harness.app.handle(
         jsonRequest(
-          `/api/v1/dashboard/employees/${employeeId}/permissions/zones.create`,
+          `/api/v1/dashboard/employees/${employeeId}/permissions/stores.create`,
           { method: "DELETE", token: adminAToken },
         ),
       );
       await expect(
-        requireCityPermission(harness.client, employeeIdentity, "zones.create"),
+        requireCityPermission(harness.client, employeeIdentity, "stores.create"),
       ).rejects.toMatchObject({ publicCode: "FORBIDDEN" });
     });
 

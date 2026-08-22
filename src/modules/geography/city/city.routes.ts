@@ -39,6 +39,7 @@ const cityListDto = t.Object({
   governorateId: t.String({ format: "uuid" }),
   nameAr: t.String(),
   nameEn: t.String(),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
   latitude: t.Number(),
   longitude: t.Number(),
   status: t.Union([
@@ -59,6 +60,8 @@ const publicGov = t.Object({
   id: t.String({ format: "uuid" }),
   nameAr: t.String(),
   nameEn: t.String(),
+  name: t.String(),
+  resolvedLocale: t.String(),
 });
 const publicCity = t.Object({
   id: t.String({ format: "uuid" }),

@@ -52,6 +52,7 @@ const subcategoryDto = t.Object({
 const publicSubcategoryDto = t.Object({
   id: t.String({ format: "uuid" }),
   name: t.String(),
+  resolvedLocale: t.String(),
   displayOrder: t.Integer({ minimum: 0 }),
   image: t.Nullable(imageDto),
 });
@@ -281,7 +282,7 @@ export const subcategoryRoutes = (
       "/api/v1/public/subcategories",
       async ({ request, query }) => {
         const city = await requirePublicCityContext(auth.client, request);
-        return service.listPublic(city.city.id, query.mainCategoryId);
+        return service.listPublic(city.city.id, query.mainCategoryId, request);
       },
       {
         query: t.Object(

@@ -20,6 +20,14 @@ describe("M3-A Geography HTTP routes", () => {
   let customerToken = "";
   let driverToken = "";
   let cityId = "";
+  const cityBoundary = {
+    type: "Polygon",
+    coordinates: [[[44, 33], [45, 33], [45, 34], [44, 34], [44, 33]]],
+  };
+  const cityTranslations = (ar: string, en: string) => [
+    { locale: "ar", name: ar },
+    { locale: "en", name: en },
+  ];
 
   beforeAll(async () => {
     harness = await createIntegrationHarness({
@@ -183,11 +191,11 @@ describe("M3-A Geography HTTP routes", () => {
           token: superToken,
           body: {
             governorateId: seededGovernorateId,
-            nameAr: "مدينة حالة",
-            nameEn: "Status City",
+            translations: cityTranslations("مدينة حالة", "Status City"),
             latitude: 33.1,
             longitude: 44.1,
             displayOrder: 10,
+            boundary: cityBoundary,
           },
         }),
       );
@@ -241,11 +249,11 @@ describe("M3-A Geography HTTP routes", () => {
           token: superToken,
           body: {
             governorateId: seededGovernorateId,
-            nameAr: "مدينة جديدة",
-            nameEn: "New City",
+            translations: cityTranslations("مدينة جديدة", "New City"),
             latitude: 33.3152,
             longitude: 44.3661,
             displayOrder: 3,
+            boundary: cityBoundary,
           },
         }),
       );
@@ -270,8 +278,8 @@ describe("M3-A Geography HTTP routes", () => {
             governorateId: seededGovernorateId,
             nameAr: "x",
             nameEn: "x",
-            latitude: 1,
-            longitude: 1,
+            latitude: 33.2,
+            longitude: 44.2,
             displayOrder: 0,
             status: "ACTIVE",
           },
@@ -286,8 +294,8 @@ describe("M3-A Geography HTTP routes", () => {
             governorateId: seededGovernorateId,
             nameAr: "x",
             nameEn: "x",
-            latitude: 1,
-            longitude: 1,
+            latitude: 33.2,
+            longitude: 44.2,
             displayOrder: 0,
             archivedAt: new Date().toISOString(),
           },
@@ -353,11 +361,11 @@ describe("M3-A Geography HTTP routes", () => {
           token: superToken,
           body: {
             governorateId: missing,
-            nameAr: "فاشل",
-            nameEn: "Fail",
-            latitude: 1,
-            longitude: 1,
+            translations: cityTranslations("فاشل", "Fail"),
+            latitude: 33.2,
+            longitude: 44.2,
             displayOrder: 0,
+            boundary: cityBoundary,
           },
         }),
       );
@@ -418,11 +426,11 @@ describe("M3-A Geography HTTP routes", () => {
           token: superToken,
           body: {
             governorateId: seededGovernorateId,
-            nameAr: "بغداد شرق",
-            nameEn: "Alpha City",
+            translations: cityTranslations("بغداد شرق", "Alpha City"),
             latitude: 33.2,
             longitude: 44.2,
             displayOrder: 1,
+            boundary: cityBoundary,
           },
         }),
       );
@@ -432,11 +440,11 @@ describe("M3-A Geography HTTP routes", () => {
           token: superToken,
           body: {
             governorateId: seededGovernorateId,
-            nameAr: "بغداد غرب",
-            nameEn: "Beta City",
+            translations: cityTranslations("بغداد غرب", "Beta City"),
             latitude: 33.2,
             longitude: 44.2,
             displayOrder: 2,
+            boundary: cityBoundary,
           },
         }),
       );
@@ -475,11 +483,11 @@ describe("M3-A Geography HTTP routes", () => {
           token: supportToken,
           body: {
             governorateId: seededGovernorateId,
-            nameAr: "مرفوض",
-            nameEn: "Denied",
+            translations: cityTranslations("مرفوض", "Denied"),
             latitude: 1,
             longitude: 1,
             displayOrder: 0,
+            boundary: cityBoundary,
           },
         }),
       );
@@ -511,11 +519,11 @@ describe("M3-A Geography HTTP routes", () => {
             token: superToken,
             body: {
               governorateId: seededGovernorateId,
-              nameAr: name,
-              nameEn: name,
-              latitude: 32,
+              translations: cityTranslations(name, name),
+              latitude: 33.2,
               longitude: 44,
               displayOrder: 5,
+              boundary: cityBoundary,
             },
           }),
         );
@@ -572,11 +580,11 @@ describe("M3-A Geography HTTP routes", () => {
           token: superToken,
           body: {
             governorateId: seededGovernorateId,
-            nameAr: "invalid-t",
-            nameEn: "invalid-t",
-            latitude: 30,
-            longitude: 40,
+            translations: cityTranslations("invalid-t", "invalid-t"),
+            latitude: 33.2,
+            longitude: 44.2,
             displayOrder: 6,
+            boundary: cityBoundary,
           },
         }),
       );
@@ -609,11 +617,11 @@ describe("M3-A Geography HTTP routes", () => {
             token: superToken,
             body: {
               governorateId,
-              nameAr: nameEn,
-              nameEn,
+              translations: cityTranslations(nameEn, nameEn),
               latitude: 33.5,
               longitude: 44.5,
               displayOrder,
+              boundary: cityBoundary,
             },
           }),
         );
@@ -769,8 +777,12 @@ describe("M3-A Geography HTTP routes", () => {
         expect(row).not.toHaveProperty("governorate_display_order");
         expect(row).toHaveProperty("nameAr");
         expect(row).toHaveProperty("nameEn");
+        expect(row).toHaveProperty("name");
+        expect(row).toHaveProperty("resolvedLocale");
         expect(row).toHaveProperty("governorate");
         const gov = row.governorate as Record<string, unknown>;
+        expect(gov).toHaveProperty("name");
+        expect(gov).toHaveProperty("resolvedLocale");
         expect(gov).not.toHaveProperty("status");
         expect(gov).not.toHaveProperty("displayOrder");
       }
@@ -894,11 +906,11 @@ describe("M3-A Geography HTTP routes", () => {
           token: supportToken,
           body: {
             governorateId: seededGovernorateId,
-            nameAr: "denied",
-            nameEn: "denied",
-            latitude: 1,
-            longitude: 1,
+            translations: cityTranslations("denied", "denied"),
+            latitude: 33.2,
+            longitude: 44.2,
             displayOrder: 0,
+            boundary: cityBoundary,
           },
         }),
       );

@@ -496,7 +496,7 @@ describe("M3-B1.2 City reassignment revocation and race-safe Zone mutations", ()
       jsonRequest(`/api/v1/dashboard/cities/${city}`, {
         method: "PATCH",
         token: superToken,
-        body: { nameEn: "Reassign City Renamed" },
+        body: { translations: [{ locale: "en", name: "Reassign City Renamed" }] },
       }),
     );
     expect(renamed.status).toBe(200);

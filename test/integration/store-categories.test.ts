@@ -194,7 +194,10 @@ describe("Store Categories (in-store catalog)", () => {
         method: "POST",
         token: superToken,
         body: { cityId: token === adminBToken ? cityB : cityA,
-          name: `Z-${phone.slice(-4)}`,
+          translations: [
+            { locale: "ar", name: `Z-${phone.slice(-4)}` },
+            { locale: "en", name: `Z-${phone.slice(-4)}` },
+          ],
           boundary: square(west, south, west + 0.1, south + 0.1),
         },
       }),
@@ -207,7 +210,10 @@ describe("Store Categories (in-store catalog)", () => {
         method: "POST",
         token: superToken,
         body: { cityId: token === adminBToken ? cityB : cityA,
-          name: `تصنيف-${phone.slice(-4)}`,
+          translations: [
+            { locale: "ar", name: `تصنيف-${phone.slice(-4)}` },
+            { locale: "en", name: `Category-${phone.slice(-4)}` },
+          ],
           imageAssetId: await createReadyAsset(
             token,
             "CATEGORY_IMAGE",
@@ -226,7 +232,10 @@ describe("Store Categories (in-store catalog)", () => {
         token,
         body: {
           mainCategoryId: mainId,
-          name: `فرعي-${phone.slice(-4)}`,
+          translations: [
+            { locale: "en", name: `Subcategory-${phone.slice(-4)}` },
+            { locale: "ar", name: `فرعي-${phone.slice(-4)}` },
+          ],
           status: "ACTIVE",
           displayOrder: 1,
         },
@@ -241,9 +250,11 @@ describe("Store Categories (in-store catalog)", () => {
         token,
         body: {
           mainCategoryId: mainId,
-          name,
+          translations: [
+            { locale: "ar", name, address: "عنوان" },
+            { locale: "en", name, address: "Address" },
+          ],
           phone,
-          address: "عنوان",
           latitude: south + 0.02,
           longitude: west + 0.02,
           logoAssetId: await createReadyAsset(
@@ -265,14 +276,27 @@ describe("Store Categories (in-store catalog)", () => {
     token: string,
     storeId: string,
     body: Record<string, unknown>,
-  ) =>
+  ) => {
+    const { name, ...rest } = body;
+    const localizedBody =
+      typeof name === "string"
+        ? {
+            ...rest,
+            translations: [
+              { locale: "ar", name },
+              { locale: "en", name },
+            ],
+          }
+        : body;
+    return (
     harness.app.handle(
       jsonRequest(`/api/v1/dashboard/stores/${storeId}/categories`, {
         method: "POST",
         token,
-        body,
+        body: localizedBody,
       }),
-    );
+    ));
+  };
 
   beforeAll(async () => {
     harness = await createIntegrationHarness({

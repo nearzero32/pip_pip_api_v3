@@ -35,6 +35,10 @@ const square = (west: number, south: number, east: number, north: number) => ({
 
 const errorOf = async (response: Response) =>
   ((await response.json()) as { error: { code: string } }).error;
+const translationsFor = (name: string) => [
+  { locale: "ar", name },
+  { locale: "en", name: `EN ${name}` },
+];
 
 const login = async (
   harness: IntegrationHarness,
@@ -131,7 +135,7 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
         token: superToken,
         body: {
           cityId: token === adminBToken ? cityB : cityA,
-          name: `MZ-${phone.slice(-4)}`,
+          translations: translationsFor(`MZ-${phone.slice(-4)}`),
           boundary: square(west, south, west + 0.1, south + 0.1),
         },
       }),
@@ -144,7 +148,7 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
         token: superToken,
         body: {
           cityId: token === adminBToken ? cityB : cityA,
-          name: `تصنيف-${phone.slice(-4)}`,
+          translations: translationsFor(`تصنيف-${phone.slice(-4)}`),
           imageAssetId: await createReadyAsset(
             token,
             "CATEGORY_IMAGE",
@@ -163,7 +167,7 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
         token,
         body: {
           mainCategoryId: mainId,
-          name: `فرعي-${phone.slice(-4)}`,
+          translations: translationsFor(`فرعي-${phone.slice(-4)}`),
           status: "ACTIVE",
           displayOrder: 1,
         },
@@ -177,9 +181,11 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
         token,
         body: {
           mainCategoryId: mainId,
-          name,
+          translations: [
+            { locale: "ar", name, address: "عنوان" },
+            { locale: "en", name: `EN ${name}`, address: "EN عنوان" },
+          ],
           phone,
-          address: "عنوان",
           latitude: south + 0.02,
           longitude: west + 0.02,
           logoAssetId: await createReadyAsset(
@@ -203,7 +209,7 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
         method: "POST",
         token,
         body: {
-          name,
+          translations: translationsFor(name),
           basePrice: 5000,
           images: [
             {
@@ -232,14 +238,24 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
     token: string,
     storeId: string,
     body: Record<string, unknown>,
-  ) =>
-    harness.app.handle(
+  ) => {
+    const { name, options, ...rest } = body;
+    return harness.app.handle(
       jsonRequest(`/api/v1/dashboard/stores/${storeId}/modifier-groups`, {
         method: "POST",
         token,
-        body,
+        body: {
+          ...rest,
+          ...(typeof name === "string" ? { translations: translationsFor(name) } : {}),
+          ...(Array.isArray(options) ? { options: options.map((option) => {
+            const input = option as Record<string, unknown>;
+            const { name: optionName, ...optionRest } = input;
+            return { ...optionRest, ...(typeof optionName === "string" ? { translations: translationsFor(optionName) } : {}) };
+          }) } : {}),
+        },
       }),
     );
+  };
 
   beforeAll(async () => {
     harness = await createIntegrationHarness({
@@ -369,7 +385,7 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
               {
                 method: "POST",
                 token: adminToken,
-                body: { name: " جبنة إضافية " },
+                body: { translations: translationsFor(" جبنة إضافية ") },
               },
             ),
           ),
@@ -535,7 +551,7 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
         {
           method: "POST",
           token: adminToken,
-          body: { name: "هالابينو", displayOrder: 2 },
+          body: { translations: translationsFor("هالابينو"), displayOrder: 2 },
         },
       ),
     );
@@ -753,7 +769,7 @@ describe("Modifier Groups / Options / ProductModifierOption", () => {
         {
           method: "POST",
           token: adminToken,
-          body: { name: "خيار للاستعادة" },
+          body: { translations: translationsFor("خيار للاستعادة") },
         },
       ),
     );

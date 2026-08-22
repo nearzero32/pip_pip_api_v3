@@ -86,7 +86,7 @@ export class GovernorateService {
       `select id,name_ar,name_en,status,display_order,created_at,updated_at,
          coalesce((select jsonb_agg(jsonb_build_object('locale',gt.locale,'name',gt.name) order by gt.locale) from governorate_translations gt where gt.governorate_id=governorates.id),'[]'::jsonb) translations
        from governorates
-       where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
+       where ($1::text is null or exists (select 1 from governorate_translations gt where gt.governorate_id=governorates.id and gt.name ilike $1 escape '\\') or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
          and ($2::text is null or status=$2::governorate_status)
          and ($3::timestamptz is null or created_at >= $3)
          and ($4::timestamptz is null or created_at < $4)
@@ -96,7 +96,7 @@ export class GovernorateService {
     );
     const [count] = await this.client.unsafe(
       `select count(*)::text total from governorates
-       where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
+       where ($1::text is null or exists (select 1 from governorate_translations gt where gt.governorate_id=governorates.id and gt.name ilike $1 escape '\\') or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
          and ($2::text is null or status=$2::governorate_status)
          and ($3::timestamptz is null or created_at >= $3)
          and ($4::timestamptz is null or created_at < $4)`,

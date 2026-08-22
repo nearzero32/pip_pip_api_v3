@@ -103,7 +103,7 @@ export const STORE_LIST_WHERE_SQL = `
   and ($2::text is null or s.status = $2::store_status)
   and ($2::text is not null or s.status <> 'ARCHIVED')
   and ($3::uuid is null or s.main_category_id = $3::uuid)
-  and ($4::text is null or s.name ilike $4 escape '\\' or ($5::uuid is not null and s.id = $5::uuid))
+  and ($4::text is null or exists (select 1 from store_translations st where st.store_id = s.id and st.name ilike $4 escape '\\') or s.name ilike $4 escape '\\' or ($5::uuid is not null and s.id = $5::uuid))
   and ($6::uuid is null or exists (
         select 1 from store_zones sz
         where sz.store_id = s.id and sz.city_id = s.city_id and sz.zone_id = $6::uuid
@@ -118,7 +118,7 @@ export const COMMISSION_STORE_WHERE_SQL = `
   s.city_id = $1::uuid
   and ($2::text is null or s.status = $2::store_status)
   and ($2::text is not null or s.status <> 'ARCHIVED')
-  and ($3::text is null or s.name ilike $3 escape '\\' or ($4::uuid is not null and s.id = $4::uuid))
+  and ($3::text is null or exists (select 1 from store_translations st where st.store_id = s.id and st.name ilike $3 escape '\\') or s.name ilike $3 escape '\\' or ($4::uuid is not null and s.id = $4::uuid))
   and ($5::int is null or s.platform_commission_rate >= $5::int)
   and ($6::int is null or s.platform_commission_rate <= $6::int)
   and ($7::timestamptz is null or s.created_at >= $7::timestamptz)

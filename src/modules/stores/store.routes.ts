@@ -75,6 +75,7 @@ const storeDto = t.Object({
   mainCategory: t.Object({
     id: t.String({ format: "uuid" }),
     name: t.String(),
+    translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
   }),
   name: t.String(),
   phone: t.String(),
@@ -95,11 +96,13 @@ const storeDto = t.Object({
   createdAt: dateSchema,
   updatedAt: dateSchema,
   archivedAt: t.Nullable(dateSchema),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String(), address: t.String() })),
 });
 
 const publicStoreDto = t.Object({
   id: t.String({ format: "uuid" }),
   name: t.String(),
+  resolvedLocale: t.String(),
   phone: t.String(),
   address: t.String(),
   location: t.Object({
@@ -109,6 +112,7 @@ const publicStoreDto = t.Object({
   mainCategory: t.Object({
     id: t.String({ format: "uuid" }),
     name: t.String(),
+    resolvedLocale: t.String(),
   }),
   logo: t.Nullable(mediaDto),
   cover: t.Nullable(mediaDto),
@@ -161,9 +165,8 @@ const publicErrors = {
 
 const createBodyKeys = new Set([
   "mainCategoryId",
-  "name",
+  "translations",
   "phone",
-  "address",
   "latitude",
   "longitude",
   "logoAssetId",
@@ -178,9 +181,8 @@ const createBodyKeys = new Set([
 
 const patchBodyKeys = new Set([
   "mainCategoryId",
-  "name",
+  "translations",
   "phone",
-  "address",
   "latitude",
   "longitude",
   "logoAssetId",
@@ -230,9 +232,8 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
           t.Object(
             {
               mainCategoryId: t.String({ format: "uuid" }),
-              name: t.String({ minLength: 1, maxLength: 100 }),
+              translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 100 }), address: t.String({ minLength: 1, maxLength: 500 }) }, { additionalProperties: false }), { minItems: 1 }),
               phone: t.String({ minLength: 8, maxLength: 20 }),
-              address: t.String({ minLength: 1, maxLength: 500 }),
               latitude: t.Number({ minimum: -90, maximum: 90 }),
               longitude: t.Number({ minimum: -180, maximum: 180 }),
               logoAssetId: t.String({ format: "uuid" }),
@@ -325,9 +326,8 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
         body: t.Object(
           {
             mainCategoryId: t.Optional(t.String({ format: "uuid" })),
-            name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+            translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 100 }), address: t.String({ minLength: 1, maxLength: 500 }) }, { additionalProperties: false }), { minItems: 1 })),
             phone: t.Optional(t.String({ minLength: 8, maxLength: 20 })),
-            address: t.Optional(t.String({ minLength: 1, maxLength: 500 })),
             latitude: t.Optional(t.Number({ minimum: -90, maximum: 90 })),
             longitude: t.Optional(t.Number({ minimum: -180, maximum: 180 })),
             logoAssetId: t.Optional(t.String({ format: "uuid" })),
@@ -386,7 +386,7 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
           ...(query.mainCategoryId
             ? { mainCategoryId: query.mainCategoryId }
             : {}),
-        });
+        }, request);
       },
       {
         query: t.Object(
@@ -415,7 +415,7 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
       "/api/v1/public/stores/:storeId",
       async ({ request, params }) => {
         const city = await requirePublicCityContext(auth.client, request);
-        return service.getPublic(city.city.id, params.storeId);
+        return service.getPublic(city.city.id, params.storeId, request);
       },
       {
         params: storeIdParam,

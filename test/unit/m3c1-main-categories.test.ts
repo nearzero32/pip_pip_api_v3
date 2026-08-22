@@ -67,6 +67,7 @@ describe("M3-C1 Main Category unit", () => {
     const dto = mainCategoryDto(sampleRow, "https://media.test.example.com");
     expect(dto).toEqual({
       id: sampleRow.id,
+      cityId: sampleRow.city_id,
       name: "مطاعم",
       status: "ACTIVE",
       displayOrder: 2,
@@ -77,6 +78,10 @@ describe("M3-C1 Main Category unit", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
       archivedAt: null,
+      createdByAccountId: null,
+      updatedByAccountId: null,
+      archivedByAccountId: null,
+      translations: [{ locale: "ar", name: "مطاعم" }],
     });
     expect(JSON.stringify(dto)).not.toContain("object_key");
     expect(JSON.stringify(dto)).not.toContain("objectKey");
@@ -90,6 +95,7 @@ describe("M3-C1 Main Category unit", () => {
     expect(dto).toEqual({
       id: sampleRow.id,
       name: "مطاعم",
+      resolvedLocale: "ar",
       displayOrder: 2,
       image: {
         assetId: sampleRow.image_asset_id,

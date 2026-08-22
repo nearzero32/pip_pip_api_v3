@@ -36,6 +36,14 @@ const square = (west: number, south: number, east: number, north: number) => ({
 
 const errorOf = async (response: Response) =>
   ((await response.json()) as { error: { code: string } }).error;
+const nameTranslations = (name: string) => [
+  { locale: "ar", name },
+  { locale: "en", name: `EN ${name}` },
+];
+const productTranslations = (name: string, description?: string) => [
+  { locale: "ar", name, ...(description === undefined ? {} : { description }) },
+  { locale: "en", name: `EN ${name}`, ...(description === undefined ? {} : { description: `EN ${description}` }) },
+];
 
 const login = async (
   harness: IntegrationHarness,
@@ -136,7 +144,7 @@ describe("Store Products dashboard management", () => {
         token: superToken,
         body: {
           cityId: token === adminBToken ? cityB : cityA,
-          name: `PZ-${phone.slice(-4)}`,
+          translations: nameTranslations(`PZ-${phone.slice(-4)}`),
           boundary: square(west, south, west + 0.1, south + 0.1),
         },
       }),
@@ -149,7 +157,7 @@ describe("Store Products dashboard management", () => {
         token: superToken,
         body: {
           cityId: token === adminBToken ? cityB : cityA,
-          name: `تصنيف-${phone.slice(-4)}`,
+          translations: nameTranslations(`تصنيف-${phone.slice(-4)}`),
           imageAssetId: await createReadyAsset(
             token,
             "CATEGORY_IMAGE",
@@ -168,7 +176,7 @@ describe("Store Products dashboard management", () => {
         token,
         body: {
           mainCategoryId: mainId,
-          name: `فرعي-${phone.slice(-4)}`,
+          translations: nameTranslations(`فرعي-${phone.slice(-4)}`),
           status: "ACTIVE",
           displayOrder: 1,
         },
@@ -182,9 +190,11 @@ describe("Store Products dashboard management", () => {
         token,
         body: {
           mainCategoryId: mainId,
-          name,
+          translations: [
+            { locale: "ar", name, address: "عنوان" },
+            { locale: "en", name: `EN ${name}`, address: "EN عنوان" },
+          ],
           phone,
-          address: "عنوان",
           latitude: south + 0.02,
           longitude: west + 0.02,
           logoAssetId: await createReadyAsset(
@@ -212,14 +222,24 @@ describe("Store Products dashboard management", () => {
     token: string,
     storeId: string,
     body: Record<string, unknown>,
-  ) =>
-    harness.app.handle(
+  ) => {
+    const { name, description, sizes, ...rest } = body;
+    return harness.app.handle(
       jsonRequest(`/api/v1/dashboard/stores/${storeId}/products`, {
         method: "POST",
         token,
-        body,
+        body: {
+          ...rest,
+          ...(typeof name === "string" ? { translations: productTranslations(name, typeof description === "string" ? description : undefined) } : {}),
+          ...(Array.isArray(sizes) ? { sizes: sizes.map((size) => {
+            const input = size as Record<string, unknown>;
+            const { name: sizeName, ...sizeRest } = input;
+            return { ...sizeRest, ...(typeof sizeName === "string" ? { translations: nameTranslations(sizeName) } : {}) };
+          }) } : {}),
+        },
       }),
     );
+  };
 
   beforeAll(async () => {
     harness = await createIntegrationHarness({
@@ -278,7 +298,7 @@ describe("Store Products dashboard management", () => {
       jsonRequest(`/api/v1/dashboard/stores/${storeA}/categories`, {
         method: "POST",
         token: adminToken,
-        body: { name: "برغر", displayOrder: 1 },
+        body: { translations: nameTranslations("برغر"), displayOrder: 1 },
       }),
     );
     expect(mainCat.status).toBe(200);
@@ -287,7 +307,7 @@ describe("Store Products dashboard management", () => {
       jsonRequest(`/api/v1/dashboard/stores/${storeA}/categories`, {
         method: "POST",
         token: adminToken,
-        body: { name: "دبل", parentCategoryId: catMain, displayOrder: 1 },
+        body: { translations: nameTranslations("دبل"), parentCategoryId: catMain, displayOrder: 1 },
       }),
     );
     expect(subCat.status).toBe(200);
@@ -296,7 +316,7 @@ describe("Store Products dashboard management", () => {
       jsonRequest(`/api/v1/dashboard/stores/${storeA}/categories`, {
         method: "POST",
         token: adminToken,
-        body: { name: "مشروبات", displayOrder: 2 },
+        body: { translations: nameTranslations("مشروبات"), displayOrder: 2 },
       }),
     );
     expect(other.status).toBe(200);
@@ -341,7 +361,7 @@ describe("Store Products dashboard management", () => {
       jsonRequest(`/api/v1/dashboard/stores/${storeB}/categories`, {
         method: "POST",
         token: adminBToken,
-        body: { name: "أجنبي" },
+        body: { translations: nameTranslations("أجنبي") },
       }),
     );
     const foreignId = ((await foreignCat.json()) as { id: string }).id;
@@ -433,7 +453,7 @@ describe("Store Products dashboard management", () => {
               {
                 method: "POST",
                 token: adminToken,
-                body: { name: "وسط", price: 9500, isDefault: true },
+                body: { translations: nameTranslations("وسط"), price: 9500, isDefault: true },
               },
             ),
           ),
@@ -448,7 +468,7 @@ describe("Store Products dashboard management", () => {
           method: "POST",
           token: adminToken,
           body: {
-            name: "وسط",
+            translations: nameTranslations("وسط"),
             price: 9500,
             isDefault: true,
             transitionFromBasePrice: true,
@@ -594,7 +614,7 @@ describe("Store Products dashboard management", () => {
       jsonRequest(`/api/v1/dashboard/stores/${storeA}/categories`, {
         method: "POST",
         token: adminToken,
-        body: { name: "إفطار" },
+        body: { translations: nameTranslations("إفطار") },
       }),
     );
     const categoryId = ((await cat.json()) as { id: string }).id;

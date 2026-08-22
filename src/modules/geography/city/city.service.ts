@@ -55,6 +55,12 @@ const governorateSummary = (row: Record<string, unknown>) => ({
   id: row.governorate_id,
   nameAr: row.governorate_name_ar,
   nameEn: row.governorate_name_en,
+  translations: Array.isArray(row.governorate_translations)
+    ? row.governorate_translations
+    : [
+        { locale: "ar", name: row.governorate_name_ar },
+        { locale: "en", name: row.governorate_name_en },
+      ],
   status: row.governorate_status,
 });
 
@@ -83,22 +89,35 @@ export const cityDetailDto = (row: Record<string, unknown>): any => ({
   boundary: row.boundary_geojson ? JSON.parse(String(row.boundary_geojson)) : null,
 });
 
-const CITY_COLUMNS = `c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,(c.boundary is not null) has_boundary,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status,coalesce((select jsonb_agg(jsonb_build_object('locale',ct.locale,'name',ct.name) order by ct.locale) from city_translations ct where ct.city_id=c.id),'[]'::jsonb) translations`;
+const CITY_COLUMNS = `c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,(c.boundary is not null) has_boundary,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status,coalesce((select jsonb_agg(jsonb_build_object('locale',ct.locale,'name',ct.name) order by ct.locale) from city_translations ct where ct.city_id=c.id),'[]'::jsonb) translations,coalesce((select jsonb_agg(jsonb_build_object('locale',gt.locale,'name',gt.name) order by gt.locale) from governorate_translations gt where gt.governorate_id=g.id),'[]'::jsonb) governorate_translations`;
 const CITY_DETAIL_COLUMNS = `${CITY_COLUMNS},ST_AsGeoJSON(c.boundary)::text boundary_geojson`;
 
 /** Pre-login selection DTO: no administrative or internal fields. */
-export const publicCityDto = (row: Record<string, unknown>): any => ({
-  id: row.id,
-  nameAr: row.name_ar,
-  nameEn: row.name_en,
-  latitude: numberOrNull(row.latitude),
-  longitude: numberOrNull(row.longitude),
-  governorate: {
-    id: row.governorate_id,
-    nameAr: row.governorate_name_ar,
-    nameEn: row.governorate_name_en,
-  },
-});
+export const publicCityDto = (
+  row: Record<string, unknown>,
+  locale: string,
+  locales: Awaited<ReturnType<typeof activeLocales>>,
+): any => {
+  const governorateName = resolveLocalizedText(
+    row.governorate_names as Record<string, string>,
+    locale,
+    locales,
+  );
+  return {
+    id: row.id,
+    nameAr: row.name_ar,
+    nameEn: row.name_en,
+    latitude: numberOrNull(row.latitude),
+    longitude: numberOrNull(row.longitude),
+    governorate: {
+      id: row.governorate_id,
+      nameAr: row.governorate_name_ar,
+      nameEn: row.governorate_name_en,
+      name: governorateName.value ?? row.governorate_name_ar,
+      resolvedLocale: governorateName.resolvedLocale ?? locale,
+    },
+  };
+};
 
 export class CityService {
   constructor(
@@ -156,7 +175,7 @@ export class CityService {
        from cities c join governorates g on g.id=c.governorate_id
        where ($1::uuid is null or c.governorate_id=$1)
          and ($2::text is null or c.status=$2::city_status)
-         and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
+         and ($3::text is null or exists (select 1 from city_translations ct where ct.city_id = c.id and ct.name ilike $3 escape '\\') or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
          and ($4::timestamptz is null or c.created_at >= $4)
          and ($5::timestamptz is null or c.created_at < $5)
        order by ${orderSql}
@@ -167,7 +186,7 @@ export class CityService {
       `select count(*)::text total from cities c join governorates g on g.id=c.governorate_id
        where ($1::uuid is null or c.governorate_id=$1)
          and ($2::text is null or c.status=$2::city_status)
-         and ($3::text is null or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
+         and ($3::text is null or exists (select 1 from city_translations ct where ct.city_id = c.id and ct.name ilike $3 escape '\\') or c.name_ar ilike $3 escape '\\' or c.name_en ilike $3 escape '\\')
          and ($4::timestamptz is null or c.created_at >= $4)
          and ($5::timestamptz is null or c.created_at < $5)`,
       [input.governorateId ?? null, input.status ?? null, pattern, created.from, created.to],
@@ -192,11 +211,11 @@ export class CityService {
     const locales = await activeLocales(this.client);
     const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const rows = await this
-      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,coalesce((select jsonb_object_agg(ct.locale,ct.name) from city_translations ct where ct.city_id=c.id),jsonb_build_object('ar',c.name_ar,'en',c.name_en)) names,c.latitude::text latitude,c.longitude::text longitude,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.display_order governorate_display_order,c.display_order city_display_order from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by g.display_order asc,c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
+      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,coalesce((select jsonb_object_agg(ct.locale,ct.name) from city_translations ct where ct.city_id=c.id),jsonb_build_object('ar',c.name_ar,'en',c.name_en)) names,c.latitude::text latitude,c.longitude::text longitude,g.name_ar governorate_name_ar,g.name_en governorate_name_en,coalesce((select jsonb_object_agg(gt.locale,gt.name) from governorate_translations gt where gt.governorate_id=g.id),jsonb_build_object('ar',g.name_ar,'en',g.name_en)) governorate_names,g.display_order governorate_display_order,c.display_order city_display_order from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}) or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by g.display_order asc,c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
     const [count] = await this
-      .client`select count(*)::text total from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
+      .client`select count(*)::text total from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}) or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
     return {
-      data: rows.map((row: Record<string, unknown>) => ({ ...publicCityDto(row), name: resolveLocalizedText(row.names as Record<string, string>, locale, locales).value ?? row.name_ar, resolvedLocale: locale })),
+      data: rows.map((row: Record<string, unknown>) => ({ ...publicCityDto(row, locale, locales), name: resolveLocalizedText(row.names as Record<string, string>, locale, locales).value ?? row.name_ar, resolvedLocale: locale })),
       page,
       limit,
       total: Number(count?.total ?? 0),

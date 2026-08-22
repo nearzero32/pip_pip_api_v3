@@ -52,6 +52,7 @@ const mainCategoryDto = t.Object({
 const publicMainCategoryDto = t.Object({
   id: t.String({ format: "uuid" }),
   name: t.String(),
+  resolvedLocale: t.String(),
   displayOrder: t.Integer({ minimum: 0 }),
   image: imageDto,
 });
@@ -286,7 +287,7 @@ export const mainCategoryRoutes = (
       "/api/v1/public/main-categories",
       async ({ request }) => {
         const city = await requirePublicCityContext(auth.client, request);
-        return service.listPublic(city.city.id);
+        return service.listPublic(city.city.id, request);
       },
       {
         query: t.Object({}, { additionalProperties: false }),

@@ -58,7 +58,7 @@ const allListIds = async (
     const res = await h.app.handle(
       jsonRequest(`${path}${qs({ ...query, page, limit: 25 })}`, { token }),
     );
-    expect(res.status).toBe(200);
+    expect(res.status, `${path} ${JSON.stringify(query)}`).toBe(200);
     const body = (await res.json()) as Page;
     total = body.pagination.total;
     ids.push(...body.data.map((row) => String(row[idField] ?? row.id ?? "")));
