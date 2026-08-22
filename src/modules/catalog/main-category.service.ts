@@ -15,10 +15,9 @@ import {
 } from "../dashboard-lists/query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
-import {
-  normalizeArabicCategoryName,
-  validateDisplayOrder,
-} from "./arabic-name";
+import { validateDisplayOrder } from "./arabic-name";
+import { translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
+import type { LocalizedTranslation } from "../../localization/localization";
 
 type MainCategoryStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -38,6 +37,7 @@ type CategoryRow = {
   asset_object_key: string;
   asset_visibility: "PUBLIC" | "PRIVATE";
   asset_status: string;
+  translations?: LocalizedTranslation[];
 };
 
 const CATEGORY_SELECT = `
@@ -99,6 +99,7 @@ export const mainCategoryDto = (
   createdByAccountId: row.created_by_account_id ?? null,
   updatedByAccountId: row.updated_by_account_id ?? null,
   archivedByAccountId: row.archived_by_account_id ?? null,
+  translations: row.translations ?? [{ locale: "ar", name: row.name }],
 });
 
 export const publicMainCategoryDto = (
@@ -180,6 +181,7 @@ export class MainCategoryService {
       "description",
       "descriptionAr",
       "descriptionEn",
+      "name",
       "nameEn",
       "archivedAt",
       "createdAt",
@@ -199,7 +201,7 @@ export class MainCategoryService {
       );
     }
     const imageAssetId = String(input.imageAssetId);
-    const name = normalizeArabicCategoryName(input.name);
+    const translations = translationsInput(input.translations, { required: true });
     const status = input.status ?? "ACTIVE";
     if (status !== "ACTIVE" && status !== "INACTIVE") {
       throw new AppError(
@@ -216,6 +218,9 @@ export class MainCategoryService {
     try {
       createdId = await this.client.begin(async (tx) => {
         await this.lockTargetCity(tx, cityId);
+        await validateTranslationInput(tx, translations!, { requireAllRequired: true, maxName: 100 });
+        const name = translations!.find((translation) => translation.locale === "ar")?.name;
+        if (!name) throw new AppError(422, "REQUIRED_TRANSLATION_MISSING", "Arabic translation is required");
         await this.media.claimAsset(tx, {
           assetId: imageAssetId,
           cityId,
@@ -236,6 +241,7 @@ export class MainCategoryService {
             ${identity.accountId}
           )
           returning id::text as id`;
+        await upsertNameTranslations(tx, "main_category_translations", "main_category_id", inserted!.id, { city_id: cityId }, translations!);
         await tx`insert into audit_logs(event_type,actor_account_id,outcome,request_correlation_id,redacted_metadata) values('MAIN_CATEGORY_CREATED',${identity.accountId},'SUCCESS',${requestId},${JSON.stringify({targetCityId:cityId,mainCategoryId:inserted!.id,changedFields:["name","imageAssetId","status","displayOrder"]})}::jsonb)`;
         return inserted!.id;
       });
@@ -348,6 +354,7 @@ export class MainCategoryService {
       "description",
       "descriptionAr",
       "descriptionEn",
+      "name",
       "nameEn",
       "archivedAt",
       "imageUrl",
@@ -356,11 +363,11 @@ export class MainCategoryService {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
     }
-    const hasName = "name" in input;
+    const hasTranslations = "translations" in input;
     const hasImage = "imageAssetId" in input;
     const hasStatus = "status" in input;
     const hasOrder = "displayOrder" in input;
-    if (!hasName && !hasImage && !hasStatus && !hasOrder) {
+    if (!hasTranslations && !hasImage && !hasStatus && !hasOrder) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
     if (hasImage && input.imageAssetId == null) {
@@ -389,7 +396,8 @@ export class MainCategoryService {
       );
     }
 
-    const name = hasName ? normalizeArabicCategoryName(input.name) : null;
+    const translations = translationsInput(input.translations, { required: false });
+    const name = translations?.find((translation) => translation.locale === "ar")?.name ?? null;
     const nextStatus = hasStatus
       ? (input.status as "ACTIVE" | "INACTIVE")
       : null;
@@ -426,6 +434,9 @@ export class MainCategoryService {
             "MAIN_CATEGORY_ARCHIVED",
             "Main category is archived",
           );
+        }
+        if (translations) {
+          await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 100 });
         }
 
         oldImageAssetId = locked.image_asset_id;
@@ -465,7 +476,8 @@ export class MainCategoryService {
               updated_at = now()
             where id = ${mainCategoryId} and city_id = ${cityId}`;
         }
-        await tx`insert into audit_logs(event_type,actor_account_id,outcome,request_correlation_id,redacted_metadata) values(${imageReplaced ? "MAIN_CATEGORY_IMAGE_REPLACED" : "MAIN_CATEGORY_UPDATED"},${identity.accountId},'SUCCESS',${requestId},${JSON.stringify({targetCityId:cityId,mainCategoryId,changedFields:[hasName?"name":null,hasStatus?"status":null,hasOrder?"displayOrder":null,hasImage?"imageAssetId":null].filter(Boolean),oldImageAssetId,newImageAssetId:nextImageId})}::jsonb)`;
+        if (translations) await upsertNameTranslations(tx, "main_category_translations", "main_category_id", mainCategoryId, { city_id: cityId }, translations);
+        await tx`insert into audit_logs(event_type,actor_account_id,outcome,request_correlation_id,redacted_metadata) values(${imageReplaced ? "MAIN_CATEGORY_IMAGE_REPLACED" : "MAIN_CATEGORY_UPDATED"},${identity.accountId},'SUCCESS',${requestId},${JSON.stringify({targetCityId:cityId,mainCategoryId,changedFields:[hasTranslations?"translations":null,hasStatus?"status":null,hasOrder?"displayOrder":null,hasImage?"imageAssetId":null].filter(Boolean),oldImageAssetId,newImageAssetId:nextImageId})}::jsonb)`;
       });
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -510,6 +522,7 @@ export class MainCategoryService {
             archived_by_account_id = ${identity.accountId},
             updated_at = now()
           where id = ${mainCategoryId} and city_id = ${cityId}`;
+        await tx`update main_category_translations set archived_at=now(),updated_at=now() where main_category_id=${mainCategoryId}`;
         await tx`insert into audit_logs(event_type,actor_account_id,outcome,request_correlation_id,redacted_metadata) values('MAIN_CATEGORY_ARCHIVED',${identity.accountId},'SUCCESS',${requestId},${JSON.stringify({targetCityId:cityId,mainCategoryId,changedFields:["status","archivedAt"]})}::jsonb)`;
       }
       // Keep image_asset_id claimed — do not call releaseAsset.

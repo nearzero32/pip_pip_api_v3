@@ -46,6 +46,7 @@ const subcategoryDto = t.Object({
   createdAt: dateSchema,
   updatedAt: dateSchema,
   archivedAt: t.Nullable(dateSchema),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
 });
 
 const publicSubcategoryDto = t.Object({
@@ -96,14 +97,14 @@ const publicErrors = {
 
 const createBodyKeys = new Set([
   "mainCategoryId",
-  "name",
+  "translations",
   "imageAssetId",
   "status",
   "displayOrder",
 ]);
 const patchBodyKeys = new Set([
   "mainCategoryId",
-  "name",
+  "translations",
   "imageAssetId",
   "status",
   "displayOrder",
@@ -148,7 +149,7 @@ export const subcategoryRoutes = (
         body: t.Object(
           {
             mainCategoryId: t.String({ format: "uuid" }),
-            name: t.String({ minLength: 1, maxLength: 100 }),
+            translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 }),
             imageAssetId: t.Optional(t.String({ format: "uuid" })),
             status: t.Optional(
               t.Union([t.Literal("ACTIVE"), t.Literal("INACTIVE")]),

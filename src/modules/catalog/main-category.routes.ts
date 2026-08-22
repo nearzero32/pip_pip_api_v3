@@ -46,6 +46,7 @@ const mainCategoryDto = t.Object({
   createdByAccountId: t.String({ format: "uuid" }),
   updatedByAccountId: t.Nullable(t.String({ format: "uuid" })),
   archivedByAccountId: t.Nullable(t.String({ format: "uuid" })),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
 });
 
 const publicMainCategoryDto = t.Object({
@@ -95,13 +96,13 @@ const publicErrors = {
 
 const createBodyKeys = new Set([
   "cityId",
-  "name",
+  "translations",
   "imageAssetId",
   "status",
   "displayOrder",
 ]);
 const patchBodyKeys = new Set([
-  "name",
+  "translations",
   "imageAssetId",
   "status",
   "displayOrder",
@@ -150,7 +151,7 @@ export const mainCategoryRoutes = (
         body: t.Object(
           {
             cityId: t.String({ format: "uuid" }),
-            name: t.String({ minLength: 1, maxLength: 100 }),
+            translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 }),
             imageAssetId: t.String({ format: "uuid" }),
             status: t.Optional(
               t.Union([t.Literal("ACTIVE"), t.Literal("INACTIVE")]),
@@ -236,7 +237,7 @@ export const mainCategoryRoutes = (
         parse: "json",
         body: t.Object(
           {
-            name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+            translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 })),
             imageAssetId: t.Optional(t.String({ format: "uuid" })),
             status: t.Optional(
               t.Union([

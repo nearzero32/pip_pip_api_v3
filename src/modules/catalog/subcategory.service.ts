@@ -25,6 +25,7 @@ import {
   normalizeArabicCategoryName,
   validateDisplayOrder,
 } from "./arabic-name";
+import { translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
 import {
   assertAtLeastOnePatchField,
   assertPatchStatusNotArchived,
@@ -49,6 +50,7 @@ type SubcategoryRow = {
   asset_object_key: string | null;
   asset_visibility: "PUBLIC" | "PRIVATE" | null;
   asset_status: string | null;
+  translations?: Array<{ locale: string; name: string }>;
 };
 
 const SUBCATEGORY_SELECT = `
@@ -107,6 +109,7 @@ export const subcategoryDto = (
   createdAt: dateValue(row.created_at),
   updatedAt: dateValue(row.updated_at),
   archivedAt: dateValue(row.archived_at),
+  translations: row.translations ?? [{ locale: "ar", name: row.name }],
 });
 
 export const publicSubcategoryDto = (
@@ -258,6 +261,7 @@ export class SubcategoryService {
       "description",
       "descriptionAr",
       "descriptionEn",
+      "name",
       "nameEn",
       "archivedAt",
       "createdAt",
@@ -276,7 +280,7 @@ export class SubcategoryService {
       throw new AppError(422, "VALIDATION_FAILED", "mainCategoryId is required");
     }
     const mainCategoryId = input.mainCategoryId;
-    const name = normalizeArabicCategoryName(input.name);
+    const translations = translationsInput(input.translations, { required: true });
     const status = input.status ?? "ACTIVE";
     if (status !== "ACTIVE" && status !== "INACTIVE") {
       throw new AppError(
@@ -296,6 +300,9 @@ export class SubcategoryService {
         const state = await lockCityGeography(tx, cityId);
         assertCityOperability(state);
         await this.lockParent(tx, mainCategoryId, cityId);
+        await validateTranslationInput(tx, translations!, { requireAllRequired: true, maxName: 100 });
+        const name = translations!.find((translation) => translation.locale === "ar")?.name;
+        if (!name) throw new AppError(422, "REQUIRED_TRANSLATION_MISSING", "Arabic translation is required");
         if (imageAssetId) {
           await this.media.claimAsset(tx, {
             assetId: imageAssetId,
@@ -317,6 +324,7 @@ export class SubcategoryService {
             ${identity.accountId}
           )
           returning id::text as id`;
+        await upsertNameTranslations(tx, "subcategory_translations", "subcategory_id", inserted!.id, { city_id: cityId, main_category_id: mainCategoryId }, translations!);
         return inserted!.id;
       });
     } catch (error) {
