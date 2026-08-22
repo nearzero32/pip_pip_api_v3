@@ -28,6 +28,7 @@ const govSummary = t.Object({
   id: t.String({ format: "uuid" }),
   nameAr: t.String(),
   nameEn: t.String(),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
   status: t.Union([t.Literal("ACTIVE"), t.Literal("INACTIVE")]),
 });
 const geoJsonPolygon = t.Object({ type: t.Literal("Polygon"), coordinates: t.Array(t.Array(t.Tuple([t.Number({ minimum: -180, maximum: 180 }), t.Number({ minimum: -90, maximum: 90 })]), { minItems: 4 }), { minItems: 1 }) }, { additionalProperties: false });
@@ -61,6 +62,8 @@ const publicGov = t.Object({
 });
 const publicCity = t.Object({
   id: t.String({ format: "uuid" }),
+  name: t.String(),
+  resolvedLocale: t.String(),
   nameAr: t.String(),
   nameEn: t.String(),
   latitude: t.Union([t.Number(), t.Null()]),
@@ -86,8 +89,7 @@ const cityIdParam = t.Object(
 );
 const cityBodyKeys = new Set([
   "governorateId",
-  "nameAr",
-  "nameEn",
+  "translations",
   "latitude",
   "longitude",
   "displayOrder",
@@ -126,8 +128,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
           t.Object(
             {
               governorateId: t.String({ format: "uuid" }),
-              nameAr: t.String({ minLength: 1, maxLength: 200 }),
-              nameEn: t.String({ minLength: 1, maxLength: 200 }),
+              translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 200 }) }, { additionalProperties: false }), { minItems: 1 }),
               latitude: t.Number({ minimum: -90, maximum: 90 }),
               longitude: t.Number({ minimum: -180, maximum: 180 }),
               displayOrder: t.Integer({ minimum: 0 }),
@@ -214,8 +215,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
         body: t.Object(
           {
             governorateId: t.Optional(t.String({ format: "uuid" })),
-            nameAr: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
-            nameEn: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
+            translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 200 }) }, { additionalProperties: false }), { minItems: 1 })),
             latitude: t.Optional(t.Number({ minimum: -90, maximum: 90 })),
             longitude: t.Optional(t.Number({ minimum: -180, maximum: 180 })),
             displayOrder: t.Optional(t.Integer({ minimum: 0 })),
@@ -283,7 +283,7 @@ export const cityRoutes = (auth: AuthModule, service: CityService) =>
     )
     .get(
       "/api/v1/public/cities",
-      async ({ query }) => service.listPublic(query),
+      async ({ query, request }) => service.listPublic(query, request),
       {
         query: t.Object(
           {

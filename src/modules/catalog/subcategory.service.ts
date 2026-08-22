@@ -21,10 +21,7 @@ import {
 } from "../dashboard-lists/query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
-import {
-  normalizeArabicCategoryName,
-  validateDisplayOrder,
-} from "./arabic-name";
+import { validateDisplayOrder } from "./arabic-name";
 import { translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
 import {
   assertAtLeastOnePatchField,
@@ -65,6 +62,7 @@ const SUBCATEGORY_SELECT = `
   s.created_at,
   s.updated_at,
   s.archived_at,
+  coalesce((select jsonb_agg(jsonb_build_object('locale', st.locale, 'name', st.name) order by st.locale) from subcategory_translations st where st.subcategory_id = s.id), '[]'::jsonb) as translations,
   m.object_key as asset_object_key,
   m.visibility::text as asset_visibility,
   m.status::text as asset_status
@@ -468,6 +466,7 @@ export class SubcategoryService {
       "description",
       "descriptionAr",
       "descriptionEn",
+      "name",
       "nameEn",
       "archivedAt",
       "imageUrl",
@@ -478,7 +477,7 @@ export class SubcategoryService {
     }
     assertAtLeastOnePatchField(input, [
       "mainCategoryId",
-      "name",
+      "translations",
       "imageAssetId",
       "status",
       "displayOrder",
@@ -496,7 +495,8 @@ export class SubcategoryService {
       );
     }
 
-    const name = "name" in input ? normalizeArabicCategoryName(input.name) : null;
+    const translations = translationsInput(input.translations, { required: false });
+    const name = translations?.find((translation) => translation.locale === "ar")?.name ?? null;
     const nextStatus =
       "status" in input ? (input.status as "ACTIVE" | "INACTIVE") : null;
     const displayOrder =
@@ -595,6 +595,7 @@ export class SubcategoryService {
             "Main category not found",
           );
         }
+        if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 100 });
 
         oldMainCategoryId = locked.main_category_id;
         oldImageAssetId = locked.image_asset_id;
@@ -636,6 +637,7 @@ export class SubcategoryService {
             image_asset_id = ${nextImageId},
             updated_at = now()
           where id = ${subcategoryId} and city_id = ${cityId}`;
+        if (translations) await upsertNameTranslations(tx, "subcategory_translations", "subcategory_id", subcategoryId, { city_id: cityId, main_category_id: moving ? nextParentId! : locked.main_category_id }, translations);
 
         if (releaseOld) {
           await this.media.releaseAsset(tx, {
@@ -699,6 +701,7 @@ export class SubcategoryService {
           image_asset_id::text as image_asset_id
         from subcategories
         where id = ${subcategoryId} and city_id = ${cityId}`;
+      await tx`update subcategory_translations set archived_at=now(),updated_at=now() where subcategory_id=${subcategoryId}`;
       if (!peek) {
         throw new AppError(
           404,

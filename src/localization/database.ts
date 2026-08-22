@@ -31,7 +31,7 @@ export async function validateTranslationInput(db: SQL, translations: LocalizedT
   if (errors.length) throw new AppError(422, errors[0]!.code, "Invalid translations", undefined, undefined, { fields: errors.map((error) => ({ field: error.path, code: error.code, message: error.message })) });
 }
 
-export async function upsertNameTranslations(db: SQL, table: "main_category_translations" | "subcategory_translations" | "zone_translations", ownerColumn: string, ownerId: string, scope: Record<string, string>, translations: LocalizedTranslation[]) {
+export async function upsertNameTranslations(db: SQL, table: "city_translations" | "main_category_translations" | "subcategory_translations" | "zone_translations" | "store_category_translations" | "product_size_translations" | "modifier_group_translations" | "modifier_option_translations", ownerColumn: string, ownerId: string, scope: Record<string, string>, translations: LocalizedTranslation[]) {
   for (const translation of translations) {
     const columns = [ownerColumn, ...Object.keys(scope), "locale", "name"];
     const values = [ownerId, ...Object.values(scope), translation.locale, translation.name];

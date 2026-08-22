@@ -22,6 +22,10 @@ export const governorateDto = (row: Record<string, unknown>): any => ({
   id: row.id,
   nameAr: row.name_ar,
   nameEn: row.name_en,
+  translations: Array.isArray(row.translations) ? row.translations : [
+    { locale: "ar", name: row.name_ar },
+    { locale: "en", name: row.name_en },
+  ],
   status: row.status,
   displayOrder: row.display_order,
   createdAt: dateValue(row.created_at),
@@ -79,7 +83,8 @@ export class GovernorateService {
       createdAt: `created_at ${sqlDir(sortOrder)}, id ${sqlDir(sortOrder)}`,
     }[sortBy];
     const rows = await this.client.unsafe(
-      `select id,name_ar,name_en,status,display_order,created_at,updated_at
+      `select id,name_ar,name_en,status,display_order,created_at,updated_at,
+         coalesce((select jsonb_agg(jsonb_build_object('locale',gt.locale,'name',gt.name) order by gt.locale) from governorate_translations gt where gt.governorate_id=governorates.id),'[]'::jsonb) translations
        from governorates
        where ($1::text is null or name_ar ilike $1 escape '\\' or name_en ilike $1 escape '\\')
          and ($2::text is null or status=$2::governorate_status)
@@ -162,7 +167,12 @@ export class GovernorateService {
         );
       }
 
-      return governorateDto(row as Record<string, unknown>);
+      const [localized] = await tx`
+        select id, name_ar, name_en, status::text, display_order, created_at, updated_at,
+          coalesce((select jsonb_agg(jsonb_build_object('locale', gt.locale, 'name', gt.name) order by gt.locale)
+            from governorate_translations gt where gt.governorate_id = governorates.id), '[]'::jsonb) translations
+        from governorates where id = ${String((row as Record<string, unknown>).id)}`;
+      return governorateDto(localized as Record<string, unknown>);
     });
   }
 }

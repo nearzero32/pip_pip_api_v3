@@ -32,6 +32,7 @@ const optionDto = t.Object({
   id: t.String({ format: "uuid" }),
   modifierGroupId: t.String({ format: "uuid" }),
   name: t.String(),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
   isAvailable: t.Boolean(),
   displayOrder: t.Integer({ minimum: 0 }),
   status: catalogStatus,
@@ -44,6 +45,7 @@ const groupDto = t.Object({
   id: t.String({ format: "uuid" }),
   storeId: t.String({ format: "uuid" }),
   name: t.String(),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
   minSelect: t.Integer({ minimum: 0 }),
   maxSelect: t.Integer({ minimum: 1 }),
   status: catalogStatus,
@@ -102,9 +104,13 @@ const publicModifiersDto = t.Object({
   ),
 });
 
+const translationInput = t.Object(
+  { locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 100 }) },
+  { additionalProperties: false },
+);
 const optionInput = t.Object(
   {
-    name: t.String({ minLength: 1, maxLength: 100 }),
+    translations: t.Array(translationInput, { minItems: 1 }),
     isAvailable: t.Optional(t.Boolean()),
     displayOrder: t.Optional(t.Integer({ minimum: 0 })),
     status: t.Optional(mutableStatus),
@@ -182,15 +188,15 @@ const cityIdHeaderParam = {
 };
 
 const createGroupKeys = new Set([
-  "name",
+  "translations",
   "minSelect",
   "maxSelect",
   "status",
   "options",
 ]);
-const patchGroupKeys = new Set(["name", "minSelect", "maxSelect", "status"]);
+const patchGroupKeys = new Set(["translations", "minSelect", "maxSelect", "status"]);
 const optionBodyKeys = new Set([
-  "name",
+  "translations",
   "isAvailable",
   "displayOrder",
   "status",
@@ -261,7 +267,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         parse: "json",
         body: t.Object(
           {
-            name: t.String({ minLength: 1, maxLength: 100 }),
+            translations: t.Array(translationInput, { minItems: 1 }),
             minSelect: t.Optional(t.Integer({ minimum: 0 })),
             maxSelect: t.Optional(t.Integer({ minimum: 1 })),
             status: t.Optional(mutableStatus),
@@ -340,7 +346,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         parse: "json",
         body: t.Object(
           {
-            name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+            translations: t.Optional(t.Array(translationInput, { minItems: 1 })),
             minSelect: t.Optional(t.Integer({ minimum: 0 })),
             maxSelect: t.Optional(t.Integer({ minimum: 1 })),
             status: t.Optional(mutableStatus),
@@ -437,7 +443,7 @@ export const modifierRoutes = (auth: AuthModule, service: ModifierService) =>
         parse: "json",
         body: t.Object(
           {
-            name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+            translations: t.Optional(t.Array(translationInput, { minItems: 1 })),
             isAvailable: t.Optional(t.Boolean()),
             displayOrder: t.Optional(t.Integer({ minimum: 0 })),
             status: t.Optional(mutableStatus),

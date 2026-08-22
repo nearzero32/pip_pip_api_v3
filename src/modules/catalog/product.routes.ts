@@ -62,6 +62,7 @@ const sizeDto = t.Object({
   isDefault: t.Boolean(),
   displayOrder: t.Integer({ minimum: 0 }),
   archivedAt: t.Nullable(dateSchema),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
 });
 
 const availabilityDto = t.Object({
@@ -78,6 +79,7 @@ const productDto = t.Object({
   modifierGroupId: t.Nullable(t.String({ format: "uuid" })),
   name: t.String(),
   description: t.Nullable(t.String()),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String(), description: t.Optional(t.Nullable(t.String())) })),
   basePrice: t.Nullable(t.Integer({ exclusiveMinimum: 0 })),
   status: productStatus,
   isAvailable: t.Boolean(),
@@ -125,7 +127,7 @@ const imageInput = t.Object(
 
 const sizeInput = t.Object(
   {
-    name: t.String({ minLength: 1, maxLength: 100 }),
+    translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 }),
     price: t.Integer({ exclusiveMinimum: 0 }),
     isDefault: t.Boolean(),
     isAvailable: t.Optional(t.Boolean()),
@@ -169,8 +171,7 @@ const mutationErrors = {
 };
 
 const createBodyKeys = new Set([
-  "name",
-  "description",
+  "translations",
   "categoryId",
   "modifierGroupId",
   "basePrice",
@@ -182,8 +183,7 @@ const createBodyKeys = new Set([
   "availability",
 ]);
 const patchBodyKeys = new Set([
-  "name",
-  "description",
+  "translations",
   "categoryId",
   "modifierGroupId",
   "basePrice",
@@ -193,7 +193,7 @@ const patchBodyKeys = new Set([
 ]);
 const imagesBodyKeys = new Set(["images"]);
 const addSizeBodyKeys = new Set([
-  "name",
+  "translations",
   "price",
   "isDefault",
   "isAvailable",
@@ -202,7 +202,7 @@ const addSizeBodyKeys = new Set([
   "transitionFromBasePrice",
 ]);
 const patchSizeBodyKeys = new Set([
-  "name",
+  "translations",
   "price",
   "isDefault",
   "isAvailable",
@@ -290,8 +290,7 @@ export const productRoutes = (
         body: document(
           t.Object(
           {
-            name: t.String({ minLength: 1, maxLength: 100 }),
-            description: t.Optional(t.Union([t.String({ maxLength: 2000 }), t.Null()])),
+            translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }), description: t.Optional(t.Union([t.String({ maxLength: 2000 }), t.Null()])) }, { additionalProperties: false }), { minItems: 1 }),
             categoryId: t.Optional(
               t.Union([t.String({ format: "uuid" }), t.Null()]),
             ),
@@ -400,10 +399,7 @@ export const productRoutes = (
         parse: "json",
         body: t.Object(
           {
-            name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
-            description: t.Optional(
-              t.Union([t.String({ maxLength: 2000 }), t.Null()]),
-            ),
+            translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }), description: t.Optional(t.Union([t.String({ maxLength: 2000 }), t.Null()])) }, { additionalProperties: false }), { minItems: 1 })),
             categoryId: t.Optional(
               t.Union([t.String({ format: "uuid" }), t.Null()]),
             ),
@@ -494,7 +490,7 @@ export const productRoutes = (
         parse: "json",
         body: t.Object(
           {
-            name: t.String({ minLength: 1, maxLength: 100 }),
+            translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 }),
             price: t.Integer({ exclusiveMinimum: 0 }),
             isDefault: t.Boolean(),
             isAvailable: t.Optional(t.Boolean()),
@@ -530,7 +526,7 @@ export const productRoutes = (
         parse: "json",
         body: t.Object(
           {
-            name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+            translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 })),
             price: t.Optional(t.Integer({ exclusiveMinimum: 0 })),
             isDefault: t.Optional(t.Boolean()),
             isAvailable: t.Optional(t.Boolean()),

@@ -232,7 +232,7 @@ export const subcategoryRoutes = (
         body: t.Object(
           {
             mainCategoryId: t.Optional(t.String({ format: "uuid" })),
-            name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+            translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 35 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 })),
             imageAssetId: t.Optional(
               t.Union([t.String({ format: "uuid" }), t.Null()]),
             ),

@@ -20,6 +20,7 @@ const govDto = t.Object({
   id: t.String({ format: "uuid" }),
   nameAr: t.String(),
   nameEn: t.String(),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
   status: t.Union([t.Literal("ACTIVE"), t.Literal("INACTIVE")]),
   displayOrder: t.Integer(),
   createdAt: dateSchema,

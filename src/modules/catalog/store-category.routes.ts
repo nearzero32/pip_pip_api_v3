@@ -35,6 +35,7 @@ const storeCategoryDto = t.Object({
   storeId: t.String({ format: "uuid" }),
   parentCategoryId: t.Nullable(t.String({ format: "uuid" })),
   name: t.String(),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
   status: categoryStatus,
   displayOrder: t.Integer({ minimum: 0 }),
   createdAt: dateSchema,
@@ -82,13 +83,13 @@ const mutationErrors = {
 };
 
 const createBodyKeys = new Set([
-  "name",
+  "translations",
   "parentCategoryId",
   "status",
   "displayOrder",
 ]);
 const patchBodyKeys = new Set([
-  "name",
+  "translations",
   "parentCategoryId",
   "status",
   "displayOrder",
@@ -136,7 +137,7 @@ export const storeCategoryRoutes = (
         parse: "json",
         body: t.Object(
           {
-            name: t.String({ minLength: 1, maxLength: 100 }),
+            translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 }),
             parentCategoryId: t.Optional(
               t.Union([t.String({ format: "uuid" }), t.Null()]),
             ),
@@ -220,7 +221,7 @@ export const storeCategoryRoutes = (
         parse: "json",
         body: t.Object(
           {
-            name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
+            translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }), { minItems: 1 })),
             parentCategoryId: t.Optional(
               t.Union([t.String({ format: "uuid" }), t.Null()]),
             ),
@@ -267,7 +268,7 @@ export const storeCategoryRoutes = (
           auth.client,
           request,
         );
-        return service.listPublic(city.id, params.storeId);
+        return service.listPublic(city.id, params.storeId, request);
       },
       {
         params: storeIdParam,

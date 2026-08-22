@@ -128,12 +128,12 @@ export const dashboardExportRoutes = (
     )
     .get("/api/v1/dashboard/governorates/export", async ({ request, set, query }) =>
       service.governorates(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { query: eq({ status: opt(), createdFrom: opt(), createdTo: opt() }),
+      { query: eq({ search: opt(), status: opt(), createdFrom: opt(), createdTo: opt() }),
         detail: detail("Export governorates", "SUPER_ADMIN plus governorates.export. Same filters as the governorates list.") },
     )
     .get("/api/v1/dashboard/cities/export", async ({ request, set, query }) =>
       service.cities(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { query: eq({ governorateId: opt(), status: opt(), createdFrom: opt(), createdTo: opt() }),
+      { query: eq({ governorateId: opt(), search: opt(), status: opt(), createdFrom: opt(), createdTo: opt() }),
         detail: detail("Export cities", "SUPER_ADMIN plus cities.export. Same filters as the cities list.") },
     )
     .get("/api/v1/dashboard/zones/export", async ({ request, set, query }) =>

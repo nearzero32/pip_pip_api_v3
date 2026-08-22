@@ -203,14 +203,14 @@ export class DashboardExportService {
     const search = query.search?.trim() || null;
     const status = query.status?.trim() || null;
     const [count] = await this.client<{ total: number }[]>`
-      select count(*)::int total from governorates
-      where (${search}::text is null or name_ar ilike ${`%${search ?? ""}%`} or name_en ilike ${`%${search ?? ""}%`})
+      select count(*)::int total from governorates g
+      where (${search}::text is null or exists (select 1 from governorate_translations gt where gt.governorate_id=g.id and gt.name ilike ${`%${search ?? ""}%`}))
         and (${status}::text is null or status=${status}::governorate_status)`;
     this.assertLimit(count?.total ?? 0);
     const rows = await this.client<Record<string, unknown>[]>`
-      select id::text, name_ar, name_en, status::text, display_order, created_at, updated_at
-      from governorates
-      where (${search}::text is null or name_ar ilike ${`%${search ?? ""}%`} or name_en ilike ${`%${search ?? ""}%`})
+      select g.id::text, coalesce((select gt.name from governorate_translations gt where gt.governorate_id=g.id and gt.locale='ar'),g.name_ar) name_ar, coalesce((select gt.name from governorate_translations gt where gt.governorate_id=g.id and gt.locale='en'),g.name_en) name_en, g.status::text, g.display_order, g.created_at, g.updated_at
+      from governorates g
+      where (${search}::text is null or exists (select 1 from governorate_translations gt where gt.governorate_id=g.id and gt.name ilike ${`%${search ?? ""}%`}))
         and (${status}::text is null or status=${status}::governorate_status)
       order by display_order asc, name_en asc, id asc`;
     return this.file(
@@ -270,15 +270,17 @@ export class DashboardExportService {
       join governorates g on g.id = c.governorate_id
       where (${governorateId}::uuid is null or c.governorate_id = ${governorateId})
         and (${status}::text is null or c.status = ${status}::city_status)
-        and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
+        and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}))`;
     this.assertLimit(count?.total ?? 0);
     const rows = await this.client<Record<string, unknown>[]>`
-      select c.id::text, c.governorate_id::text, c.name_ar, c.name_en, c.status::text,
-             c.display_order, g.name_ar as governorate_name_ar, c.created_at, c.updated_at, c.archived_at
+      select c.id::text, c.governorate_id::text,
+             coalesce((select ct.name from city_translations ct where ct.city_id=c.id and ct.locale='ar'),c.name_ar) name_ar,
+             coalesce((select ct.name from city_translations ct where ct.city_id=c.id and ct.locale='en'),c.name_en) name_en, c.status::text,
+             c.display_order, coalesce((select gt.name from governorate_translations gt where gt.governorate_id=g.id and gt.locale='ar'),g.name_ar) as governorate_name_ar, c.created_at, c.updated_at, c.archived_at
       from cities c join governorates g on g.id = c.governorate_id
       where (${governorateId}::uuid is null or c.governorate_id = ${governorateId})
         and (${status}::text is null or c.status = ${status}::city_status)
-        and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})
+        and (${search}::text is null or exists (select 1 from city_translations ct where ct.city_id=c.id and ct.name ilike ${`%${search ?? ""}%`}))
       order by c.display_order asc, c.name_en asc, c.id asc`;
     return this.file(
       identity,

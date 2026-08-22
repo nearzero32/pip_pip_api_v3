@@ -78,8 +78,10 @@ type CreateItemInput = {
 type ValidatedLine = {
   productId: string;
   productName: string;
+  productNameLocalized: Record<string, string>;
   selectedSizeId: string | null;
   selectedSizeName: string | null;
+  selectedSizeNameLocalized: Record<string, string> | null;
   unitPrice: number;
   modifiersPrice: number;
   quantity: number;
@@ -87,6 +89,7 @@ type ValidatedLine = {
   selections: Array<{
     modifierOptionId: string;
     name: string;
+    nameLocalized: Record<string, string>;
     quantity: number;
     unitPrice: number;
   }>;
@@ -385,11 +388,12 @@ export class OrderService {
       {
         id: string;
         name: string;
+        names: Record<string, string>;
         base_price: number | null;
         modifier_group_id: string | null;
         is_available: boolean;
       }[]
-    >`select p.id::text, p.name, p.base_price, p.modifier_group_id::text, p.is_available
+    >`select p.id::text, p.name, coalesce((select jsonb_object_agg(pt.locale,pt.name) from product_translations pt where pt.product_id=p.id),jsonb_build_object('ar',p.name)) names, p.base_price, p.modifier_group_id::text, p.is_available
       from products p
       left join store_categories sc on sc.id = p.category_id
       where p.id = ${item.productId}
@@ -408,6 +412,7 @@ export class OrderService {
 
     let selectedSizeId: string | null = null;
     let selectedSizeName: string | null = null;
+    let selectedSizeNameLocalized: Record<string, string> | null = null;
     let unitPrice = product.base_price;
     const wantsSize = item.sizeId != null && item.sizeId !== undefined;
     if (product.base_price == null) {
@@ -417,8 +422,8 @@ export class OrderService {
           "PRODUCT_SIZE_REQUIRED",
           "Product size is required",
         );
-      const [size] = await tx<{ id: string; name: string; price: number }[]>`
-        select id::text, name, price
+      const [size] = await tx<{ id: string; name: string; names: Record<string, string>; price: number }[]>`
+        select ps.id::text, ps.name, coalesce((select jsonb_object_agg(pst.locale,pst.name) from product_size_translations pst where pst.product_size_id=ps.id),jsonb_build_object('ar',ps.name)) names, ps.price
         from product_sizes
         where id = ${item.sizeId}
           and product_id = ${product.id}
@@ -435,6 +440,7 @@ export class OrderService {
         );
       selectedSizeId = size.id;
       selectedSizeName = size.name;
+      selectedSizeNameLocalized = size.names;
       unitPrice = size.price;
     } else if (wantsSize) {
       throw new AppError(
@@ -468,12 +474,13 @@ export class OrderService {
         const [opt] = await tx<
           {
             id: string;
-            name: string;
+          name: string;
+          names: Record<string, string>;
             price: number;
             max_quantity: number;
             is_available: boolean;
           }[]
-        >`select mo.id::text, mo.name, pmo.price, pmo.max_quantity, mo.is_available
+        >`select mo.id::text, mo.name, coalesce((select jsonb_object_agg(mot.locale,mot.name) from modifier_option_translations mot where mot.modifier_option_id=mo.id),jsonb_build_object('ar',mo.name)) names, pmo.price, pmo.max_quantity, mo.is_available
           from product_modifier_options pmo
           join modifier_options mo on mo.id = pmo.modifier_option_id
           where pmo.product_id = ${product.id}
@@ -491,6 +498,7 @@ export class OrderService {
         catalogSelections.push({
           modifierOptionId: opt.id,
           name: opt.name,
+          nameLocalized: opt.names,
           quantity: qty,
           unitPrice: opt.price,
         });
@@ -507,8 +515,10 @@ export class OrderService {
     return {
       productId: product.id,
       productName: product.name,
+      productNameLocalized: product.names,
       selectedSizeId,
       selectedSizeName,
+      selectedSizeNameLocalized,
       unitPrice,
       modifiersPrice,
       quantity,
@@ -943,13 +953,13 @@ export class OrderService {
       for (const line of lines) {
         await tx`
           insert into order_items(
-            order_id, product_id, selected_size_id, product_name_snapshot,
-            selected_size_name_snapshot, unit_price_snapshot, modifiers_price_snapshot,
+            order_id, product_id, selected_size_id, product_name_snapshot, product_name_snapshot_localized,
+            selected_size_name_snapshot, selected_size_name_snapshot_localized, unit_price_snapshot, modifiers_price_snapshot,
             quantity, line_total, state, modifier_selections_snapshot
           ) values (
-            ${order!.id}, ${line.productId}, ${line.selectedSizeId}, ${line.productName},
-            ${line.selectedSizeName}, ${line.unitPrice}, ${line.modifiersPrice},
-            ${line.quantity}, ${line.lineTotal}, 'ACTIVE', ${JSON.stringify(line.selections)}::jsonb
+            ${order!.id}, ${line.productId}, ${line.selectedSizeId}, ${line.productName}, ${line.productNameLocalized}::jsonb,
+            ${line.selectedSizeName}, ${line.selectedSizeNameLocalized}::jsonb, ${line.unitPrice}, ${line.modifiersPrice},
+            ${line.quantity}, ${line.lineTotal}, 'ACTIVE', ${JSON.stringify(line.selections.map((selection) => ({ modifierOptionId: selection.modifierOptionId, name: selection.name, nameLocalized: selection.nameLocalized, quantity: selection.quantity, unitPrice: selection.unitPrice })))}::jsonb
           )`;
       }
 

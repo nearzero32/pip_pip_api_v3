@@ -5,9 +5,10 @@ import { requireCityPermission } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
 import {
-  normalizeArabicCategoryName,
   validateDisplayOrder,
 } from "../catalog/arabic-name";
+import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
+import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../localization/localization";
 import { archiveProductsForCategory } from "./product.service";
 import {
   assertCityOperability,
@@ -38,6 +39,7 @@ type StoreCategoryRow = {
   created_at: Date | string;
   updated_at: Date | string;
   archived_at: Date | string | null;
+  translations?: { locale: string; name: string }[];
 };
 
 const CATEGORY_SELECT = `
@@ -50,7 +52,10 @@ const CATEGORY_SELECT = `
   c.display_order,
   c.created_at,
   c.updated_at,
-  c.archived_at
+  c.archived_at,
+  coalesce((select jsonb_agg(jsonb_build_object('locale', ct.locale, 'name', ct.name) order by ct.locale)
+    from store_category_translations ct where ct.store_category_id = c.id),
+    jsonb_build_array(jsonb_build_object('locale', 'ar', 'name', c.name))) as translations
 `;
 
 const uniqueViolationConstraint = (error: unknown): string | null => {
@@ -73,6 +78,7 @@ export const storeCategoryDto = (row: StoreCategoryRow): any => ({
   storeId: row.store_id,
   parentCategoryId: row.parent_category_id,
   name: row.name,
+  translations: row.translations ?? [{ locale: "ar", name: row.name }],
   status: row.status,
   displayOrder: row.display_order,
   createdAt: dateValue(row.created_at),
@@ -259,7 +265,7 @@ export class StoreCategoryService {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
     }
-    const name = normalizeArabicCategoryName(input.name);
+    const translations = translationsInput(input.translations, { required: true })!;
     const status = (input.status as CategoryStatus | undefined) ?? "ACTIVE";
     if (!["ACTIVE", "INACTIVE"].includes(status)) {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid category status");
@@ -281,6 +287,8 @@ export class StoreCategoryService {
         const state = await lockCityGeography(tx, cityId);
         assertCityOperability(state);
         await this.lockStore(tx, storeId, cityId);
+        await validateTranslationInput(tx, translations, { requireAllRequired: true, maxName: 100 });
+        const name = translations.find((translation) => translation.locale === "ar")!.name;
         if (parentCategoryId) {
           await this.lockParentRoot(tx, storeId, cityId, parentCategoryId);
         }
@@ -298,6 +306,7 @@ export class StoreCategoryService {
             ${identity.accountId}
           )
           returning id::text as id`;
+        await upsertNameTranslations(tx, "store_category_translations", "store_category_id", inserted!.id, { store_id: storeId }, translations);
         return inserted!.id;
       });
     } catch (error) {
@@ -404,7 +413,7 @@ export class StoreCategoryService {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
     }
-    const keys = ["name", "status", "displayOrder", "parentCategoryId"];
+    const keys = ["translations", "status", "displayOrder", "parentCategoryId"];
     if (!keys.some((key) => key in input)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -507,8 +516,9 @@ export class StoreCategoryService {
           await this.assertNoNonArchivedChildren(tx, storeId, categoryId);
         }
 
-        const name =
-          "name" in input ? normalizeArabicCategoryName(input.name) : null;
+        const translations = translationsInput(input.translations, { required: false });
+        if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 100 });
+        const name = translations?.find((translation) => translation.locale === "ar")?.name ?? null;
         const status =
           "status" in input ? (input.status as CategoryStatus) : null;
         const displayOrder =
@@ -526,6 +536,7 @@ export class StoreCategoryService {
           where id = ${categoryId}
             and store_id = ${storeId}
             and city_id = ${cityId}`;
+        if (translations) await upsertNameTranslations(tx, "store_category_translations", "store_category_id", categoryId, { store_id: storeId }, translations);
       });
     } catch (error) {
       const constraint = uniqueViolationConstraint(error);
@@ -594,6 +605,7 @@ export class StoreCategoryService {
         where id = ${categoryId}
           and store_id = ${storeId}
           and city_id = ${cityId}`;
+      await tx`update store_category_translations set archived_at = now(), updated_at = now() where store_category_id = ${categoryId} and archived_at is null`;
 
       // Soft-archive products in this category (status+archived_at only).
       await archiveProductsForCategory(tx, storeId, cityId, categoryId);
@@ -614,7 +626,9 @@ export class StoreCategoryService {
   }
 
   /** Public Catalog: ACTIVE categories that have ≥1 public-visible Product. */
-  async listPublic(cityId: string, storeId: string) {
+  async listPublic(cityId: string, storeId: string, request?: Request) {
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const [store] = await this.client<{ id: string }[]>`
       select s.id::text as id
       from stores s
@@ -661,7 +675,7 @@ export class StoreCategoryService {
         id: row.id,
         storeId: row.store_id,
         parentCategoryId: row.parent_category_id,
-        name: row.name,
+        name: resolveLocalizedText(Object.fromEntries((row.translations ?? []).map((translation) => [translation.locale, translation.name])), locale, locales).value ?? row.name,
         displayOrder: Number(row.display_order),
       })),
     };

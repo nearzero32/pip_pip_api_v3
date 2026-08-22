@@ -24,16 +24,21 @@ import {
   searchUuid,
   sqlDir,
 } from "../dashboard-lists/query";
-import {
-  normalizeArabicCategoryName,
-  validateDisplayOrder,
-} from "./arabic-name";
+import { validateDisplayOrder } from "./arabic-name";
 import {
   assertDefaultsWithinMaxSelect,
   parseIqdNonNegativePrice,
   parseMaxQuantity,
   parseMinMaxSelect,
 } from "./modifier-validation";
+import {
+  translationsInput,
+  upsertNameTranslations,
+  validateTranslationInput,
+} from "../../localization/database";
+import type { LocalizedTranslation } from "../../localization/localization";
+import { activeLocales } from "../../localization/database";
+import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../localization/localization";
 
 type CatalogStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -48,6 +53,7 @@ type GroupRow = {
   created_at: Date | string;
   updated_at: Date | string;
   archived_at: Date | string | null;
+  translations?: { locale: string; name: string }[];
 };
 
 type OptionRow = {
@@ -62,6 +68,7 @@ type OptionRow = {
   created_at: Date | string;
   updated_at: Date | string;
   archived_at: Date | string | null;
+  translations?: { locale: string; name: string }[];
 };
 
 type ProductModifierRow = {
@@ -82,7 +89,7 @@ type ProductModifierRow = {
 };
 
 type ParsedOptionInput = {
-  name: string;
+  translations: LocalizedTranslation[];
   isAvailable: boolean;
   displayOrder: number;
   status: CatalogStatus;
@@ -98,7 +105,10 @@ const GROUP_SELECT = `
   g.status::text as status,
   g.created_at,
   g.updated_at,
-  g.archived_at
+  g.archived_at,
+  coalesce((select jsonb_agg(jsonb_build_object('locale', gt.locale, 'name', gt.name) order by gt.locale)
+    from modifier_group_translations gt where gt.modifier_group_id = g.id),
+    jsonb_build_array(jsonb_build_object('locale', 'ar', 'name', g.name))) as translations
 `;
 
 const uniqueViolationConstraint = (error: unknown): string | null => {
@@ -133,8 +143,8 @@ const parseCreateOptions = (raw: unknown): ParsedOptionInput[] => {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid modifier option");
     }
     const row = item as Record<string, unknown>;
-    const name = normalizeArabicCategoryName(row.name);
-    const key = name.toLowerCase();
+    const translations = translationsInput(row.translations, { required: true })!;
+    const key = translations.map((translation) => `${translation.locale}:${translation.name.toLowerCase()}`).sort().join("|");
     if (seen.has(key)) {
       throw new AppError(
         409,
@@ -153,7 +163,7 @@ const parseCreateOptions = (raw: unknown): ParsedOptionInput[] => {
       row.displayOrder === undefined
         ? i
         : validateDisplayOrder(row.displayOrder);
-    options.push({ name, isAvailable, displayOrder, status });
+    options.push({ translations, isAvailable, displayOrder, status });
   }
   return options;
 };
@@ -226,6 +236,7 @@ export class ModifierService {
       id: row.id,
       storeId: row.store_id,
       name: row.name,
+      translations: row.translations ?? [{ locale: "ar", name: row.name }],
       minSelect: Number(row.min_select),
       maxSelect: Number(row.max_select),
       status: row.status,
@@ -241,6 +252,7 @@ export class ModifierService {
       id: row.id,
       modifierGroupId: row.modifier_group_id,
       name: row.name,
+      translations: row.translations ?? [{ locale: "ar", name: row.name }],
       isAvailable: Boolean(row.is_available),
       displayOrder: Number(row.display_order),
       status: row.status,
@@ -310,6 +322,9 @@ export class ModifierService {
         o.created_at,
         o.updated_at,
         o.archived_at
+        ,coalesce((select jsonb_agg(jsonb_build_object('locale', ot.locale, 'name', ot.name) order by ot.locale)
+          from modifier_option_translations ot where ot.modifier_option_id = o.id),
+          jsonb_build_array(jsonb_build_object('locale', 'ar', 'name', o.name))) as translations
       from modifier_options o
       where o.modifier_group_id = ${groupId}
       order by o.display_order asc, o.id asc`) as OptionRow[];
@@ -341,7 +356,7 @@ export class ModifierService {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
     }
-    const name = normalizeArabicCategoryName(input.name);
+    const translations = translationsInput(input.translations, { required: true })!;
     const { minSelect, maxSelect } = parseMinMaxSelect(
       input.minSelect === undefined ? 0 : input.minSelect,
       input.maxSelect === undefined ? 1 : input.maxSelect,
@@ -358,6 +373,9 @@ export class ModifierService {
         const state = await lockCityGeography(tx, cityId);
         assertCityOperability(state);
         await this.lockStore(tx, storeId, cityId);
+        await validateTranslationInput(tx, translations, { requireAllRequired: true, maxName: 100 });
+        for (const option of options) await validateTranslationInput(tx, option.translations, { requireAllRequired: true, maxName: 100 });
+        const name = translations.find((translation) => translation.locale === "ar")!.name;
         const [inserted] = await tx<{ id: string }[]>`
           insert into modifier_groups (
             store_id, city_id, name, min_select, max_select, status, created_by_account_id
@@ -372,19 +390,22 @@ export class ModifierService {
           )
           returning id::text as id`;
         const id = inserted!.id;
+        await upsertNameTranslations(tx, "modifier_group_translations", "modifier_group_id", id, { store_id: storeId, city_id: cityId }, translations);
         for (const option of options) {
-          await tx`
+          const optionName = option.translations.find((translation) => translation.locale === "ar")!.name;
+          const [insertedOption] = await tx<{ id: string }[]>`
             insert into modifier_options (
               store_id, city_id, modifier_group_id, name, is_available, display_order, status
             ) values (
               ${storeId},
               ${cityId},
               ${id},
-              ${option.name},
+              ${optionName},
               ${option.isAvailable},
               ${option.displayOrder},
               ${option.status}::product_status
-            )`;
+            ) returning id::text as id`;
+          await upsertNameTranslations(tx, "modifier_option_translations", "modifier_option_id", insertedOption!.id, { store_id: storeId, city_id: cityId }, option.translations);
         }
         return id;
       });
@@ -509,6 +530,9 @@ export class ModifierService {
         o.created_at,
         o.updated_at,
         o.archived_at
+        ,coalesce((select jsonb_agg(jsonb_build_object('locale', ot.locale, 'name', ot.name) order by ot.locale)
+          from modifier_option_translations ot where ot.modifier_option_id = o.id),
+          jsonb_build_array(jsonb_build_object('locale', 'ar', 'name', o.name))) as translations
       from modifier_options o
       where o.modifier_group_id = any(${ids})
       order by o.display_order asc, o.id asc`) as OptionRow[];
@@ -585,8 +609,9 @@ export class ModifierService {
           );
         }
 
-        const name =
-          "name" in input ? normalizeArabicCategoryName(input.name) : group.name;
+        const translations = translationsInput(input.translations, { required: false });
+        if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 100 });
+        const name = translations?.find((translation) => translation.locale === "ar")?.name ?? group.name;
         let minSelect = Number(group.min_select);
         let maxSelect = Number(group.max_select);
         if ("minSelect" in input || "maxSelect" in input) {
@@ -622,6 +647,8 @@ export class ModifierService {
           where id = ${groupId}
             and store_id = ${storeId}
             and city_id = ${cityId}`;
+        await tx`update modifier_group_translations set archived_at = null, updated_at = now() where modifier_group_id = ${groupId}`;
+        if (translations) await upsertNameTranslations(tx, "modifier_group_translations", "modifier_group_id", groupId, { store_id: storeId, city_id: cityId }, translations);
       });
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -704,6 +731,7 @@ export class ModifierService {
         where id = ${groupId}
           and store_id = ${storeId}
           and city_id = ${cityId}`;
+      await tx`update modifier_group_translations set archived_at = now(), updated_at = now() where modifier_group_id = ${groupId} and archived_at is null`;
     });
 
     await this.client`
@@ -799,7 +827,7 @@ export class ModifierService {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
     }
-    const name = normalizeArabicCategoryName(input.name);
+    const translations = translationsInput(input.translations, { required: true })!;
     const status = (input.status as CatalogStatus | undefined) ?? "ACTIVE";
     if (status !== "ACTIVE" && status !== "INACTIVE") {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid option status");
@@ -836,6 +864,8 @@ export class ModifierService {
             "Modifier group is archived",
           );
         }
+        await validateTranslationInput(tx, translations, { requireAllRequired: true, maxName: 100 });
+        const name = translations.find((translation) => translation.locale === "ar")!.name;
         const [inserted] = await tx<{ id: string }[]>`
           insert into modifier_options (
             store_id, city_id, modifier_group_id, name, is_available, display_order, status
@@ -849,6 +879,7 @@ export class ModifierService {
             ${status}::product_status
           )
           returning id::text as id`;
+        await upsertNameTranslations(tx, "modifier_option_translations", "modifier_option_id", inserted!.id, { store_id: storeId, city_id: cityId }, translations);
         return inserted!.id;
       });
     } catch (error) {
@@ -942,10 +973,9 @@ export class ModifierService {
           );
         }
 
-        const name =
-          "name" in input
-            ? normalizeArabicCategoryName(input.name)
-            : option.name;
+        const translations = translationsInput(input.translations, { required: false });
+        if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 100 });
+        const name = translations?.find((translation) => translation.locale === "ar")?.name ?? option.name;
         const status =
           "status" in input
             ? (input.status as CatalogStatus)
@@ -973,6 +1003,8 @@ export class ModifierService {
             and modifier_group_id = ${groupId}
             and store_id = ${storeId}
             and city_id = ${cityId}`;
+        await tx`update modifier_option_translations set archived_at = null, updated_at = now() where modifier_option_id = ${optionId}`;
+        if (translations) await upsertNameTranslations(tx, "modifier_option_translations", "modifier_option_id", optionId, { store_id: storeId, city_id: cityId }, translations);
       });
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -1031,6 +1063,7 @@ export class ModifierService {
           and modifier_group_id = ${groupId}
           and store_id = ${storeId}
           and city_id = ${cityId}`;
+      await tx`update modifier_option_translations set archived_at = now(), updated_at = now() where modifier_option_id = ${optionId} and archived_at is null`;
     });
 
     await this.client`
@@ -1472,6 +1505,8 @@ export class ModifierService {
   ): Promise<any> {
     const { city } = await requirePublicCityContext(this.client, request);
     const cityId = city.id;
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request.headers.get("accept-language")), locales);
 
     const [product] = await this.client<
       {
@@ -1526,6 +1561,7 @@ export class ModifierService {
       {
         id: string;
         name: string;
+        names: Record<string, string>;
         min_select: number;
         max_select: number;
         status: string;
@@ -1534,6 +1570,7 @@ export class ModifierService {
       select
         id::text as id,
         name,
+        coalesce((select jsonb_object_agg(mgt.locale, mgt.name) from modifier_group_translations mgt where mgt.modifier_group_id = modifier_groups.id and mgt.archived_at is null), jsonb_build_object('ar', name)) as names,
         min_select,
         max_select,
         status::text as status
@@ -1555,6 +1592,7 @@ export class ModifierService {
       {
         modifier_option_id: string;
         name: string;
+        names: Record<string, string>;
         price: number;
         is_default: boolean;
         max_quantity: number;
@@ -1566,6 +1604,7 @@ export class ModifierService {
       select
         o.id::text as modifier_option_id,
         o.name,
+        coalesce((select jsonb_object_agg(mot.locale, mot.name) from modifier_option_translations mot where mot.modifier_option_id = o.id and mot.archived_at is null), jsonb_build_object('ar', o.name)) as names,
         pmo.price,
         pmo.is_default,
         pmo.max_quantity,
@@ -1586,7 +1625,7 @@ export class ModifierService {
       productId: product.id,
       group: {
         id: group.id,
-        name: group.name,
+        name: resolveLocalizedText(group.names, locale, locales).value ?? group.name,
         minSelect: Number(group.min_select),
         maxSelect: Number(group.max_select),
       },
@@ -1595,7 +1634,7 @@ export class ModifierService {
           Boolean(row.option_is_available) && Boolean(row.pmo_is_available);
         return {
           modifierOptionId: row.modifier_option_id,
-          name: row.name,
+          name: resolveLocalizedText(row.names, locale, locales).value ?? row.name,
           price: Number(row.price),
           isDefault: Boolean(row.is_default),
           maxQuantity: Number(row.max_quantity),

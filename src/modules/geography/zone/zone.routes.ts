@@ -51,6 +51,7 @@ const zoneDto = t.Object({
   id: t.String({ format: "uuid" }),
   cityId: t.String({ format: "uuid" }),
   name: t.String(),
+  translations: t.Array(t.Object({ locale: t.String(), name: t.String() })),
   boundary: geoJsonPolygon,
   status: zoneStatus,
   createdAt: dateSchema,
@@ -105,7 +106,7 @@ const publicZoneErrors = {
   500: errorResponse,
 };
 
-const zoneBodyKeys = new Set(["name", "boundary", "status"]);
+const zoneBodyKeys = new Set(["translations", "boundary", "status"]);
 
 const parseZoneBody = async (context: {
   request: Request;
@@ -115,7 +116,7 @@ const parseZoneBody = async (context: {
   const path = new URL(context.request.url).pathname;
   const method = context.request.method.toUpperCase();
   if (method === "POST" && path.endsWith("/dashboard/zones")) {
-    assertAllowedBodyKeys(body, new Set(["cityId", "name", "boundary"]));
+    assertAllowedBodyKeys(body, new Set(["cityId", "translations", "boundary"]));
   }
   if (method === "PATCH" && /\/dashboard\/zones\/[^/]+$/.test(path)) {
     assertAllowedBodyKeys(body, zoneBodyKeys);
@@ -145,7 +146,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
           t.Object(
             {
               cityId: t.String({ format: "uuid" }),
-              name: t.String({ minLength: 1, maxLength: 200 }),
+              translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 200 }) }, { additionalProperties: false }), { minItems: 1 }),
               boundary: geoJsonPolygon,
             },
             { additionalProperties: false },
@@ -245,7 +246,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
         parse: "json",
         body: t.Object(
           {
-            name: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
+            translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 200 }) }, { additionalProperties: false }), { minItems: 1 })),
             boundary: t.Optional(geoJsonPolygon),
             status: t.Optional(
               t.Union([t.Literal("ACTIVE"), t.Literal("INACTIVE")]),
@@ -288,7 +289,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
       "/api/v1/public/zones",
       async ({ request }) => {
         const city = await requirePublicCityContext(auth.client, request);
-        return service.listPublic(city.city.id);
+        return service.listPublic(city.city.id, request);
       },
       {
         query: t.Object({}, { additionalProperties: false }),
@@ -315,6 +316,7 @@ export const zoneRoutes = (auth: AuthModule, service: ZoneService) =>
           city.city.id,
           query.longitude,
           query.latitude,
+          request,
         );
       },
       {

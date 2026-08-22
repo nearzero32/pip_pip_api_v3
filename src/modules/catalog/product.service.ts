@@ -22,10 +22,9 @@ import {
 } from "../dashboard-lists/product-list-query";
 import { buildPublicMediaUrl } from "../media/object-key";
 import type { MediaService } from "../media/media.service";
-import {
-  normalizeArabicCategoryName,
-  validateDisplayOrder,
-} from "./arabic-name";
+import { validateDisplayOrder } from "./arabic-name";
+import { translationsInput, upsertNameTranslations, validateTranslationInput } from "../../localization/database";
+import type { LocalizedTranslation } from "../../localization/localization";
 import {
   parseIqdPrice,
   validateAvailabilityWindows,
@@ -50,6 +49,7 @@ type ProductRow = {
   created_at: Date | string;
   updated_at: Date | string;
   archived_at: Date | string | null;
+  translations?: Array<{ locale: string; name: string; description?: string | null }>;
 };
 
 type ImageRow = {
@@ -73,6 +73,7 @@ type SizeRow = {
   is_default: boolean;
   display_order: number;
   archived_at: Date | string | null;
+  translations?: Array<{ locale: string; name: string }>;
 };
 
 type AvailabilityRow = {
@@ -90,7 +91,7 @@ type ParsedImageInput = {
 };
 
 type ParsedSizeInput = {
-  name: string;
+  translations: LocalizedTranslation[];
   price: number;
   isDefault: boolean;
   isAvailable: boolean;
@@ -113,6 +114,7 @@ const PRODUCT_SELECT = `
   p.created_at,
   p.updated_at,
   p.archived_at
+  ,coalesce((select jsonb_agg(jsonb_build_object('locale',pt.locale,'name',pt.name,'description',pt.description) order by pt.locale) from product_translations pt where pt.product_id=p.id),'[]'::jsonb) as translations
 `;
 
 const sortUuidAsc = (ids: string[]) =>
@@ -131,24 +133,6 @@ const uniqueViolationConstraint = (error: unknown): string | null => {
   const causeConstraint = cause ? String(cause.constraint ?? "") : "";
   if (code !== "23505" && causeCode !== "23505") return null;
   return constraint || causeConstraint || "unknown";
-};
-
-const parseOptionalDescription = (
-  raw: unknown,
-  required: boolean,
-): string | null | undefined => {
-  if (raw === undefined) {
-    if (required) {
-      throw new AppError(422, "VALIDATION_FAILED", "Invalid description");
-    }
-    return undefined;
-  }
-  if (raw === null) return null;
-  if (typeof raw !== "string") {
-    throw new AppError(422, "VALIDATION_FAILED", "Invalid description");
-  }
-  const trimmed = raw.trim();
-  return trimmed.length === 0 ? null : trimmed;
 };
 
 const parseImages = (raw: unknown): ParsedImageInput[] => {
@@ -219,7 +203,7 @@ const parseCreateSizes = (raw: unknown): ParsedSizeInput[] => {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid product size");
     }
     const row = item as Record<string, unknown>;
-    const name = normalizeArabicCategoryName(row.name);
+    const translations = translationsInput(row.translations, { required: true })!;
     const price = parseIqdPrice(row.price, "price");
     if (typeof row.isDefault !== "boolean") {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid product size");
@@ -246,7 +230,7 @@ const parseCreateSizes = (raw: unknown): ParsedSizeInput[] => {
         ? i
         : validateDisplayOrder(row.displayOrder);
     sizes.push({
-      name,
+      translations,
       price,
       isDefault: row.isDefault,
       isAvailable,
@@ -536,7 +520,9 @@ export class ProductService {
     sizes: ParsedSizeInput[],
   ) {
     for (const size of sizes) {
-      await tx`
+      await validateTranslationInput(tx, size.translations, { requireAllRequired: true, maxName: 100 });
+      const name = size.translations.find((translation) => translation.locale === "ar")!.name;
+      const [inserted] = await tx<{ id: string }[]>`
         insert into product_sizes (
           product_id, store_id, city_id, name, price, status,
           is_available, is_default, display_order
@@ -544,13 +530,14 @@ export class ProductService {
           ${productId},
           ${storeId},
           ${cityId},
-          ${size.name},
+          ${name},
           ${size.price},
           ${size.status}::product_status,
           ${size.isAvailable},
           ${size.isDefault},
           ${size.displayOrder}
-        )`;
+        ) returning id::text as id`;
+      await upsertNameTranslations(tx, "product_size_translations", "product_size_id", inserted!.id, { product_id: productId, store_id: storeId, city_id: cityId }, size.translations);
     }
   }
 
@@ -640,7 +627,8 @@ export class ProductService {
         is_available,
         is_default,
         display_order,
-        archived_at
+        archived_at,
+        coalesce((select jsonb_agg(jsonb_build_object('locale',pst.locale,'name',pst.name) order by pst.locale) from product_size_translations pst where pst.product_size_id=product_sizes.id),'[]'::jsonb) as translations
       from product_sizes
       where product_id = any(${ids})
       order by display_order asc, id asc`) as SizeRow[];
@@ -689,6 +677,7 @@ export class ProductService {
       isDefault: Boolean(row.is_default),
       displayOrder: Number(row.display_order),
       archivedAt: dateValue(row.archived_at),
+      translations: row.translations ?? [{ locale: "ar", name: row.name }],
     };
   }
 
@@ -714,6 +703,7 @@ export class ProductService {
       modifierGroupId: row.modifier_group_id,
       name: row.name,
       description: row.description,
+      translations: row.translations ?? [{ locale: "ar", name: row.name, description: row.description }],
       basePrice: row.base_price == null ? null : Number(row.base_price),
       status: row.status,
       isAvailable: Boolean(row.is_available),
@@ -783,14 +773,16 @@ export class ProductService {
       "createdAt",
       "updatedAt",
       "createdByAccountId",
+      "translations",
+      "description",
+      "translations",
     ]) {
       if (forbidden in input) {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
     }
 
-    const name = normalizeArabicCategoryName(input.name);
-    const description = parseOptionalDescription(input.description, false);
+    const translations = translationsInput(input.translations, { required: true, descriptions: true });
     const status = (input.status as ProductStatus | undefined) ?? "ACTIVE";
     if (status !== "ACTIVE" && status !== "INACTIVE") {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid product status");
@@ -841,6 +833,11 @@ export class ProductService {
         const state = await lockCityGeography(tx, cityId);
         assertCityOperability(state);
         await this.lockStore(tx, storeId, cityId);
+        await validateTranslationInput(tx, translations!, { requireAllRequired: true, descriptions: true, maxName: 100, maxDescription: 2000 });
+        const arabic = translations!.find((translation) => translation.locale === "ar");
+        if (!arabic) throw new AppError(422, "REQUIRED_TRANSLATION_MISSING", "Arabic translation is required");
+        const name = arabic.name;
+        const description = arabic.description ?? null;
         if (categoryId) {
           await this.lockCategory(tx, storeId, cityId, categoryId);
         }
@@ -871,6 +868,9 @@ export class ProductService {
           )
           returning id::text as id`;
         const id = inserted!.id;
+        for (const translation of translations!) {
+          await tx`insert into product_translations(product_id,store_id,city_id,locale,name,description) values(${id},${storeId},${cityId},${translation.locale},${translation.name},${translation.description ?? null})`;
+        }
         await this.insertImages(tx, id, storeId, cityId, images);
         await this.insertSizes(tx, id, storeId, cityId, sizes);
         await this.replaceAvailabilityRows(tx, id, storeId, cityId, availability);
@@ -1104,12 +1104,11 @@ export class ProductService {
             and store_id = ${storeId}
             and status <> 'ARCHIVED'`;
 
-        const name =
-          "name" in input ? normalizeArabicCategoryName(input.name) : null;
-        const description =
-          "description" in input
-            ? parseOptionalDescription(input.description, true)
-            : undefined;
+        const translations = translationsInput(input.translations, { required: false, descriptions: true });
+        if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, descriptions: true, maxName: 100, maxDescription: 2000 });
+        const arabic = translations?.find((translation) => translation.locale === "ar");
+        const name = arabic?.name ?? null;
+        const description = arabic?.description;
         const status =
           "status" in input ? (input.status as ProductStatus) : null;
         const isAvailable =
@@ -1167,6 +1166,11 @@ export class ProductService {
           where id = ${productId}
             and store_id = ${storeId}
             and city_id = ${cityId}`;
+        if (translations) {
+          for (const translation of translations) {
+            await tx`insert into product_translations(product_id,store_id,city_id,locale,name,description) values(${productId},${storeId},${cityId},${translation.locale},${translation.name},${translation.description ?? null}) on conflict(product_id,locale) do update set name=excluded.name,description=excluded.description,updated_at=now()`;
+          }
+        }
       });
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -1212,6 +1216,7 @@ export class ProductService {
         where id = ${productId}
           and store_id = ${storeId}
           and city_id = ${cityId}`;
+      await tx`update product_translations set archived_at=now(),updated_at=now() where product_id=${productId}`;
     });
 
     await this.client`
@@ -1323,7 +1328,7 @@ export class ProductService {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
     }
-    const name = normalizeArabicCategoryName(input.name);
+    const translations = translationsInput(input.translations, { required: true });
     const price = parseIqdPrice(input.price, "price");
     if (typeof input.isDefault !== "boolean") {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid isDefault");
@@ -1351,6 +1356,9 @@ export class ProductService {
         const state = await lockCityGeography(tx, cityId);
         assertCityOperability(state);
         await this.lockStore(tx, storeId, cityId);
+        await validateTranslationInput(tx, translations!, { requireAllRequired: true, maxName: 100 });
+        const name = translations!.find((translation) => translation.locale === "ar")?.name;
+        if (!name) throw new AppError(422, "REQUIRED_TRANSLATION_MISSING", "Arabic translation is required");
         const product = await this.lockProduct(tx, storeId, cityId, productId);
 
         const existingSizes = await tx<
@@ -1426,7 +1434,7 @@ export class ProductService {
           }
         }
 
-        await tx`
+        const [insertedSize] = await tx<{ id: string }[]>`
           insert into product_sizes (
             product_id, store_id, city_id, name, price, status,
             is_available, is_default, display_order
@@ -1440,7 +1448,8 @@ export class ProductService {
             ${isAvailable},
             ${input.isDefault},
             ${displayOrder}
-          )`;
+          ) returning id::text as id`;
+        for (const translation of translations!) await tx`insert into product_size_translations(product_size_id,product_id,store_id,city_id,locale,name) values(${insertedSize!.id},${productId},${storeId},${cityId},${translation.locale},${translation.name})`;
 
         await tx`
           update products set updated_at = now()
@@ -1547,8 +1556,9 @@ export class ProductService {
           );
         }
 
-        const nextName =
-          "name" in input ? normalizeArabicCategoryName(input.name) : size.name;
+        const translations = translationsInput(input.translations, { required: false });
+        if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 100 });
+        const nextName = translations?.find((translation) => translation.locale === "ar")?.name ?? size.name;
         const nextPrice =
           "price" in input ? parseIqdPrice(input.price, "price") : size.price;
         const nextStatus =
@@ -1653,6 +1663,7 @@ export class ProductService {
             updated_at = now()
           where id = ${sizeId}
             and product_id = ${productId}`;
+        if (translations) await upsertNameTranslations(tx, "product_size_translations", "product_size_id", sizeId, { product_id: productId, store_id: storeId, city_id: cityId }, translations);
 
         await tx`
           update products set updated_at = now()
@@ -1748,6 +1759,7 @@ export class ProductService {
               updated_at = now()
             where id = ${sizeId}
               and product_id = ${productId}`;
+          await tx`update product_size_translations set archived_at = now(), updated_at = now() where product_size_id = ${sizeId} and archived_at is null`;
           await tx`
             update products set
               base_price = ${basePrice},
@@ -1803,6 +1815,7 @@ export class ProductService {
             updated_at = now()
           where id = ${sizeId}
             and product_id = ${productId}`;
+        await tx`update product_size_translations set archived_at = now(), updated_at = now() where product_size_id = ${sizeId} and archived_at is null`;
 
         await tx`
           update products set updated_at = now()

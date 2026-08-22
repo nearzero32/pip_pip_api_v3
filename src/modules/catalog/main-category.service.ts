@@ -53,6 +53,7 @@ const CATEGORY_SELECT = `
   c.created_by_account_id::text as created_by_account_id,
   c.updated_by_account_id::text as updated_by_account_id,
   c.archived_by_account_id::text as archived_by_account_id,
+  coalesce((select jsonb_agg(jsonb_build_object('locale', mt.locale, 'name', mt.name) order by mt.locale) from main_category_translations mt where mt.main_category_id = c.id), '[]'::jsonb) as translations,
   m.object_key as asset_object_key,
   m.visibility::text as asset_visibility,
   m.status::text as asset_status

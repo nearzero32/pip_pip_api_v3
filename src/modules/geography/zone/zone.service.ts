@@ -7,7 +7,7 @@ import {
   lockCityGeography,
   lockZoneOverlap,
 } from "../geography-locks";
-import { clean, dateValue } from "../shared";
+import { dateValue } from "../shared";
 import {
   dashboardListResult,
   dashboardPageOf,
@@ -20,6 +20,8 @@ import {
   sqlDir,
 } from "../../dashboard-lists/query";
 import { parseCoordinate, parseGeoJsonPolygon, type GeoJsonPolygon } from "../geometry";
+import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../../localization/database";
+import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../../localization/localization";
 
 type ZoneStatus = "ACTIVE" | "INACTIVE" | "ARCHIVED";
 
@@ -35,6 +37,7 @@ type ZoneRow = {
   created_by_account_id: string | null;
   updated_by_account_id: string | null;
   archived_by_account_id: string | null;
+  translations?: { locale: string; name: string }[];
 };
 
 const ZONE_COLUMNS = `z.id::text as id,
@@ -47,7 +50,10 @@ const ZONE_COLUMNS = `z.id::text as id,
   z.archived_at,
   z.created_by_account_id::text as created_by_account_id,
   z.updated_by_account_id::text as updated_by_account_id,
-  z.archived_by_account_id::text as archived_by_account_id`;
+  z.archived_by_account_id::text as archived_by_account_id,
+  coalesce((select jsonb_agg(jsonb_build_object('locale', zt.locale, 'name', zt.name) order by zt.locale)
+    from zone_translations zt where zt.zone_id = z.id),
+    jsonb_build_array(jsonb_build_object('locale', 'ar', z.name))) as translations`;
 
 const parseBoundaryDto = (geojson: string): GeoJsonPolygon => {
   try {
@@ -62,6 +68,7 @@ export const zoneDto = (row: ZoneRow): any => ({
   id: row.id,
   cityId: row.city_id,
   name: row.name,
+  translations: row.translations ?? [{ locale: "ar", name: row.name }],
   boundary: parseBoundaryDto(row.boundary_geojson),
   status: row.status,
   createdAt: dateValue(row.created_at),
@@ -72,9 +79,9 @@ export const zoneDto = (row: ZoneRow): any => ({
   archivedByAccountId: row.archived_by_account_id,
 });
 
-export const publicZoneDto = (row: ZoneRow): any => ({
+export const publicZoneDto = (row: ZoneRow, name = row.name): any => ({
   id: row.id,
-  name: row.name,
+  name,
   boundary: parseBoundaryDto(row.boundary_geojson),
 });
 
@@ -223,7 +230,7 @@ export class ZoneService {
     }
     const input = body as Record<string, unknown>;
     const cityId = await this.requireTargetCity(identity, requestedCityId);
-    const name = clean(String(input.name ?? ""), "name");
+    const translations = translationsInput(input.translations, { required: true })!;
     if (!input.boundary) {
       throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
     }
@@ -233,6 +240,8 @@ export class ZoneService {
       const state = await lockCityGeography(tx, cityId);
       if (state.cityStatus === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
       await lockZoneOverlap(tx, cityId);
+      await validateTranslationInput(tx, translations, { requireAllRequired: true, maxName: 200 });
+      const name = translations.find((translation) => translation.locale === "ar")!.name;
       const geojson = await buildValidatedGeometry(tx, polygon);
       await assertInsideCityBoundary(tx, cityId, geojson);
       await assertNoPositiveAreaOverlap(tx, cityId, geojson, null);
@@ -248,13 +257,14 @@ export class ZoneService {
           )
           returning id::text as id`;
         insertedId = inserted!.id;
+        await upsertNameTranslations(tx, "zone_translations", "zone_id", insertedId, { city_id: cityId }, translations);
       } catch (error) {
         if (isUniqueNameViolation(error)) {
           throw new AppError(409, "ZONE_NAME_CONFLICT", "Zone name already exists");
         }
         throw error;
       }
-      await writeZoneAudit(tx, identity, requestId, "ZONE_CREATED", cityId, insertedId, ["name", "boundary", "status"]);
+      await writeZoneAudit(tx, identity, requestId, "ZONE_CREATED", cityId, insertedId, ["translations", "boundary", "status"]);
       const row = await fetchZone(tx, insertedId, cityId);
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Zone create failed");
       return zoneDto(row);
@@ -351,10 +361,10 @@ export class ZoneService {
     if ("cityId" in input) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
-    const hasName = "name" in input;
+    const hasTranslations = "translations" in input;
     const hasStatus = "status" in input;
     const hasBoundary = "boundary" in input;
-    if (!hasName && !hasStatus && !hasBoundary) {
+    if (!hasTranslations && !hasStatus && !hasBoundary) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
     if (hasStatus) {
@@ -363,7 +373,7 @@ export class ZoneService {
         throw new AppError(400, "INVALID_ZONE_INPUT", "Invalid zone input");
       }
     }
-    const name = hasName ? clean(String(input.name ?? ""), "name") : null;
+    const translations = translationsInput(input.translations, { required: false });
     const status = hasStatus ? (input.status as "ACTIVE" | "INACTIVE") : null;
     const polygon = hasBoundary ? parseGeoJsonPolygon(input.boundary) : null;
 
@@ -371,6 +381,7 @@ export class ZoneService {
       const state = await lockCityGeography(tx, cityId);
       if (state.cityStatus === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
       await lockZoneOverlap(tx, cityId);
+      if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 200 });
       const [existing] = await tx<{ id: string; status: string }[]>`
         select id::text as id, status::text as status
         from zones
@@ -389,6 +400,7 @@ export class ZoneService {
       }
 
       try {
+        const name = translations?.find((translation) => translation.locale === "ar")?.name ?? null;
         if (geojson) {
           await tx`
             update zones set
@@ -413,10 +425,11 @@ export class ZoneService {
         }
         throw error;
       }
+      if (translations) await upsertNameTranslations(tx, "zone_translations", "zone_id", zoneId, { city_id: cityId }, translations);
 
       await writeZoneAudit(
         tx, identity, requestId, "ZONE_UPDATED", cityId, zoneId,
-        [hasName ? "name" : null, hasStatus ? "status" : null, hasBoundary ? "boundary" : null].filter((field): field is string => field !== null),
+        [hasTranslations ? "translations" : null, hasStatus ? "status" : null, hasBoundary ? "boundary" : null].filter((field): field is string => field !== null),
       );
 
       const row = await fetchZone(tx, zoneId, cityId);
@@ -446,6 +459,7 @@ export class ZoneService {
             updated_by_account_id = ${identity.accountId},
             updated_at = now()
           where id = ${zoneId} and city_id = ${cityId}`;
+        await tx`update zone_translations set archived_at = now(), updated_at = now() where zone_id = ${zoneId} and archived_at is null`;
         await writeZoneAudit(tx, identity, requestId, "ZONE_ARCHIVED", cityId, zoneId, ["status", "archivedAt"]);
       }
       const row = await fetchZone(tx, zoneId, cityId);
@@ -453,7 +467,9 @@ export class ZoneService {
     });
   }
 
-  async listPublic(cityId: string) {
+  async listPublic(cityId: string, request?: Request) {
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const rows = (await this.client.unsafe(
       `select ${ZONE_COLUMNS}
        from zones z
@@ -463,13 +479,14 @@ export class ZoneService {
        order by z.name asc, z.id asc`,
       [cityId],
     )) as ZoneRow[];
-    return { data: rows.map((row) => publicZoneDto(row)) };
+    return { data: rows.map((row) => publicZoneDto(row, resolveLocalizedText(Object.fromEntries((row.translations ?? []).map((translation) => [translation.locale, translation.name])), locale, locales).value ?? row.name)) };
   }
 
   async resolvePublic(
     cityId: string,
     longitudeRaw: unknown,
     latitudeRaw: unknown,
+    request?: Request,
   ) {
     const longitude = parseCoordinate(longitudeRaw, "longitude");
     const latitude = parseCoordinate(latitudeRaw, "latitude");
@@ -489,6 +506,8 @@ export class ZoneService {
     )) as ZoneRow[];
     const row = rows[0];
     if (!row) throw new AppError(404, "ZONE_NOT_FOUND", "Zone not found");
-    return publicZoneDto(row);
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
+    return publicZoneDto(row, resolveLocalizedText(Object.fromEntries((row.translations ?? []).map((translation) => [translation.locale, translation.name])), locale, locales).value ?? row.name);
   }
 }

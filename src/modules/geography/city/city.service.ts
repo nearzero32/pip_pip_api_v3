@@ -23,6 +23,8 @@ import {
   parseSortOrder,
   sqlDir,
 } from "../../dashboard-lists/query";
+import { activeLocales, translationsInput, upsertNameTranslations, validateTranslationInput } from "../../../localization/database";
+import { negotiateLocale, parseAcceptLanguage, resolveLocalizedText } from "../../../localization/localization";
 
 /** Exact City → Governorate FK name from drizzle/0008_simple_nehzno.sql */
 export const CITY_GOVERNORATE_FK_CONSTRAINT =
@@ -61,6 +63,10 @@ export const cityListDto = (row: Record<string, unknown>): any => ({
   governorateId: row.governorate_id,
   nameAr: row.name_ar,
   nameEn: row.name_en,
+  translations: Array.isArray(row.translations) ? row.translations : [
+    { locale: "ar", name: row.name_ar },
+    { locale: "en", name: row.name_en },
+  ],
   latitude: numberValue(row.latitude),
   longitude: numberValue(row.longitude),
   status: row.status,
@@ -77,7 +83,7 @@ export const cityDetailDto = (row: Record<string, unknown>): any => ({
   boundary: row.boundary_geojson ? JSON.parse(String(row.boundary_geojson)) : null,
 });
 
-const CITY_COLUMNS = `c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,(c.boundary is not null) has_boundary,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status`;
+const CITY_COLUMNS = `c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,c.status,c.display_order,c.created_at,c.updated_at,c.archived_at,(c.boundary is not null) has_boundary,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.status governorate_status,coalesce((select jsonb_agg(jsonb_build_object('locale',ct.locale,'name',ct.name) order by ct.locale) from city_translations ct where ct.city_id=c.id),'[]'::jsonb) translations`;
 const CITY_DETAIL_COLUMNS = `${CITY_COLUMNS},ST_AsGeoJSON(c.boundary)::text boundary_geojson`;
 
 /** Pre-login selection DTO: no administrative or internal fields. */
@@ -179,16 +185,18 @@ export class CityService {
    * Always restricted to ACTIVE cities under ACTIVE governorates.
    * Query params cannot widen visibility.
    */
-  async listPublic(input: { search?: string; page?: number; limit?: number }) {
+  async listPublic(input: { search?: string; page?: number; limit?: number }, request?: Request) {
     const { page, limit } = pageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const search = input.search?.trim() || null;
+    const locales = await activeLocales(this.client);
+    const locale = negotiateLocale(parseAcceptLanguage(request?.headers.get("accept-language")), locales);
     const rows = await this
-      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,c.latitude::text latitude,c.longitude::text longitude,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.display_order governorate_display_order,c.display_order city_display_order from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by g.display_order asc,c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
+      .client`select c.id,c.governorate_id,c.name_ar,c.name_en,coalesce((select jsonb_object_agg(ct.locale,ct.name) from city_translations ct where ct.city_id=c.id),jsonb_build_object('ar',c.name_ar,'en',c.name_en)) names,c.latitude::text latitude,c.longitude::text longitude,g.name_ar governorate_name_ar,g.name_en governorate_name_en,g.display_order governorate_display_order,c.display_order city_display_order from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`}) order by g.display_order asc,c.display_order asc,c.name_en asc,c.id asc limit ${limit} offset ${offset}`;
     const [count] = await this
       .client`select count(*)::text total from cities c join governorates g on g.id=c.governorate_id where c.status='ACTIVE' and g.status='ACTIVE' and (${search}::text is null or c.name_ar ilike ${`%${search ?? ""}%`} or c.name_en ilike ${`%${search ?? ""}%`})`;
     return {
-      data: rows.map((row: Record<string, unknown>) => publicCityDto(row)),
+      data: rows.map((row: Record<string, unknown>) => ({ ...publicCityDto(row), name: resolveLocalizedText(row.names as Record<string, string>, locale, locales).value ?? row.name_ar, resolvedLocale: locale })),
       page,
       limit,
       total: Number(count?.total ?? 0),
@@ -206,8 +214,9 @@ export class CityService {
     identity: AuthIdentity,
     input: {
       governorateId: string;
-      nameAr: string;
-      nameEn: string;
+      translations?: unknown;
+      nameAr?: string;
+      nameEn?: string;
       latitude: number;
       longitude: number;
       displayOrder: number;
@@ -220,8 +229,10 @@ export class CityService {
       input.longitude,
       input.displayOrder,
     );
-    const nameAr = clean(input.nameAr, "Arabic name"),
-      nameEn = clean(input.nameEn, "English name");
+    const translations = translationsInput(input.translations, { required: false }) ?? [
+      { locale: "ar", name: clean(input.nameAr ?? "", "Arabic name") },
+      { locale: "en", name: clean(input.nameEn ?? "", "English name") },
+    ];
     const boundary = this.parseCityBoundary(input.boundary);
     try {
       const geojson = JSON.stringify(boundary);
@@ -231,9 +242,15 @@ export class CityService {
         from (select ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geojson}),4326)) g) x`;
       if (!valid?.valid) throw new AppError(400, "INVALID_CITY_BOUNDARY", "City boundary is invalid");
       if (!valid.covered) throw new AppError(422, "CITY_CENTER_OUTSIDE_BOUNDARY", "City center is outside the boundary");
-      const [row] = await this
-        .client`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,boundary,status,display_order,archived_at) values(${input.governorateId},${nameAr},${nameEn},${input.latitude},${input.longitude},ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geojson}),4326)),'DRAFT',${input.displayOrder},null) returning *`;
-      return this.get(String((row as Record<string, unknown>).id));
+      return await this.client.begin(async (tx) => {
+        await validateTranslationInput(tx, translations, { requireAllRequired: true, maxName: 200 });
+        const nameAr = translations.find((translation) => translation.locale === "ar")!.name;
+        const nameEn = translations.find((translation) => translation.locale === "en")!.name;
+        const [row] = await tx`insert into cities(governorate_id,name_ar,name_en,latitude,longitude,boundary,status,display_order,archived_at) values(${input.governorateId},${nameAr},${nameEn},${input.latitude},${input.longitude},ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${geojson}),4326)),'DRAFT',${input.displayOrder},null) returning id::text as id`;
+        await upsertNameTranslations(tx, "city_translations", "city_id", row!.id, {}, translations);
+        const [full] = await tx.unsafe(`select ${CITY_DETAIL_COLUMNS} from cities c join governorates g on g.id=c.governorate_id where c.id=$1::uuid`, [row!.id]);
+        return cityDetailDto(full as Record<string, unknown>);
+      });
     } catch (error) {
       if (isCityGovernorateForeignKeyViolation(error))
         throw new AppError(422, "INVALID_GOVERNORATE", "Governorate not found");
@@ -246,6 +263,7 @@ export class CityService {
     id: string,
     input: {
       governorateId?: string;
+      translations?: unknown;
       nameAr?: string;
       nameEn?: string;
       latitude?: number;
@@ -274,10 +292,7 @@ export class CityService {
         input.longitude === undefined,
       );
 
-    const nameAr =
-      input.nameAr === undefined ? null : clean(input.nameAr, "Arabic name");
-    const nameEn =
-      input.nameEn === undefined ? null : clean(input.nameEn, "English name");
+    const translations = translationsInput(input.translations, { required: false });
     if ("boundary" in input && input.boundary === null)
       throw new AppError(422, "INVALID_CITY_BOUNDARY", "City boundary cannot be null");
     const boundary = input.boundary === undefined ? null : this.parseCityBoundary(input.boundary);
@@ -285,6 +300,9 @@ export class CityService {
 
     return beginWithGeographyRetry(this.client, async (tx) => {
       try {
+        if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 200 });
+        const nameAr = translations?.find((translation) => translation.locale === "ar")?.name ?? null;
+        const nameEn = translations?.find((translation) => translation.locale === "en")?.name ?? null;
         // Reassignment acquires both governorate locks before the City lock.
         // Do not pre-lock the City in that path or we would violate the shared order.
         if (input.governorateId === undefined) await lockCityGeography(tx, id);
@@ -366,6 +384,7 @@ export class CityService {
               "City not found or archived",
             );
         }
+        if (translations) await upsertNameTranslations(tx, "city_translations", "city_id", id, {}, translations);
       } catch (error) {
         if (error instanceof AppError) throw error;
         if (isCityGovernorateForeignKeyViolation(error))

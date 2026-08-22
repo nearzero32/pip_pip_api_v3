@@ -3,9 +3,10 @@ import { AppError } from "../../errors/app-error";
 import { dateValue } from "../geography/shared";
 
 type SelectionInput = { modifierOptionId: string; quantity?: number };
-type CatalogSelection = { id: string; name: string; price: number; quantity: number; maxQuantity: number; isDefault: boolean };
-type CatalogSize = { id: string; name: string; price: number };
-type ValidatedProduct = { id: string; name: string; unitPrice: number; selectedSize: CatalogSize | null; selections: CatalogSelection[]; modifiersPrice: number; configurationKey: string };
+type LocalizedMap = Record<string, string>;
+type CatalogSelection = { id: string; name: string; names: LocalizedMap; price: number; quantity: number; maxQuantity: number; isDefault: boolean };
+type CatalogSize = { id: string; name: string; names: LocalizedMap; price: number };
+type ValidatedProduct = { id: string; name: string; names: LocalizedMap; unitPrice: number; selectedSize: CatalogSize | null; selections: CatalogSelection[]; modifiersPrice: number; configurationKey: string };
 
 const quantityOf = (raw: unknown, field = "quantity") => {
   if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 1 || raw > 99)
@@ -46,8 +47,8 @@ export class CartService {
     const [store] = await tx<{ order_acceptance_status:string }[]>`select s.order_acceptance_status::text order_acceptance_status from stores s join main_categories mc on mc.id=s.main_category_id and mc.city_id=s.city_id where s.id=${storeId} and s.city_id=${cityId} and s.status='ACTIVE' and s.archived_at is null and mc.status='ACTIVE' and mc.archived_at is null for share of s`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
     if (store.order_acceptance_status !== "ACCEPTING") throw new AppError(409, "STORE_NOT_ACCEPTING_ORDERS", "Store is not accepting cart changes");
-    const [product] = await tx<{id:string;name:string;base_price:number|null;modifier_group_id:string|null}[]>`
-      select p.id::text id,p.name,p.base_price,p.modifier_group_id::text modifier_group_id
+    const [product] = await tx<{id:string;name:string;names:LocalizedMap;base_price:number|null;modifier_group_id:string|null}[]>`
+      select p.id::text id,p.name,coalesce((select jsonb_object_agg(pt.locale,pt.name) from product_translations pt where pt.product_id=p.id),jsonb_build_object('ar',p.name)) names,p.base_price,p.modifier_group_id::text modifier_group_id
       from products p where p.id=${productId} and p.store_id=${storeId} and p.city_id=${cityId} and p.status='ACTIVE' and p.archived_at is null and p.is_available=true
         and (p.category_id is null or exists(select 1 from store_categories sc where sc.id=p.category_id and sc.store_id=p.store_id and sc.city_id=p.city_id and sc.status='ACTIVE' and sc.archived_at is null))`;
     if (!product) throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found");
@@ -56,12 +57,12 @@ export class CartService {
       if (sizeId != null) throw new AppError(422, "PRODUCT_SIZE_NOT_APPLICABLE", "Product does not use sizes");
     } else {
       if (!sizeId) throw new AppError(422, "PRODUCT_SIZE_REQUIRED", "A Product Size is required");
-      const [size] = await tx<{id:string;name:string;price:number}[]>`
-        select id::text id,name,price from product_sizes
+      const [size] = await tx<{id:string;name:string;names:LocalizedMap;price:number}[]>`
+        select ps.id::text id,ps.name,coalesce((select jsonb_object_agg(pst.locale,pst.name) from product_size_translations pst where pst.product_size_id=ps.id),jsonb_build_object('ar',ps.name)) names,ps.price from product_sizes ps
         where id=${sizeId} and product_id=${productId} and store_id=${storeId} and city_id=${cityId}
           and status='ACTIVE' and archived_at is null and is_available=true`;
       if (!size) throw new AppError(404, "PRODUCT_SIZE_NOT_FOUND", "Product Size not found");
-      selectedSize={id:size.id,name:size.name,price:Number(size.price)};
+      selectedSize={id:size.id,name:size.name,names:size.names,price:Number(size.price)};
     }
     const unitPrice = Number(product.base_price ?? selectedSize?.price);
     if (!Number.isSafeInteger(unitPrice) || unitPrice <= 0) throw new AppError(409, "PRODUCT_NOT_ORDERABLE", "Product is not orderable");
@@ -69,12 +70,12 @@ export class CartService {
     const requested = parseSelections(rawSelections);
     if (!product.modifier_group_id) {
       if (requested.length) throw new AppError(422, "INVALID_MODIFIER_SELECTION", "Product has no modifier group");
-      return { id:product.id,name:product.name,unitPrice,selectedSize,selections:[],modifiersPrice:0,configurationKey:`${selectedSize ? `size:${selectedSize.id}` : "base"}|none` };
+      return { id:product.id,name:product.name,names:product.names,unitPrice,selectedSize,selections:[],modifiersPrice:0,configurationKey:`${selectedSize ? `size:${selectedSize.id}` : "base"}|none` };
     }
     const [group] = await tx<{min_select:number;max_select:number}[]>`select min_select,max_select from modifier_groups where id=${product.modifier_group_id} and store_id=${storeId} and city_id=${cityId} and status='ACTIVE' and archived_at is null`;
     if (!group) throw new AppError(409, "PRODUCT_MODIFIERS_INVALID", "Product modifier configuration is invalid");
-    const rows = await tx<{id:string;name:string;price:number;is_default:boolean;max_quantity:number;option_available:boolean;configured_available:boolean}[]>`
-      select o.id::text id,o.name,pmo.price,pmo.is_default,pmo.max_quantity,o.is_available option_available,pmo.is_available configured_available
+    const rows = await tx<{id:string;name:string;names:LocalizedMap;price:number;is_default:boolean;max_quantity:number;option_available:boolean;configured_available:boolean}[]>`
+      select o.id::text id,o.name,coalesce((select jsonb_object_agg(mot.locale,mot.name) from modifier_option_translations mot where mot.modifier_option_id=o.id),jsonb_build_object('ar',o.name)) names,pmo.price,pmo.is_default,pmo.max_quantity,o.is_available option_available,pmo.is_available configured_available
       from product_modifier_options pmo join modifier_options o on o.id=pmo.modifier_option_id
       where pmo.product_id=${productId} and pmo.store_id=${storeId} and pmo.city_id=${cityId} and o.modifier_group_id=${product.modifier_group_id} and o.status='ACTIVE' and o.archived_at is null`;
     const byId = new Map(rows.map((r) => [r.id,r]));
@@ -85,27 +86,27 @@ export class CartService {
     for (const [id, qty] of effective) {
       const row = byId.get(id);
       if (!row || !row.option_available || !row.configured_available || qty > Number(row.max_quantity)) throw new AppError(422, "INVALID_MODIFIER_SELECTION", "Modifier selection is not selectable");
-      selections.push({ id,name:row.name,price:Number(row.price),quantity:qty,maxQuantity:Number(row.max_quantity),isDefault:Boolean(row.is_default) });
+      selections.push({ id,name:row.name,names:row.names,price:Number(row.price),quantity:qty,maxQuantity:Number(row.max_quantity),isDefault:Boolean(row.is_default) });
     }
     const totalSelected = selections.reduce((sum,s)=>sum+s.quantity,0);
     if (totalSelected < Number(group.min_select) || totalSelected > Number(group.max_select)) throw new AppError(422,"INVALID_MODIFIER_SELECTION","Modifier selection limits are not satisfied");
     selections.sort((a,b)=>a.id.localeCompare(b.id));
     const modifiersPrice = selections.reduce((sum,s)=>sum+s.price*s.quantity,0);
     const modifiersKey=selections.map(s=>`${s.id}:${s.quantity}`).join("|") || "none";
-    return { id:product.id,name:product.name,unitPrice,selectedSize,selections,modifiersPrice,configurationKey:`${selectedSize ? `size:${selectedSize.id}` : "base"}|${modifiersKey}` };
+    return { id:product.id,name:product.name,names:product.names,unitPrice,selectedSize,selections,modifiersPrice,configurationKey:`${selectedSize ? `size:${selectedSize.id}` : "base"}|${modifiersKey}` };
   }
 
   private async insertOrMerge(tx: SQL, cartId:string, cityId:string, storeId:string, validated:ValidatedProduct, quantity:number) {
     const [item] = await tx<{id:string;quantity:number}[]>`
-      insert into cart_items(cart_id,store_id,city_id,product_id,selected_size_id,selected_size_name_snapshot,configuration_key,quantity,product_name_snapshot,unit_price_snapshot,modifiers_price_snapshot)
-      values(${cartId},${storeId},${cityId},${validated.id},${validated.selectedSize?.id??null},${validated.selectedSize?.name??null},${validated.configurationKey},${quantity},${validated.name},${validated.unitPrice},${validated.modifiersPrice})
-      on conflict(cart_id,product_id,configuration_key) do update set quantity=cart_items.quantity+excluded.quantity,selected_size_id=excluded.selected_size_id,selected_size_name_snapshot=excluded.selected_size_name_snapshot,unit_price_snapshot=excluded.unit_price_snapshot,modifiers_price_snapshot=excluded.modifiers_price_snapshot,product_name_snapshot=excluded.product_name_snapshot,updated_at=now()
+      insert into cart_items(cart_id,store_id,city_id,product_id,selected_size_id,selected_size_name_snapshot,selected_size_name_snapshot_localized,configuration_key,quantity,product_name_snapshot,product_name_snapshot_localized,unit_price_snapshot,modifiers_price_snapshot)
+      values(${cartId},${storeId},${cityId},${validated.id},${validated.selectedSize?.id??null},${validated.selectedSize?.name??null},${validated.selectedSize?.names ?? null}::jsonb,${validated.configurationKey},${quantity},${validated.name},${validated.names}::jsonb,${validated.unitPrice},${validated.modifiersPrice})
+      on conflict(cart_id,product_id,configuration_key) do update set quantity=cart_items.quantity+excluded.quantity,selected_size_id=excluded.selected_size_id,selected_size_name_snapshot=excluded.selected_size_name_snapshot,selected_size_name_snapshot_localized=excluded.selected_size_name_snapshot_localized,unit_price_snapshot=excluded.unit_price_snapshot,modifiers_price_snapshot=excluded.modifiers_price_snapshot,product_name_snapshot=excluded.product_name_snapshot,product_name_snapshot_localized=excluded.product_name_snapshot_localized,updated_at=now()
       where cart_items.quantity + excluded.quantity <= 99
       returning id::text id,quantity`;
     if (!item) throw new AppError(422,"INVALID_CART_QUANTITY","Resulting quantity exceeds 99");
     if (item.quantity > 99) throw new AppError(422,"INVALID_CART_QUANTITY","Resulting quantity exceeds 99");
     await tx`delete from cart_item_modifier_selections where cart_item_id=${item.id}`;
-    for (const s of validated.selections) await tx`insert into cart_item_modifier_selections(cart_item_id,cart_id,modifier_option_id,quantity,option_name_snapshot,unit_price_snapshot,configuration_snapshot) values(${item.id},${cartId},${s.id},${s.quantity},${s.name},${s.price},${JSON.stringify({maxQuantity:s.maxQuantity,isDefault:s.isDefault})}::jsonb)`;
+    for (const s of validated.selections) await tx`insert into cart_item_modifier_selections(cart_item_id,cart_id,modifier_option_id,quantity,option_name_snapshot,option_name_snapshot_localized,unit_price_snapshot,configuration_snapshot) values(${item.id},${cartId},${s.id},${s.quantity},${s.name},${s.names}::jsonb,${s.price},${{maxQuantity:s.maxQuantity,isDefault:s.isDefault}}::jsonb)`;
   }
 
   async add(accountId:string, cityId:string, storeId:string, input:{productId:string;sizeId?:string|null;quantity:number;modifierSelections?:unknown}) {
@@ -151,9 +152,9 @@ export class CartService {
       const rawSelections=input.modifierSelections===undefined?storedSelections:input.modifierSelections;
       const validated=await this.validateProduct(tx,cityId,cart.store_id,item.product_id,sizeId,rawSelections);
       if(validated.configurationKey===item.configuration_key){
-        await tx`update cart_items set quantity=${quantity},selected_size_id=${validated.selectedSize?.id??null},selected_size_name_snapshot=${validated.selectedSize?.name??null},product_name_snapshot=${validated.name},unit_price_snapshot=${validated.unitPrice},modifiers_price_snapshot=${validated.modifiersPrice},updated_at=now() where id=${itemId}`;
+        await tx`update cart_items set quantity=${quantity},selected_size_id=${validated.selectedSize?.id??null},selected_size_name_snapshot=${validated.selectedSize?.name??null},selected_size_name_snapshot_localized=${validated.selectedSize?.names ?? null}::jsonb,product_name_snapshot=${validated.name},product_name_snapshot_localized=${validated.names}::jsonb,unit_price_snapshot=${validated.unitPrice},modifiers_price_snapshot=${validated.modifiersPrice},updated_at=now() where id=${itemId}`;
         await tx`delete from cart_item_modifier_selections where cart_item_id=${itemId}`;
-        for(const s of validated.selections) await tx`insert into cart_item_modifier_selections(cart_item_id,cart_id,modifier_option_id,quantity,option_name_snapshot,unit_price_snapshot,configuration_snapshot) values(${itemId},${cart.id},${s.id},${s.quantity},${s.name},${s.price},${JSON.stringify({maxQuantity:s.maxQuantity,isDefault:s.isDefault})}::jsonb)`;
+        for(const s of validated.selections) await tx`insert into cart_item_modifier_selections(cart_item_id,cart_id,modifier_option_id,quantity,option_name_snapshot,option_name_snapshot_localized,unit_price_snapshot,configuration_snapshot) values(${itemId},${cart.id},${s.id},${s.quantity},${s.name},${s.names}::jsonb,${s.price},${{maxQuantity:s.maxQuantity,isDefault:s.isDefault}}::jsonb)`;
       }else{
         await tx`delete from cart_items where id=${itemId}`;
         await this.insertOrMerge(tx,cart.id,cityId,cart.store_id,validated,quantity);

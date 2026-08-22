@@ -19,5 +19,9 @@ UPDATE "cart_items" SET "product_name_snapshot_localized" = jsonb_build_object('
 UPDATE "cart_item_modifier_selections" SET "option_name_snapshot_localized" = jsonb_build_object('ar', "option_name_snapshot");--> statement-breakpoint
 UPDATE "order_items" SET "product_name_snapshot_localized" = jsonb_build_object('ar', "product_name_snapshot"), "selected_size_name_snapshot_localized" = CASE WHEN "selected_size_name_snapshot" IS NULL THEN NULL ELSE jsonb_build_object('ar', "selected_size_name_snapshot") END;--> statement-breakpoint
 UPDATE "order_item_replacements" SET "original_product_name_snapshot_localized" = jsonb_build_object('ar', "original_product_name_snapshot"), "replacement_product_name_snapshot_localized" = jsonb_build_object('ar', "replacement_product_name_snapshot");--> statement-breakpoint
+UPDATE "order_items" SET "modifier_selections_snapshot" = (
+  SELECT coalesce(jsonb_agg(item || jsonb_build_object('nameLocalized', jsonb_build_object('ar', item->>'name'))), '[]'::jsonb)
+  FROM jsonb_array_elements("modifier_selections_snapshot") AS item
+);--> statement-breakpoint
 ALTER TABLE "cart_items" ADD CONSTRAINT "cart_items_product_name_snapshot_localized_chk" CHECK ("product_name_snapshot_localized" IS NULL OR jsonb_typeof("product_name_snapshot_localized") = 'object' AND "product_name_snapshot_localized" ? 'ar');--> statement-breakpoint
 ALTER TABLE "order_items" ADD CONSTRAINT "order_items_product_name_snapshot_localized_chk" CHECK ("product_name_snapshot_localized" IS NULL OR jsonb_typeof("product_name_snapshot_localized") = 'object' AND "product_name_snapshot_localized" ? 'ar');
