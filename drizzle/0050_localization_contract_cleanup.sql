@@ -1,0 +1,5 @@
+-- Legacy name columns remain temporarily authoritative at the route layer until
+-- every write/read contract has switched.  This migration intentionally performs
+-- no destructive column drop: the 0045-0049 backfill is additive and reversible.
+-- A later contract-cleanup migration may remove legacy columns only after the
+-- application switch and preflight have proved every required translation exists.

@@ -17,6 +17,7 @@ export async function seedGovernorates(db: SQL): Promise<void> {
   await db.begin(async (tx) => {
     for (const [index, [id, nameAr, nameEn]] of GOVERNORATE_SEED.entries()) {
       await tx`insert into governorates(id,name_ar,name_en,status,display_order) values(${id},${nameAr},${nameEn},'ACTIVE',${index + 1}) on conflict (id) do nothing`;
+      await tx`insert into governorate_translations(governorate_id,locale,name) values(${id},'ar',${nameAr}),(${id},'en',${nameEn}) on conflict(governorate_id,locale) do nothing`;
     }
   });
 }

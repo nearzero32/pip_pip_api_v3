@@ -11,3 +11,4 @@ export * from "./customer-addresses";
 export * from "./delivery-pricing";
 export * from "./orders";
 export * from "./driver-offers";
+export * from "./localization";

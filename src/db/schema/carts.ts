@@ -29,9 +29,13 @@ export const cartItems = pgTable("cart_items", {
   productId: uuid("product_id").notNull(),
   selectedSizeId: uuid("selected_size_id"),
   selectedSizeNameSnapshot: text("selected_size_name_snapshot"),
+  /** Immutable localized map; legacy scalar remains during contract migration. */
+  selectedSizeNameSnapshotLocalized: jsonb("selected_size_name_snapshot_localized").$type<Record<string, string>>(),
   configurationKey: text("configuration_key").notNull(),
   quantity: integer("quantity").notNull(),
   productNameSnapshot: text("product_name_snapshot").notNull(),
+  /** Immutable localized map; legacy scalar remains during contract migration. */
+  productNameSnapshotLocalized: jsonb("product_name_snapshot_localized").$type<Record<string, string>>(),
   unitPriceSnapshot: integer("unit_price_snapshot").notNull(),
   modifiersPriceSnapshot: integer("modifiers_price_snapshot").notNull(),
   createdAt: instant("created_at").notNull().defaultNow(),
@@ -55,6 +59,7 @@ export const cartItemModifierSelections = pgTable("cart_item_modifier_selections
   modifierOptionId: uuid("modifier_option_id").notNull(),
   quantity: integer("quantity").notNull(),
   optionNameSnapshot: text("option_name_snapshot").notNull(),
+  optionNameSnapshotLocalized: jsonb("option_name_snapshot_localized").$type<Record<string, string>>(),
   unitPriceSnapshot: integer("unit_price_snapshot").notNull(),
   configurationSnapshot: jsonb("configuration_snapshot").$type<Record<string, unknown>>().notNull(),
   createdAt: instant("created_at").notNull().defaultNow(),

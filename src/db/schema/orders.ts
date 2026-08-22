@@ -157,7 +157,9 @@ export const orderItems = pgTable(
     productId: uuid("product_id").notNull(),
     selectedSizeId: uuid("selected_size_id"),
     productNameSnapshot: text("product_name_snapshot").notNull(),
+    productNameSnapshotLocalized: jsonb("product_name_snapshot_localized").$type<Record<string, string>>(),
     selectedSizeNameSnapshot: text("selected_size_name_snapshot"),
+    selectedSizeNameSnapshotLocalized: jsonb("selected_size_name_snapshot_localized").$type<Record<string, string>>(),
     unitPriceSnapshot: integer("unit_price_snapshot").notNull(),
     modifiersPriceSnapshot: integer("modifiers_price_snapshot").notNull(),
     quantity: integer("quantity").notNull(),
@@ -228,9 +230,11 @@ export const orderItemReplacements = pgTable(
     originalProductNameSnapshot: text(
       "original_product_name_snapshot",
     ).notNull(),
+    originalProductNameSnapshotLocalized: jsonb("original_product_name_snapshot_localized").$type<Record<string, string>>(),
     replacementProductNameSnapshot: text(
       "replacement_product_name_snapshot",
     ).notNull(),
+    replacementProductNameSnapshotLocalized: jsonb("replacement_product_name_snapshot_localized").$type<Record<string, string>>(),
     originalQuantity: integer("original_quantity").notNull(),
     replacementQuantity: integer("replacement_quantity").notNull(),
     originalUnitPrice: integer("original_unit_price").notNull(),

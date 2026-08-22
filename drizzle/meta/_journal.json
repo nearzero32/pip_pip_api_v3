@@ -316,6 +316,48 @@
       "when": 1786540000004,
       "tag": "0044_revoke_main_category_permission_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786540000005,
+      "tag": "0045_localization_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1786540000006,
+      "tag": "0046_geography_translations",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786540000007,
+      "tag": "0047_classification_translations",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1786540000008,
+      "tag": "0048_store_catalog_translations",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1786540000009,
+      "tag": "0049_commerce_localized_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1786540000010,
+      "tag": "0050_localization_contract_cleanup",
+      "breakpoints": true
     }
   ]
 }
