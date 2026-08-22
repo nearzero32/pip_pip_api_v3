@@ -1,14 +1,8 @@
 import type { SQL } from "bun";
 import type { MediaConfig } from "../../config/env";
 import { AppError } from "../../errors/app-error";
-import { requireCityPermission } from "../auth/staff/authorization";
-import { assertActiveCity } from "../auth/staff/dashboard-scope";
+import { requireSuperAdmin } from "../auth/staff/authorization";
 import type { AuthIdentity } from "../auth/sessions/session-service";
-import {
-  assertCityOperability,
-  beginWithGeographyRetry,
-  lockCityGeography,
-} from "../geography/geography-locks";
 import { dateValue } from "../geography/shared";
 import {
   dashboardListResult,
@@ -114,21 +108,19 @@ export class MainCategoryService {
     private config: MediaConfig,
   ) {}
 
-  private async authorize(
-    identity: AuthIdentity,
-    permission:
-      | "main_categories.read"
-      | "main_categories.create"
-      | "main_categories.update"
-      | "main_categories.archive",
-  ): Promise<string> {
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      permission,
-    );
-    await assertActiveCity(this.client, cityId);
+  private async authorize(identity: AuthIdentity, cityId?: string): Promise<string> {
+    requireSuperAdmin(identity);
+    if (!cityId) throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
+    const [city] = await this.client<{ status: string }[]>`select status::text status from cities where id=${cityId}`;
+    if (!city) throw new AppError(404, "CITY_NOT_FOUND", "City not found");
+    if (city.status === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
     return cityId;
+  }
+
+  private async lockTargetCity(tx: SQL, cityId: string) {
+    const [city] = await tx<{ status: string }[]>`select status::text status from cities where id=${cityId} for update`;
+    if (!city) throw new AppError(404, "CITY_NOT_FOUND", "City not found");
+    if (city.status === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
   }
 
   private async loadCityScoped(
@@ -168,14 +160,13 @@ export class MainCategoryService {
     );
   }
 
-  async create(identity: AuthIdentity, body: unknown, requestId: string) {
-    const cityId = await this.authorize(identity, "main_categories.create");
+  async create(identity: AuthIdentity, requestedCityId: string, body: unknown, requestId: string) {
+    const cityId = await this.authorize(identity, requestedCityId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
     const input = body as Record<string, unknown>;
     for (const forbidden of [
-      "cityId",
       "description",
       "descriptionAr",
       "descriptionEn",
@@ -213,9 +204,8 @@ export class MainCategoryService {
 
     let createdId: string;
     try {
-      createdId = await beginWithGeographyRetry(this.client, async (tx) => {
-        const state = await lockCityGeography(tx, cityId);
-        assertCityOperability(state);
+      createdId = await this.client.begin(async (tx) => {
+        await this.lockTargetCity(tx, cityId);
         await this.media.claimAsset(tx, {
           assetId: imageAssetId,
           cityId,
@@ -234,6 +224,7 @@ export class MainCategoryService {
             ${identity.accountId}
           )
           returning id::text as id`;
+        await tx`insert into audit_logs(event_type,actor_account_id,outcome,request_correlation_id,redacted_metadata) values('MAIN_CATEGORY_CREATED',${identity.accountId},'SUCCESS',${requestId},${JSON.stringify({targetCityId:cityId,mainCategoryId:inserted!.id,changedFields:["name","imageAssetId","status","displayOrder"]})}::jsonb)`;
         return inserted!.id;
       });
     } catch (error) {
@@ -242,22 +233,6 @@ export class MainCategoryService {
       if (constraint) this.mapUniqueViolation(constraint);
       throw error;
     }
-
-    await this.client`
-      insert into audit_logs (
-        event_type, actor_account_id, outcome, request_correlation_id, redacted_metadata
-      ) values (
-        'MAIN_CATEGORY_CREATED',
-        ${identity.accountId},
-        'SUCCESS',
-        ${requestId},
-        ${JSON.stringify({
-          mainCategoryId: createdId,
-          imageAssetId,
-          status,
-          displayOrder,
-        })}::jsonb
-      )`;
 
     return mainCategoryDto(
       await this.loadCityScoped(createdId, cityId),
@@ -274,9 +249,10 @@ export class MainCategoryService {
       limit?: number;
       sortBy?: string;
       sortOrder?: string;
+      cityId?: string;
     },
   ) {
-    const cityId = await this.authorize(identity, "main_categories.read");
+    const cityId = await this.authorize(identity, input.cityId);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const searchRaw = parseOptionalSearch(input.search);
@@ -335,8 +311,8 @@ export class MainCategoryService {
     );
   }
 
-  async get(identity: AuthIdentity, mainCategoryId: string) {
-    const cityId = await this.authorize(identity, "main_categories.read");
+  async get(identity: AuthIdentity, mainCategoryId: string, requestedCityId?: string) {
+    const cityId = await this.authorize(identity, requestedCityId);
     return mainCategoryDto(
       await this.loadCityScoped(mainCategoryId, cityId),
       this.config.r2PublicBaseUrl,
@@ -348,8 +324,9 @@ export class MainCategoryService {
     mainCategoryId: string,
     body: unknown,
     requestId: string,
+    requestedCityId?: string,
   ) {
-    const cityId = await this.authorize(identity, "main_categories.update");
+    const cityId = await this.authorize(identity, requestedCityId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -413,9 +390,8 @@ export class MainCategoryService {
     let oldImageAssetId: string | null = null;
 
     try {
-      await beginWithGeographyRetry(this.client, async (tx) => {
-        const state = await lockCityGeography(tx, cityId);
-        assertCityOperability(state);
+      await this.client.begin(async (tx) => {
+        await this.lockTargetCity(tx, cityId);
         const [locked] = await tx<{
           id: string;
           status: string;
@@ -459,6 +435,7 @@ export class MainCategoryService {
               status = coalesce(${nextStatus}::main_category_status, status),
               display_order = coalesce(${displayOrder}, display_order),
               image_asset_id = ${nextImageId!},
+              updated_by_account_id = ${identity.accountId},
               updated_at = now()
             where id = ${mainCategoryId} and city_id = ${cityId}`;
           await this.media.releaseAsset(tx, {
@@ -472,9 +449,11 @@ export class MainCategoryService {
               name = coalesce(${name}, name),
               status = coalesce(${nextStatus}::main_category_status, status),
               display_order = coalesce(${displayOrder}, display_order),
+              updated_by_account_id = ${identity.accountId},
               updated_at = now()
             where id = ${mainCategoryId} and city_id = ${cityId}`;
         }
+        await tx`insert into audit_logs(event_type,actor_account_id,outcome,request_correlation_id,redacted_metadata) values(${imageReplaced ? "MAIN_CATEGORY_IMAGE_REPLACED" : "MAIN_CATEGORY_UPDATED"},${identity.accountId},'SUCCESS',${requestId},${JSON.stringify({targetCityId:cityId,mainCategoryId,changedFields:[hasName?"name":null,hasStatus?"status":null,hasOrder?"displayOrder":null,hasImage?"imageAssetId":null].filter(Boolean),oldImageAssetId,newImageAssetId:nextImageId})}::jsonb)`;
       });
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -482,23 +461,6 @@ export class MainCategoryService {
       if (constraint) this.mapUniqueViolation(constraint);
       throw error;
     }
-
-    await this.client`
-      insert into audit_logs (
-        event_type, actor_account_id, outcome, request_correlation_id, redacted_metadata
-      ) values (
-        ${imageReplaced ? "MAIN_CATEGORY_IMAGE_REPLACED" : "MAIN_CATEGORY_UPDATED"},
-        ${identity.accountId},
-        'SUCCESS',
-        ${requestId},
-        ${JSON.stringify({
-          mainCategoryId,
-          oldImageAssetId,
-          newImageAssetId: nextImageId ?? oldImageAssetId,
-          newStatus: nextStatus,
-          displayOrder,
-        })}::jsonb
-      )`;
 
     return mainCategoryDto(
       await this.loadCityScoped(mainCategoryId, cityId),
@@ -510,11 +472,11 @@ export class MainCategoryService {
     identity: AuthIdentity,
     mainCategoryId: string,
     requestId: string,
+    requestedCityId?: string,
   ) {
-    const cityId = await this.authorize(identity, "main_categories.archive");
-    await beginWithGeographyRetry(this.client, async (tx) => {
-      const state = await lockCityGeography(tx, cityId);
-      assertCityOperability(state);
+    const cityId = await this.authorize(identity, requestedCityId);
+    await this.client.begin(async (tx) => {
+      await this.lockTargetCity(tx, cityId);
       const [locked] = await tx<{ id: string; status: string }[]>`
         select id::text as id, status::text as status
         from main_categories
@@ -532,22 +494,14 @@ export class MainCategoryService {
           update main_categories set
             status = 'ARCHIVED',
             archived_at = now(),
+            updated_by_account_id = ${identity.accountId},
+            archived_by_account_id = ${identity.accountId},
             updated_at = now()
           where id = ${mainCategoryId} and city_id = ${cityId}`;
+        await tx`insert into audit_logs(event_type,actor_account_id,outcome,request_correlation_id,redacted_metadata) values('MAIN_CATEGORY_ARCHIVED',${identity.accountId},'SUCCESS',${requestId},${JSON.stringify({targetCityId:cityId,mainCategoryId,changedFields:["status","archivedAt"]})}::jsonb)`;
       }
       // Keep image_asset_id claimed — do not call releaseAsset.
     });
-
-    await this.client`
-      insert into audit_logs (
-        event_type, actor_account_id, outcome, request_correlation_id, redacted_metadata
-      ) values (
-        'MAIN_CATEGORY_ARCHIVED',
-        ${identity.accountId},
-        'SUCCESS',
-        ${requestId},
-        ${JSON.stringify({ mainCategoryId })}::jsonb
-      )`;
 
     return mainCategoryDto(
       await this.loadCityScoped(mainCategoryId, cityId),

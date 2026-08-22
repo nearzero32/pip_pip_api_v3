@@ -302,6 +302,20 @@
       "when": 1786540000002,
       "tag": "0042_zone_actor_attribution",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786540000003,
+      "tag": "0043_main_category_actor_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1786540000004,
+      "tag": "0044_revoke_main_category_permission_grants",
+      "breakpoints": true
     }
   ]
 }

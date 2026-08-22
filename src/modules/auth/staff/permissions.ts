@@ -3,11 +3,6 @@ export const GRANTABLE_PERMISSION_CODES = [
   "media.read",
   "media.create",
   "media.delete",
-  "main_categories.read",
-  "main_categories.create",
-  "main_categories.update",
-  "main_categories.archive",
-  "main_categories.export",
   "subcategories.read",
   "subcategories.create",
   "subcategories.update",
@@ -83,6 +78,7 @@ export const SUPER_ADMIN_EXPORT_PERMISSION_CODES = [
   "cities.export",
   "admins.export",
   "delivery_pricing.versions.export",
+  "main_categories.export",
 ] as const;
 
 export type SuperAdminExportPermissionCode =

@@ -90,6 +90,7 @@ const publicErrors = {
 };
 
 const createBodyKeys = new Set([
+  "cityId",
   "name",
   "imageAssetId",
   "status",
@@ -136,13 +137,15 @@ export const mainCategoryRoutes = (
       async ({ request, set, body }) =>
         service.create(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
-          body,
+          (body as { cityId: string }).cityId,
+          (() => { const { cityId: _cityId, ...input } = body as Record<string, unknown>; return input; })(),
           requestIdOf(set),
         ),
       {
         parse: "json",
         body: t.Object(
           {
+            cityId: t.String({ format: "uuid" }),
             name: t.String({ minLength: 1, maxLength: 100 }),
             imageAssetId: t.String({ format: "uuid" }),
             status: t.Optional(
@@ -172,7 +175,7 @@ export const mainCategoryRoutes = (
       {
         query: t.Object(
           {
-            ...dashboardListQuery,
+            cityId: t.String({ format: "uuid" }), ...dashboardListQuery,
             status: t.Optional(
               t.Union([
                 t.Literal("ACTIVE"),
@@ -195,13 +198,15 @@ export const mainCategoryRoutes = (
     )
     .get(
       "/api/v1/dashboard/main-categories/:mainCategoryId",
-      async ({ request, set, params }) =>
+      async ({ request, set, params, query }) =>
         service.get(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.mainCategoryId,
+          query.cityId,
         ),
       {
         params: mainCategoryIdParam,
+        query: t.Object({ cityId: t.String({ format: "uuid" }) }, { additionalProperties: false }),
         response: { 200: mainCategoryDto, ...detailErrors },
         detail: {
           tags: ["Dashboard — Main Categories"],
@@ -212,15 +217,17 @@ export const mainCategoryRoutes = (
     )
     .patch(
       "/api/v1/dashboard/main-categories/:mainCategoryId",
-      async ({ request, set, params, body }) =>
+      async ({ request, set, params, body, query }) =>
         service.update(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.mainCategoryId,
           body,
           requestIdOf(set),
+          query.cityId,
         ),
       {
         params: mainCategoryIdParam,
+        query: t.Object({ cityId: t.String({ format: "uuid" }) }, { additionalProperties: false }),
         parse: "json",
         body: t.Object(
           {
@@ -249,14 +256,16 @@ export const mainCategoryRoutes = (
     )
     .delete(
       "/api/v1/dashboard/main-categories/:mainCategoryId",
-      async ({ request, set, params }) =>
+      async ({ request, set, params, query }) =>
         service.archive(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
           params.mainCategoryId,
           requestIdOf(set),
+          query.cityId,
         ),
       {
         params: mainCategoryIdParam,
+        query: t.Object({ cityId: t.String({ format: "uuid" }) }, { additionalProperties: false }),
         response: { 200: mainCategoryDto, ...mutationErrors },
         detail: {
           tags: ["Dashboard — Main Categories"],

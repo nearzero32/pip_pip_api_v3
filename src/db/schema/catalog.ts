@@ -35,6 +35,9 @@ export const mainCategories = pgTable(
     createdByAccountId: uuid("created_by_account_id")
       .notNull()
       .references(() => accounts.id),
+    /** Null for categories created before actor attribution was added. */
+    updatedByAccountId: uuid("updated_by_account_id").references(() => accounts.id),
+    archivedByAccountId: uuid("archived_by_account_id").references(() => accounts.id),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
     archivedAt: instant("archived_at"),
