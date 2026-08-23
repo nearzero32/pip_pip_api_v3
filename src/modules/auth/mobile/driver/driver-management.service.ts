@@ -289,6 +289,15 @@ export class DriverManagementService {
     return this.dto(row);
   }
 
+  async documents(identity: AuthIdentity, driverId: string) {
+    requireSuperAdmin(identity);
+    return this.client<{ assetId: string; documentType: string; side: string; originalName: string }[]>`
+      select ma.id::text as "assetId", dad.document_type::text as "documentType", dad.side::text as side, ma.original_name as "originalName"
+      from driver_profiles dp join driver_application_documents dad on dad.driver_application_id = dp.approved_application_id and dad.invalidated_at is null
+      join media_assets ma on ma.object_key = dad.object_key
+      where dp.account_id = ${driverId} order by dad.document_type, dad.side`;
+  }
+
   async update(
     identity: AuthIdentity,
     driverId: string,
@@ -300,6 +309,7 @@ export class DriverManagementService {
       vehicleDescription?: string | null;
       driverName?: string; fatherName?: string; motherName?: string; alternatePhone?: string;
       vehicleType?: string | null; vehicleNumber?: string | null;
+      nationalIdFrontAssetId?: string; nationalIdBackAssetId?: string; residenceCardFrontAssetId?: string; residenceCardBackAssetId?: string; contractAssetId?: string;
     },
   ) {
     requireSuperAdmin(identity);
@@ -319,10 +329,10 @@ export class DriverManagementService {
 
     return this.client.begin(async (tx) => {
       const [current] = await tx<
-        { account_id: string; city_id: string | null; photo: string | null; photo_asset_id: string | null }[]
+        { account_id: string; city_id: string | null; photo: string | null; photo_asset_id: string | null; application_id: string }[]
       >`select account_id::text, city_id::text,
                driver_photo_object_key as photo,
-               driver_photo_asset_id::text as photo_asset_id
+               driver_photo_asset_id::text as photo_asset_id, approved_application_id::text as application_id
         from driver_profiles where account_id = ${driverId} for update`;
       if (!current)
         throw new AppError(404, "DRIVER_NOT_FOUND", "Driver not found");
@@ -380,6 +390,12 @@ export class DriverManagementService {
         where account_id = ${driverId}`;
       if (input.driverPhotoAssetId !== undefined && current.photo_asset_id) {
         await this.releaseDriverPhoto(tx, current.photo_asset_id, current.city_id!);
+      }
+      const replacements = [["NATIONAL_ID", "FRONT", input.nationalIdFrontAssetId], ["NATIONAL_ID", "BACK", input.nationalIdBackAssetId], ["RESIDENCE_CARD", "FRONT", input.residenceCardFrontAssetId], ["RESIDENCE_CARD", "BACK", input.residenceCardBackAssetId], ["CONTRACT", "SINGLE", input.contractAssetId]] as const;
+      for (const [type, side, assetId] of replacements) if (assetId) {
+        const objectKey = await this.claimDriverDocument(tx, assetId, targetCityId!);
+        await tx`update driver_application_documents set invalidated_at = now() where driver_application_id = ${current.application_id} and application_version = 1 and document_type = ${type}::driver_document_type and side = ${side}::document_side and invalidated_at is null`;
+        await tx`insert into driver_application_documents (driver_application_id, application_version, document_type, side, object_key, uploaded_by_account_id) values (${current.application_id}, 1, ${type}::driver_document_type, ${side}::document_side, ${objectKey}, ${identity.accountId})`;
       }
       await tx`
         insert into audit_logs

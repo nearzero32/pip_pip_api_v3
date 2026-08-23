@@ -713,6 +713,14 @@ export class MediaService {
     return mediaAssetDto(row, this.config.r2PublicBaseUrl);
   }
 
+  async getDownloadUrl(identity: AuthIdentity, assetId: string, requestedCityId?: string) {
+    const { cityId } = await this.authorizeAssetOperation(identity, "media.read", requestedCityId);
+    const row = await this.loadCityScoped(assetId, cityId);
+    if (row.status !== "READY") throw new AppError(409, "MEDIA_NOT_READY", "Media is not ready");
+    const download = await this.storage.createDownloadUrl({ objectKey: row.object_key, expiresInSeconds: 300 });
+    return { url: download.url, expiresAt: download.expiresAt.toISOString() };
+  }
+
   async delete(
     identity: AuthIdentity,
     assetId: string,

@@ -20,7 +20,7 @@ import { dashboardListQuery, dashboardPaginated } from "../../../dashboard-lists
 import { assertAllowedQueryKeys } from "../../../geography/shared";
 
 const createKeys = new Set(["phone", "accessCode", "cityId", "driverPhotoAssetId", "vehicleDescription", "driverName", "fatherName", "motherName", "alternatePhone", "nationalIdFrontAssetId", "nationalIdBackAssetId", "residenceCardFrontAssetId", "residenceCardBackAssetId", "contractAssetId", "vehicleType", "vehicleNumber"]);
-const patchKeys = new Set(["phone", "cityId", "operationalStatus", "driverPhotoAssetId", "vehicleDescription", "driverName", "fatherName", "motherName", "alternatePhone", "vehicleType", "vehicleNumber"]);
+const patchKeys = new Set(["phone", "cityId", "operationalStatus", "driverPhotoAssetId", "vehicleDescription", "driverName", "fatherName", "motherName", "alternatePhone", "vehicleType", "vehicleNumber", "nationalIdFrontAssetId", "nationalIdBackAssetId", "residenceCardFrontAssetId", "residenceCardBackAssetId", "contractAssetId"]);
 const codeKeys = new Set(["accessCode"]);
 const listKeys = new Set(["search", "page", "limit", "sortBy", "sortOrder", "cityId", "status"]);
 
@@ -108,6 +108,12 @@ export const driverManagementRoutes = (auth: AuthModule) =>
       response: { 200: driverDto, ...errors },
       detail: { tags: ["Dashboard — Drivers"], security: [{ bearerAuth: [] }] },
     })
+    .get("/api/v1/dashboard/drivers/:driverId/documents", async ({ request, set, params }) =>
+      auth.driverManagement.documents(await auth.sessions.authenticate(bearer(request), dashboardContext, requestIdOf(set)), params.driverId), {
+      params: t.Object({ driverId: t.String({ format: "uuid" }) }, { additionalProperties: false }),
+      response: { 200: t.Array(t.Object({ assetId: t.String({ format: "uuid" }), documentType: t.String(), side: t.String(), originalName: t.String() })), ...errors },
+      detail: { tags: ["Dashboard — Drivers"], security: [{ bearerAuth: [] }], summary: "List a driver's private documents (SUPER_ADMIN only)" },
+    })
     .patch("/api/v1/dashboard/drivers/:driverId", async ({ request, set, params, body }) =>
       auth.driverManagement.update(await auth.sessions.authenticate(bearer(request), dashboardContext, requestIdOf(set)), params.driverId, body), {
       params: t.Object({ driverId: t.String({ format: "uuid" }) }, { additionalProperties: false }),
@@ -120,6 +126,7 @@ export const driverManagementRoutes = (auth: AuthModule) =>
         vehicleDescription: t.Optional(t.Nullable(t.String({ maxLength: 1000 }))),
         driverName: t.Optional(t.String({ minLength: 1, maxLength: 200 })), fatherName: t.Optional(t.String({ minLength: 1, maxLength: 200 })), motherName: t.Optional(t.String({ minLength: 1, maxLength: 200 })), alternatePhone: t.Optional(t.String({ minLength: 8, maxLength: 32 })),
         vehicleType: t.Optional(t.Nullable(t.String({ maxLength: 200 }))), vehicleNumber: t.Optional(t.Nullable(t.String({ maxLength: 200 }))),
+        nationalIdFrontAssetId: t.Optional(t.String({ format: "uuid" })), nationalIdBackAssetId: t.Optional(t.String({ format: "uuid" })), residenceCardFrontAssetId: t.Optional(t.String({ format: "uuid" })), residenceCardBackAssetId: t.Optional(t.String({ format: "uuid" })), contractAssetId: t.Optional(t.String({ format: "uuid" })),
       }, { additionalProperties: false, minProperties: 1 }),
       response: { 200: driverDto, ...errors },
       detail: { tags: ["Dashboard — Drivers"], security: [{ bearerAuth: [] }] },

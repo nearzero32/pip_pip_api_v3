@@ -104,6 +104,13 @@ export class R2MediaStorage implements MediaStorage {
     }
   }
 
+  async createDownloadUrl(input: { objectKey: string; expiresInSeconds: number }): Promise<{ url: string; expiresAt: Date }> {
+    try {
+      const url = await getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: input.objectKey }), { expiresIn: input.expiresInSeconds });
+      return { url, expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000) };
+    } catch (error) { throw new MediaStorageError(error instanceof Error ? error.name : 'DownloadUrlError', 'createDownloadUrl'); }
+  }
+
   async headObject(objectKey: string): Promise<MediaObjectHead | null> {
     try {
       const result = await this.client.send(

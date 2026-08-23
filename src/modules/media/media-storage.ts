@@ -16,6 +16,7 @@ export interface MediaStorage {
     contentType: string;
     expiresInSeconds: number;
   }): Promise<MediaUploadUrl>;
+  createDownloadUrl(input: { objectKey: string; expiresInSeconds: number }): Promise<{ url: string; expiresAt: Date }>;
   headObject(objectKey: string): Promise<MediaObjectHead | null>;
   /** Ranged read of the object prefix for signature verification. */
   readPrefix(objectKey: string, maxBytes: number): Promise<Uint8Array>;

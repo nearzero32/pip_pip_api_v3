@@ -32,6 +32,10 @@ export class FakeMediaStorage implements MediaStorage {
     };
   }
 
+  async createDownloadUrl(input: { objectKey: string; expiresInSeconds: number }): Promise<{ url: string; expiresAt: Date }> {
+    return { url: `https://fake-r2.test/download/${encodeURIComponent(input.objectKey)}`, expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000) };
+  }
+
   /** Simulate a successful browser PUT to the presigned target. */
   putObject(objectKey: string, contentType: string, body: Uint8Array): void {
     this.objects.set(objectKey, {

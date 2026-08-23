@@ -159,6 +159,11 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
         },
       },
     )
+    .get(
+      "/api/v1/dashboard/media/:assetId/download",
+      async ({ request, set, params, query }) => service.getDownloadUrl(await authIdentity(auth, request, dashboardContext, requestIdOf(set)), params.assetId, query.cityId),
+      { params: assetIdParam, query: t.Object({ cityId: t.Optional(t.String({ format: "uuid" })) }, { additionalProperties: false }), response: { 200: t.Object({ url: t.String(), expiresAt: dateSchema }), ...mediaErrors }, detail: { tags: ["Dashboard — Media"], security: [{ bearerAuth: [] }], summary: "Get a short-lived private media URL" } },
+    )
     .delete(
       "/api/v1/dashboard/media/:assetId",
       async ({ request, set, params, query }) => {
