@@ -101,7 +101,7 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
         body: t.Object(
           {
             purpose: mediaPurpose,
-            cityId: t.Optional(t.String({ format: "uuid", description: "Required when purpose is CATEGORY_IMAGE; ignored/rejected by unmigrated purposes." })),
+            cityId: t.Optional(t.String({ format: "uuid", description: "Required for a global SUPER_ADMIN targeting any City. City-scoped Dashboard identities must not send it." })),
             fileName: t.String({ minLength: 1, maxLength: 255 }),
             contentType: t.String({ minLength: 1, maxLength: 100 }),
             sizeBytes: t.Integer({ minimum: 1 }),
@@ -114,7 +114,7 @@ export const mediaRoutes = (auth: AuthModule, service: MediaService) =>
           security: [{ bearerAuth: [] }],
           summary: "Create a media upload intent and presigned PUT URL",
           description:
-            "Supports CATEGORY_IMAGE, STORE_LOGO, STORE_IMAGE, and PRODUCT_IMAGE. Visibility is server-assigned PUBLIC for these purposes.",
+            "Supports CATEGORY_IMAGE, STORE_LOGO, STORE_IMAGE, and PRODUCT_IMAGE. A global SUPER_ADMIN must supply cityId to target the City; City-scoped identities derive City from their identity. Visibility is server-assigned PUBLIC for these purposes.",
         },
       },
     )

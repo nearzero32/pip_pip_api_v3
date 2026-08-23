@@ -343,6 +343,38 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     expect(response.status).toBe(403);
   });
 
+  test("SUPER_ADMIN uses the explicit-city Store route while Admin remains forbidden", async () => {
+    const allowed = await harness.app.handle(
+      jsonRequest(`/api/v1/super-admin/stores?cityId=${cityA}`, {
+        token: superToken,
+      }),
+    );
+    expect(allowed.status).toBe(200);
+
+    const create = await harness.app.handle(
+      jsonRequest('/api/v1/super-admin/stores', {
+        method: 'POST',
+        token: superToken,
+        body: { ...(await baseStoreBody({ name: 'متجر سوبر', phone: '+9647700000044' })), cityId: cityA },
+      }),
+    );
+    expect(create.status).toBe(200);
+    expect(((await create.json()) as { name: string }).name).toBe('متجر سوبر');
+
+    const missingCity = await harness.app.handle(
+      jsonRequest("/api/v1/super-admin/stores", { token: superToken }),
+    );
+    expect(missingCity.status).toBe(422);
+    expect((await errorOf(missingCity)).code).toBe("VALIDATION_FAILED");
+
+    const forbidden = await harness.app.handle(
+      jsonRequest(`/api/v1/super-admin/stores?cityId=${cityA}`, {
+        token: adminToken,
+      }),
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
   test("employee live permission grant is required", async () => {
     const empNo = await createStaffAccount(harness.auth, harness.client, {
       email: "m3d0-emp-noperm@example.com",

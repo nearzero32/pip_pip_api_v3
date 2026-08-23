@@ -3,7 +3,7 @@ import type { MediaConfig } from "../../config/env";
 import { AppError } from "../../errors/app-error";
 import { normalizePhone } from "../auth/shared/normalization";
 import { authorizeMerchantStoreScope } from "../auth/merchant/merchant-access";
-import { requireCityPermission } from "../auth/staff/authorization";
+import { requireCityPermission, requireSuperAdmin } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
 import {
@@ -156,7 +156,13 @@ export class StoreService {
       | "stores.create"
       | "stores.update"
       | "stores.archive",
+    targetCityId?: string,
   ) {
+    if (targetCityId) {
+      requireSuperAdmin(identity);
+      await assertActiveCity(this.client, targetCityId);
+      return targetCityId;
+    }
     const cityId = await requireCityPermission(
       this.client,
       identity,
@@ -571,8 +577,8 @@ export class StoreService {
     }
   }
 
-  async create(identity: AuthIdentity, body: unknown, requestId: string) {
-    const cityId = await this.authorize(identity, "stores.create");
+  async create(identity: AuthIdentity, body: unknown, requestId: string, targetCityId?: string) {
+    const cityId = await this.authorize(identity, "stores.create", targetCityId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -726,8 +732,9 @@ export class StoreService {
   async list(
     identity: AuthIdentity,
     input: StoreListInput & { page?: number; limit?: number },
+    targetCityId?: string,
   ) {
-    const cityId = await this.authorize(identity, "stores.read");
+    const cityId = await this.authorize(identity, "stores.read", targetCityId);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const filters = parseStoreListQuery(input);
@@ -809,8 +816,8 @@ export class StoreService {
     return dashboardListResult(data, page, limit, Number(count?.total ?? 0));
   }
 
-  async get(identity: AuthIdentity, storeId: string) {
-    const cityId = await this.authorize(identity, "stores.read");
+  async get(identity: AuthIdentity, storeId: string, targetCityId?: string) {
+    const cityId = await this.authorize(identity, "stores.read", targetCityId);
     return this.getDto(cityId, storeId);
   }
 
@@ -819,8 +826,9 @@ export class StoreService {
     storeId: string,
     body: unknown,
     requestId: string,
+    targetCityId?: string,
   ) {
-    const cityId = await this.authorize(identity, "stores.update");
+    const cityId = await this.authorize(identity, "stores.update", targetCityId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -1069,8 +1077,8 @@ export class StoreService {
     return this.getDto(cityId, storeId);
   }
 
-  async archive(identity: AuthIdentity, storeId: string, requestId: string) {
-    const cityId = await this.authorize(identity, "stores.archive");
+  async archive(identity: AuthIdentity, storeId: string, requestId: string, targetCityId?: string) {
+    const cityId = await this.authorize(identity, "stores.archive", targetCityId);
     await beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
       assertCityOperability(state);

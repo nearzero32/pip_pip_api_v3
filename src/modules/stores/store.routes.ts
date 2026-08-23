@@ -23,6 +23,7 @@ import {
 import type { StoreService } from "./store.service";
 import { document } from "../../openapi/document";
 import { catalogExamples } from "../../openapi/examples/catalog";
+import { AppError } from "../../errors/app-error";
 
 const storeStatus = t.Union([
   t.Literal("DRAFT"),
@@ -195,6 +196,66 @@ const patchBodyKeys = new Set([
   "workingHours",
 ]);
 
+const superAdminCreateBodyKeys = new Set(["cityId", ...createBodyKeys]);
+
+const storeCreateBody = t.Object(
+  {
+    mainCategoryId: t.String({ format: "uuid" }),
+    translations: t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 100 }), address: t.String({ minLength: 1, maxLength: 500 }) }, { additionalProperties: false }), { minItems: 1 }),
+    phone: t.String({ minLength: 8, maxLength: 20 }),
+    latitude: t.Number({ minimum: -90, maximum: 90 }),
+    longitude: t.Number({ minimum: -180, maximum: 180 }),
+    logoAssetId: t.String({ format: "uuid" }),
+    coverAssetId: t.Optional(t.String({ format: "uuid" })),
+    status: t.Optional(mutableStoreStatus),
+    orderAcceptanceStatus: t.Optional(orderAcceptance),
+    displayOrder: t.Optional(t.Integer({ minimum: 0 })),
+    zoneIds: t.Array(t.String({ format: "uuid" }), { minItems: 1 }),
+    subcategoryIds: t.Array(t.String({ format: "uuid" }), { minItems: 1 }),
+    workingHours: t.Optional(t.Array(workingHourPeriod)),
+  },
+  { additionalProperties: false },
+);
+
+const storePatchBody = t.Object(
+  {
+    mainCategoryId: t.Optional(t.String({ format: "uuid" })),
+    translations: t.Optional(t.Array(t.Object({ locale: t.String({ minLength: 2, maxLength: 16 }), name: t.String({ minLength: 1, maxLength: 100 }), address: t.String({ minLength: 1, maxLength: 500 }) }, { additionalProperties: false }), { minItems: 1 })),
+    phone: t.Optional(t.String({ minLength: 8, maxLength: 20 })),
+    latitude: t.Optional(t.Number({ minimum: -90, maximum: 90 })),
+    longitude: t.Optional(t.Number({ minimum: -180, maximum: 180 })),
+    logoAssetId: t.Optional(t.String({ format: "uuid" })),
+    coverAssetId: t.Optional(t.Union([t.String({ format: "uuid" }), t.Null()])),
+    status: t.Optional(mutableStoreStatus),
+    orderAcceptanceStatus: t.Optional(orderAcceptance),
+    displayOrder: t.Optional(t.Integer({ minimum: 0 })),
+    zoneIds: t.Optional(t.Array(t.String({ format: "uuid" }), { minItems: 1 })),
+    subcategoryIds: t.Optional(t.Array(t.String({ format: "uuid" }), { minItems: 1 })),
+    workingHours: t.Optional(t.Array(workingHourPeriod)),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+
+const superAdminStoreListQuery = t.Object(
+  {
+    cityId: t.String({ format: "uuid" }),
+    ...dashboardListQuery,
+    status: t.Optional(storeStatus),
+    mainCategoryId: t.Optional(t.String({ format: "uuid" })),
+    zoneId: t.Optional(t.String({ format: "uuid" })),
+    commissionRateMin: t.Optional(t.Integer({ minimum: 0, maximum: 100 })),
+    commissionRateMax: t.Optional(t.Integer({ minimum: 0, maximum: 100 })),
+    createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
+    createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
+  },
+  { additionalProperties: false },
+);
+
+const targetCityQuery = t.Object(
+  { cityId: t.String({ format: "uuid" }) },
+  { additionalProperties: false },
+);
+
 const parseStoreBody = async (context: {
   request: Request;
   contentType: string;
@@ -205,7 +266,10 @@ const parseStoreBody = async (context: {
   if (method === "POST" && path.endsWith("/dashboard/stores")) {
     assertAllowedBodyKeys(body, createBodyKeys);
   }
-  if (method === "PATCH" && /\/dashboard\/stores\/[^/]+$/.test(path)) {
+  if (method === "POST" && path.endsWith("/super-admin/stores")) {
+    assertAllowedBodyKeys(body, superAdminCreateBodyKeys);
+  }
+  if (method === "PATCH" && /\/(?:dashboard|super-admin)\/stores\/[^/]+$/.test(path)) {
     assertAllowedBodyKeys(body, patchBodyKeys);
   }
   return body;
@@ -215,9 +279,89 @@ const cityIdHeaderParam = {
   $ref: "#/components/parameters/CityIdHeader",
 };
 
+const superAdminTargetCity = (request: Request) => {
+  const cityId = new URL(request.url).searchParams.get("cityId");
+  if (!cityId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cityId)) {
+    throw new AppError(422, "VALIDATION_FAILED", "cityId must be a UUID");
+  }
+  return cityId;
+};
+
 export const storeRoutes = (auth: AuthModule, service: StoreService) =>
   new Elysia({ name: "store-routes" })
     .onParse(parseStoreBody)
+    .post(
+      "/api/v1/super-admin/stores",
+      async ({ request, set, body }) => {
+        const input = body as Record<string, unknown>;
+        const cityId = typeof input.cityId === "string" ? input.cityId : "";
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cityId)) {
+          throw new AppError(422, "VALIDATION_FAILED", "cityId must be a UUID");
+        }
+        const { cityId: _cityId, ...store } = input;
+        return service.create(await authIdentity(auth, request, dashboardContext, requestIdOf(set)), store, requestIdOf(set), cityId);
+      },
+      {
+        parse: "json",
+        body: t.Composite([t.Object({ cityId: t.String({ format: "uuid" }) }), storeCreateBody]),
+        response: { 200: storeDto, ...createErrors },
+        detail: {
+          tags: ["Super Admin — Stores"],
+          summary: "Create a Store in an explicitly targeted City",
+          description: "SUPER_ADMIN only. cityId is required in the body. City assignment is immutable after creation.",
+          security: [{ bearerAuth: [] }],
+        },
+      },
+    )
+    .get(
+      "/api/v1/super-admin/stores",
+      async ({ request, set, query }) => service.list(
+        await authIdentity(auth, request, dashboardContext, requestIdOf(set)), query, superAdminTargetCity(request),
+      ),
+      {
+        query: superAdminStoreListQuery,
+        response: { 200: listResponse, ...listErrors },
+        detail: { tags: ["Super Admin — Stores"], summary: "List Stores for an explicitly targeted City", description: "SUPER_ADMIN only. cityId is required in query.", security: [{ bearerAuth: [] }] },
+      },
+    )
+    .get(
+      "/api/v1/super-admin/stores/:storeId",
+      async ({ request, set, params }) => service.get(
+        await authIdentity(auth, request, dashboardContext, requestIdOf(set)), params.storeId, superAdminTargetCity(request),
+      ),
+      {
+        params: storeIdParam,
+        query: targetCityQuery,
+        response: { 200: storeDto, ...detailErrors },
+        detail: { tags: ["Super Admin — Stores"], summary: "Get a Store in an explicitly targeted City", description: "SUPER_ADMIN only. cityId is required in query; cross-City IDs return STORE_NOT_FOUND.", security: [{ bearerAuth: [] }] },
+      },
+    )
+    .patch(
+      "/api/v1/super-admin/stores/:storeId",
+      async ({ request, set, params, body }) => service.update(
+        await authIdentity(auth, request, dashboardContext, requestIdOf(set)), params.storeId, body, requestIdOf(set), superAdminTargetCity(request),
+      ),
+      {
+        params: storeIdParam,
+        query: targetCityQuery,
+        parse: "json",
+        body: storePatchBody,
+        response: { 200: storeDto, ...mutationErrors },
+        detail: { tags: ["Super Admin — Stores"], summary: "Update a Store in an explicitly targeted City", description: "SUPER_ADMIN only. cityId is required in query. body.cityId is not accepted and store reassignment is not supported.", security: [{ bearerAuth: [] }] },
+      },
+    )
+    .delete(
+      "/api/v1/super-admin/stores/:storeId",
+      async ({ request, set, params }) => service.archive(
+        await authIdentity(auth, request, dashboardContext, requestIdOf(set)), params.storeId, requestIdOf(set), superAdminTargetCity(request),
+      ),
+      {
+        params: storeIdParam,
+        query: targetCityQuery,
+        response: { 200: storeDto, ...mutationErrors },
+        detail: { tags: ["Super Admin — Stores"], summary: "Archive a Store in an explicitly targeted City", description: "SUPER_ADMIN only. cityId is required in query.", security: [{ bearerAuth: [] }] },
+      },
+    )
     .post(
       "/api/v1/dashboard/stores",
       async ({ request, set, body }) =>

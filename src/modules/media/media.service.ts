@@ -153,8 +153,8 @@ export class MediaService {
     );
   }
 
-  /** CATEGORY_IMAGE is the one Dashboard media purpose with an explicit City target. */
-  private async authorizeCategoryImageTarget(
+  /** A global SUPER_ADMIN may explicitly target a non-archived City. */
+  private async authorizeExplicitCityTarget(
     identity: AuthIdentity,
     cityId?: string,
   ): Promise<string> {
@@ -175,14 +175,14 @@ export class MediaService {
     identity: AuthIdentity,
     permission: "media.read" | "media.create" | "media.delete",
     requestedCityId?: string,
-  ): Promise<{ cityId: string; categoryOnly: boolean }> {
+  ): Promise<{ cityId: string; explicitSuperTarget: boolean }> {
     if (this.isGlobalSuperAdmin(identity)) {
       return {
-        cityId: await this.authorizeCategoryImageTarget(identity, requestedCityId),
-        categoryOnly: true,
+        cityId: await this.authorizeExplicitCityTarget(identity, requestedCityId),
+        explicitSuperTarget: true,
       };
     }
-    return { cityId: await this.authorize(identity, permission), categoryOnly: false };
+    return { cityId: await this.authorize(identity, permission), explicitSuperTarget: false };
   }
 
   private async loadCityScoped(
@@ -256,16 +256,15 @@ export class MediaService {
       | "STORE_LOGO"
       | "STORE_IMAGE"
       | "PRODUCT_IMAGE";
-    if (purpose !== "CATEGORY_IMAGE" && "cityId" in input) {
-      throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
-    }
     const cityId =
-      purpose === "CATEGORY_IMAGE"
-        ? await this.authorizeCategoryImageTarget(
+      purpose === "CATEGORY_IMAGE" || this.isGlobalSuperAdmin(identity)
+        ? await this.authorizeExplicitCityTarget(
             identity,
             typeof input.cityId === "string" ? input.cityId : undefined,
           )
-        : await this.authorize(identity, "media.create");
+        : "cityId" in input
+          ? (() => { throw new AppError(422, "VALIDATION_FAILED", "The request is invalid"); })()
+          : await this.authorize(identity, "media.create");
     const contentType = String(input.contentType ?? "");
     if (!isAllowedImageContentType(contentType)) {
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported media content type");
@@ -507,15 +506,12 @@ export class MediaService {
     requestId: string,
     requestedCityId?: string,
   ) {
-    const { cityId, categoryOnly } = await this.authorizeAssetOperation(
+    const { cityId, explicitSuperTarget } = await this.authorizeAssetOperation(
       identity,
       "media.create",
       requestedCityId,
     );
     const existing = await this.loadCityScoped(assetId, cityId);
-    if (categoryOnly && existing.purpose !== "CATEGORY_IMAGE") {
-      throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
-    }
     if (
       identity.applicationType === "DRIVER_APP" &&
       existing.created_by_account_id !== identity.accountId
@@ -600,7 +596,9 @@ export class MediaService {
     }
     assertImageSignatureMatches(prefix!, existing.expected_content_type);
 
-    if (!categoryOnly) await assertActiveCity(this.client, cityId);
+    if (!explicitSuperTarget || existing.purpose !== "CATEGORY_IMAGE") {
+      await assertActiveCity(this.client, cityId);
+    }
 
     const updated = await this.client.begin(async (tx) => {
       const [locked] = await tx<MediaRow[]>`
@@ -696,15 +694,12 @@ export class MediaService {
   }
 
   async get(identity: AuthIdentity, assetId: string, requestedCityId?: string) {
-    const { cityId, categoryOnly } = await this.authorizeAssetOperation(
+    const { cityId } = await this.authorizeAssetOperation(
       identity,
       "media.read",
       requestedCityId,
     );
     const row = await this.loadCityScoped(assetId, cityId);
-    if (categoryOnly && row.purpose !== "CATEGORY_IMAGE") {
-      throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
-    }
     return mediaAssetDto(row, this.config.r2PublicBaseUrl);
   }
 
@@ -714,7 +709,7 @@ export class MediaService {
     requestId: string,
     requestedCityId?: string,
   ) {
-    const { cityId, categoryOnly } = await this.authorizeAssetOperation(
+    const { cityId } = await this.authorizeAssetOperation(
       identity,
       "media.delete",
       requestedCityId,
@@ -746,9 +741,6 @@ export class MediaService {
         where id = ${assetId} and city_id = ${cityId}
         for update`;
       if (!locked) throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
-      if (categoryOnly && locked.purpose !== "CATEGORY_IMAGE") {
-        throw new AppError(404, "MEDIA_NOT_FOUND", "Media asset not found");
-      }
       if (locked.attached_at != null) {
         throw new AppError(409, "MEDIA_IN_USE", "Media asset is attached and cannot be deleted");
       }
