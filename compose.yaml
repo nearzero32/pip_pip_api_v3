@@ -35,6 +35,20 @@ services:
   api:
     build: .
     restart: unless-stopped
+    develop:
+      watch:
+        # The runtime image serves compiled dist, so source changes require a rebuild.
+        - action: rebuild
+          path: ./src
+        # Rebuild container automatically when Dockerfile or dependencies change.
+        - action: rebuild
+          path: ./Dockerfile
+        - action: rebuild
+          path: ./package.json
+        - action: rebuild
+          path: ./bun.lock
+        - action: rebuild
+          path: ./drizzle
     environment:
       NODE_ENV: development
       HOST: 0.0.0.0

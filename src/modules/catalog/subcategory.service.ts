@@ -1,7 +1,7 @@
 import type { SQL } from "bun";
 import type { MediaConfig } from "../../config/env";
 import { AppError } from "../../errors/app-error";
-import { requireCityPermission } from "../auth/staff/authorization";
+import { requireCityPermission, requireSuperAdmin } from "../auth/staff/authorization";
 import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import type { AuthIdentity } from "../auth/sessions/session-service";
 import {
@@ -149,7 +149,13 @@ export class SubcategoryService {
       | "subcategories.create"
       | "subcategories.update"
       | "subcategories.archive",
+    targetCityId?: string,
   ): Promise<string> {
+    if (targetCityId) {
+      requireSuperAdmin(identity);
+      await assertActiveCity(this.client, targetCityId);
+      return targetCityId;
+    }
     const cityId = await requireCityPermission(
       this.client,
       identity,
@@ -261,8 +267,8 @@ export class SubcategoryService {
     return { current, target };
   }
 
-  async create(identity: AuthIdentity, body: unknown, requestId: string) {
-    const cityId = await this.authorize(identity, "subcategories.create");
+  async create(identity: AuthIdentity, body: unknown, requestId: string, targetCityId?: string) {
+    const cityId = await this.authorize(identity, "subcategories.create", targetCityId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -379,8 +385,9 @@ export class SubcategoryService {
       sortBy?: string;
       sortOrder?: string;
     },
+    targetCityId?: string,
   ) {
-    const cityId = await this.authorize(identity, "subcategories.read");
+    const cityId = await this.authorize(identity, "subcategories.read", targetCityId);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const searchRaw = parseOptionalSearch(input.search);
@@ -455,8 +462,8 @@ export class SubcategoryService {
     );
   }
 
-  async get(identity: AuthIdentity, subcategoryId: string) {
-    const cityId = await this.authorize(identity, "subcategories.read");
+  async get(identity: AuthIdentity, subcategoryId: string, targetCityId?: string) {
+    const cityId = await this.authorize(identity, "subcategories.read", targetCityId);
     return subcategoryDto(
       await this.loadCityScoped(subcategoryId, cityId),
       this.config.r2PublicBaseUrl,
@@ -468,8 +475,9 @@ export class SubcategoryService {
     subcategoryId: string,
     body: unknown,
     requestId: string,
+    targetCityId?: string,
   ) {
-    const cityId = await this.authorize(identity, "subcategories.update");
+    const cityId = await this.authorize(identity, "subcategories.update", targetCityId);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
@@ -695,8 +703,9 @@ export class SubcategoryService {
     identity: AuthIdentity,
     subcategoryId: string,
     requestId: string,
+    targetCityId?: string,
   ) {
-    const cityId = await this.authorize(identity, "subcategories.archive");
+    const cityId = await this.authorize(identity, "subcategories.archive", targetCityId);
     await beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
       assertCityOperability(state);

@@ -21,6 +21,7 @@ import {
   dashboardPaginated,
 } from "../dashboard-lists/query";
 import type { SubcategoryService } from "./subcategory.service";
+import { AppError } from "../../errors/app-error";
 
 const categoryStatus = t.Union([
   t.Literal("ACTIVE"),
@@ -131,12 +132,41 @@ const cityIdHeaderParam = {
   $ref: "#/components/parameters/CityIdHeader",
 };
 
+const superAdminTargetCity = (request: Request) => {
+  const cityId = new URL(request.url).searchParams.get("cityId");
+  if (!cityId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cityId)) {
+    throw new AppError(422, "VALIDATION_FAILED", "cityId must be a UUID");
+  }
+  return cityId;
+};
+
+const superAdminSubcategoryListQuery = t.Object(
+  {
+    cityId: t.String({ format: "uuid" }),
+    ...dashboardListQuery,
+    mainCategoryId: t.Optional(t.String({ format: "uuid" })),
+    status: t.Optional(categoryStatus),
+  },
+  { additionalProperties: false },
+);
+
 export const subcategoryRoutes = (
   auth: AuthModule,
   service: SubcategoryService,
 ) =>
   new Elysia({ name: "subcategory-routes" })
     .onParse(parseSubcategoryBody)
+    .post("/api/v1/super-admin/subcategories", async ({ request, set, body }) => {
+      const input = body as Record<string, unknown>;
+      const cityId = typeof input.cityId === "string" ? input.cityId : "";
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cityId)) throw new AppError(422, "VALIDATION_FAILED", "cityId must be a UUID");
+      const { cityId: _cityId, ...payload } = input;
+      return service.create(await authIdentity(auth, request, dashboardContext, requestIdOf(set)), payload, requestIdOf(set), cityId);
+    })
+    .get("/api/v1/super-admin/subcategories", async ({ request, set, query }) => service.list(await authIdentity(auth, request, dashboardContext, requestIdOf(set)), query, superAdminTargetCity(request)), { query: superAdminSubcategoryListQuery })
+    .get("/api/v1/super-admin/subcategories/:subcategoryId", async ({ request, set, params }) => service.get(await authIdentity(auth, request, dashboardContext, requestIdOf(set)), params.subcategoryId, superAdminTargetCity(request)))
+    .patch("/api/v1/super-admin/subcategories/:subcategoryId", async ({ request, set, params, body }) => service.update(await authIdentity(auth, request, dashboardContext, requestIdOf(set)), params.subcategoryId, body, requestIdOf(set), superAdminTargetCity(request)))
+    .delete("/api/v1/super-admin/subcategories/:subcategoryId", async ({ request, set, params }) => service.archive(await authIdentity(auth, request, dashboardContext, requestIdOf(set)), params.subcategoryId, requestIdOf(set), superAdminTargetCity(request)))
     .post(
       "/api/v1/dashboard/subcategories",
       async ({ request, set, body }) =>
