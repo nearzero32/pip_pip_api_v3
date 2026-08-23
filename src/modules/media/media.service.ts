@@ -9,6 +9,8 @@ import type { AuthIdentity } from "../auth/sessions/session-service";
 import { dateValue } from "../geography/shared";
 import {
   buildCategoryImageObjectKey,
+  buildDriverDocumentObjectKey,
+  buildDriverPhotoObjectKey,
   buildProductImageObjectKey,
   buildOrderProofObjectKey,
   buildPublicMediaUrl,
@@ -241,7 +243,9 @@ export class MediaService {
       input.purpose !== "CATEGORY_IMAGE" &&
       input.purpose !== "STORE_LOGO" &&
       input.purpose !== "STORE_IMAGE" &&
-      input.purpose !== "PRODUCT_IMAGE"
+      input.purpose !== "PRODUCT_IMAGE" &&
+      input.purpose !== "DRIVER_PHOTO" &&
+      input.purpose !== "DRIVER_DOCUMENT"
     ) {
       throw new AppError(422, "VALIDATION_FAILED", "Unsupported media purpose");
     }
@@ -255,7 +259,9 @@ export class MediaService {
       | "CATEGORY_IMAGE"
       | "STORE_LOGO"
       | "STORE_IMAGE"
-      | "PRODUCT_IMAGE";
+      | "PRODUCT_IMAGE"
+      | "DRIVER_PHOTO"
+      | "DRIVER_DOCUMENT";
     const cityId =
       purpose === "CATEGORY_IMAGE" || this.isGlobalSuperAdmin(identity)
         ? await this.authorizeExplicitCityTarget(
@@ -293,7 +299,11 @@ export class MediaService {
           ? buildStoreLogoObjectKey(cityId, assetId, contentType)
           : purpose === "STORE_IMAGE"
             ? buildStoreCoverObjectKey(cityId, assetId, contentType)
-            : buildProductImageObjectKey(cityId, assetId, contentType);
+            : purpose === "PRODUCT_IMAGE"
+              ? buildProductImageObjectKey(cityId, assetId, contentType)
+              : purpose === "DRIVER_PHOTO"
+                ? buildDriverPhotoObjectKey(cityId, assetId, contentType)
+                : buildDriverDocumentObjectKey(cityId, assetId, contentType);
     const uploadExpiresAt = new Date(
       Date.now() + this.config.r2UploadUrlTtlSeconds * 1000,
     );
@@ -338,7 +348,7 @@ export class MediaService {
           ${assetId},
           ${cityId},
           ${purpose}::media_asset_purpose,
-          'PUBLIC',
+          ${purpose === "DRIVER_DOCUMENT" ? "PRIVATE" : "PUBLIC"},
           'PENDING_UPLOAD',
           ${objectKey},
           ${fileName},
@@ -805,6 +815,7 @@ export class MediaService {
         | "STORE_LOGO"
         | "STORE_IMAGE"
         | "PRODUCT_IMAGE"
+        | "DRIVER_PHOTO"
         | "PICKUP_PROOF"
         | "DELIVERY_PROOF"
         | "HANDOFF_PROOF"

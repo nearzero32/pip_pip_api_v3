@@ -358,6 +358,20 @@
       "when": 1786540000010,
       "tag": "0050_localization_contract_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1786540000011,
+      "tag": "0051_driver_profile_photo_asset",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1786540000012,
+      "tag": "0052_driver_management_details",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import {
   driverReviewAction,
 } from "./enums";
 import { cities } from "./geography";
+import { mediaAssets } from "./media";
 
 export const driverApplications = pgTable(
   "driver_applications",
@@ -21,6 +22,12 @@ export const driverApplications = pgTable(
     status: driverApplicationStatus("status").notNull().default("DRAFT"),
     version: integer("version").notNull().default(1),
     legacyVehicleDescription: text("legacy_vehicle_description"),
+    driverName: text("driver_name"),
+    fatherName: text("father_name"),
+    motherName: text("mother_name"),
+    alternatePhone: text("alternate_phone"),
+    vehicleType: text("vehicle_type"),
+    vehicleNumber: text("vehicle_number"),
     contractInformation: text("contract_information"),
     submittedAt: instant("submitted_at"),
     decidedAt: instant("decided_at"),
@@ -48,6 +55,7 @@ export const driverProfiles = pgTable(
     approvedApplicationId: uuid("approved_application_id").notNull().unique().references(() => driverApplications.id),
     legacyVehicleDescription: text("legacy_vehicle_description"),
     driverPhotoObjectKey: text("driver_photo_object_key"),
+    driverPhotoAssetId: uuid("driver_photo_asset_id").references(() => mediaAssets.id),
     accessCodeHash: text("access_code_hash"),
     statusReasonCode: text("status_reason_code"),
     statusChangedAt: instant("status_changed_at").notNull().defaultNow(),
@@ -57,6 +65,9 @@ export const driverProfiles = pgTable(
   (table) => [
     index("driver_profiles_operational_status_idx").on(table.operationalStatus),
     index("driver_profiles_city_operational_idx").on(table.cityId, table.operationalStatus),
+    uniqueIndex("driver_profiles_photo_asset_uidx")
+      .on(table.driverPhotoAssetId)
+      .where(sql`${table.driverPhotoAssetId} is not null`),
     check("driver_profiles_active_photo_chk", sql`${table.operationalStatus} <> 'ACTIVE' or ${table.driverPhotoObjectKey} is not null`),
     check(
       "driver_profiles_active_city_chk",

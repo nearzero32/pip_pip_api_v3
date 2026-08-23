@@ -67,6 +67,20 @@ export const buildProductImageObjectKey = (
 ): string =>
   `cities/${cityId}/products/${assetId}/original.${canonicalExtensionForContentType(contentType)}`;
 
+export const buildDriverPhotoObjectKey = (
+  cityId: string,
+  assetId: string,
+  contentType: AllowedImageContentType,
+): string =>
+  `cities/${cityId}/drivers/${assetId}/photo.${canonicalExtensionForContentType(contentType)}`;
+
+export const buildDriverDocumentObjectKey = (
+  cityId: string,
+  assetId: string,
+  contentType: AllowedImageContentType,
+): string =>
+  `cities/${cityId}/drivers/${assetId}/document.${canonicalExtensionForContentType(contentType)}`;
+
 export const buildOrderProofObjectKey = (
   cityId: string,
   orderId: string,

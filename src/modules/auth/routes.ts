@@ -8,6 +8,7 @@ import {
   driverAuthRoutes,
   type DriverAuthRouteOptions,
 } from "./mobile/driver/driver-auth.routes";
+import { driverManagementRoutes } from "./mobile/driver/driver-management.routes";
 import { staffOrganizationRoutes } from "./staff/staff-organization.routes";
 
 export const authRoutes = (
@@ -17,6 +18,7 @@ export const authRoutes = (
   new Elysia({ name: "application-auth-routes" })
     .use(customerAuthRoutes(auth))
     .use(driverAuthRoutes(auth, driverAuthOptions))
+    .use(driverManagementRoutes(auth))
     .use(dashboardAuthRoutes(auth))
     .use(merchantAuthRoutes(auth))
     .use(staffOrganizationRoutes(auth))

@@ -4,6 +4,7 @@ import { SecurityAuditWriter } from "./audit/audit-writer";
 import { DashboardAuthService } from "./dashboard/dashboard-auth.service";
 import { CustomerAuthService } from "./mobile/customer/customer-auth.service";
 import { DriverAuthService } from "./mobile/driver/driver-auth.service";
+import { DriverManagementService } from "./mobile/driver/driver-management.service";
 import { MerchantAuthService } from "./merchant/merchant-auth.service";
 import { MerchantOrganizationService } from "./merchant/merchant-organization.service";
 import type { OtpDeliveryPort } from "./phone/delivery";
@@ -18,6 +19,7 @@ import { Ed25519AccessTokenService } from "./tokens/access-token";
 export interface AuthModule {
   customer: CustomerAuthService;
   driver: DriverAuthService;
+  driverManagement: DriverManagementService;
   dashboard: DashboardAuthService;
   merchant: MerchantAuthService;
   merchants: MerchantOrganizationService;
@@ -80,6 +82,7 @@ export function createAuthModule(
       sessions,
       audit,
     ),
+    driverManagement: new DriverManagementService(client, password),
     dashboard: new DashboardAuthService(
       client,
       limiter,
