@@ -511,7 +511,7 @@ describe("M3-A Geography HTTP routes", () => {
         }),
       );
 
-    test("allowed transitions and DTO; ARCHIVED is terminal and sets archivedAt", async () => {
+    test("allowed transitions and DTO; ARCHIVED can be restored to ACTIVE", async () => {
       const make = async (name: string) => {
         const response = await harness.app.handle(
           jsonRequest("/api/v1/dashboard/cities", {
@@ -566,11 +566,11 @@ describe("M3-A Geography HTTP routes", () => {
         "ARCHIVED",
       );
 
-      const terminal = await transition(draftToArchived, "activate");
-      expect(terminal.status).toBe(409);
-      expect(
-        (await terminal.json() as { error: { code: string } }).error.code,
-      ).toBe("INVALID_CITY_STATUS_TRANSITION");
+      const restored = await transition(draftToArchived, "activate");
+      expect(restored.status).toBe(200);
+      const restoredBody = await restored.json() as { status: string; archivedAt: string | null };
+      expect(restoredBody.status).toBe("ACTIVE");
+      expect(restoredBody.archivedAt).toBeNull();
     });
 
     test("invalid transitions return 409", async () => {

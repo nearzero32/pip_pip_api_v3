@@ -891,8 +891,12 @@ export class StoreService {
         where id = ${storeId} and city_id = ${cityId}
         for update`;
       if (!locked) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
-      if (locked.status === "ARCHIVED") {
+      const restoring = locked.status === "ARCHIVED" && input.status === "ACTIVE";
+      if (locked.status === "ARCHIVED" && !restoring) {
         throw new AppError(409, "STORE_ARCHIVED", "Store is archived");
+      }
+      if (restoring && !locked.logo_asset_id && !("logoAssetId" in input)) {
+        throw new AppError(409, "STORE_RESTORE_LOGO_REQUIRED", "A store logo is required before restoring this archived store");
       }
 
       const nextMain =
@@ -1018,6 +1022,7 @@ export class StoreService {
             logo_asset_id = ${nextLogo},
             cover_asset_id = ${nextCover},
             status = coalesce(${status}::store_status, status),
+            archived_at = case when ${status}::store_status = 'ACTIVE' then null else archived_at end,
             order_acceptance_status = coalesce(${orderAcceptanceStatus}::store_order_acceptance_status, order_acceptance_status),
             display_order = coalesce(${displayOrder}, display_order),
             updated_at = now()
@@ -1032,6 +1037,7 @@ export class StoreService {
             logo_asset_id = ${nextLogo},
             cover_asset_id = ${nextCover},
             status = coalesce(${status}::store_status, status),
+            archived_at = case when ${status}::store_status = 'ACTIVE' then null else archived_at end,
             order_acceptance_status = coalesce(${orderAcceptanceStatus}::store_order_acceptance_status, order_acceptance_status),
             display_order = coalesce(${displayOrder}, display_order),
             updated_at = now()
@@ -1099,25 +1105,13 @@ export class StoreService {
       if (!locked) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
       if (locked.status === "ARCHIVED") return;
 
-      const logo = locked.logo_asset_id;
-      const cover = locked.cover_asset_id;
-      // Logo is required while non-archived (DB check). Archive clears both FKs
-      // and releases assets so Merchant-ready Store history keeps rows without
-      // holding media claims.
+      // Keep Store media claimed so SUPER_ADMIN can restore the Store safely.
       await tx`
         update stores set
           status = 'ARCHIVED',
           archived_at = now(),
-          updated_at = now(),
-          logo_asset_id = null,
-          cover_asset_id = null
+          updated_at = now()
         where id = ${storeId} and city_id = ${cityId}`;
-      if (logo) {
-        await this.media.releaseAsset(tx, { assetId: logo, cityId });
-      }
-      if (cover) {
-        await this.media.releaseAsset(tx, { assetId: cover, cityId });
-      }
     });
 
     await this.client`

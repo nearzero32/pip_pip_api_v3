@@ -496,7 +496,7 @@ export const storeRoutes = (auth: AuthModule, service: StoreService) =>
           tags: ["Dashboard — Stores"],
           summary: "Update a Store in the authenticated City",
           description:
-            "Omitted fields are unchanged. coverAssetId null removes the cover and releases the asset. logoAssetId cannot be null. Changing mainCategoryId requires a valid Subcategory set for the new parent (send subcategoryIds in the same request). latitude and longitude must be updated together. status ARCHIVED is rejected — use DELETE. Schedule management is covered by stores.update. Date-specific schedule overrides are deferred.",
+            "Omitted fields are unchanged. coverAssetId null removes the cover and releases the asset. logoAssetId cannot be null. Changing mainCategoryId requires a valid Subcategory set for the new parent (send subcategoryIds in the same request). latitude and longitude must be updated together. An archived Store may only be restored with status ACTIVE; legacy archived Stores without a logo must include logoAssetId. Schedule management is covered by stores.update. Date-specific schedule overrides are deferred.",
           security: [{ bearerAuth: [] }],
         },
       },

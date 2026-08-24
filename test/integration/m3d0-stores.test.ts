@@ -592,7 +592,7 @@ describe("M3-D0 Stores, service zones & working hours", () => {
     expect(listA2.data.some((row) => row.id === store.id)).toBe(true);
   });
 
-  test("media claim, replace, cover removal, and archive release", async () => {
+  test("media claim, replace, cover removal, and archived Store restoration", async () => {
     const logo1 = await createReadyAsset(adminToken, "STORE_LOGO", "l1.png");
     const cover1 = await createReadyAsset(adminToken, "STORE_IMAGE", "c1.png");
     const created = await createStore(adminToken, {
@@ -637,16 +637,26 @@ describe("M3-D0 Stores, service zones & working hours", () => {
       }),
     );
     expect(archived.status).toBe(200);
-    const [releasedLogo] = await harness.client<{ status: string }[]>`
+    const [preservedLogo] = await harness.client<{ status: string }[]>`
       select status::text as status from media_assets where id = ${logo2}`;
-    expect(releasedLogo?.status).toBe("DELETE_PENDING");
+    expect(preservedLogo?.status).toBe("READY");
     const [row] = await harness.client<
       { status: string; logo: string | null; cover: string | null }[]
     >`select status::text as status, logo_asset_id::text as logo, cover_asset_id::text as cover
       from stores where id = ${store.id}`;
     expect(row?.status).toBe("ARCHIVED");
-    expect(row?.logo).toBeNull();
+    expect(row?.logo).toBe(logo2);
     expect(row?.cover).toBeNull();
+
+    const restored = await harness.app.handle(
+      jsonRequest(`/api/v1/dashboard/stores/${store.id}`, {
+        method: "PATCH",
+        token: adminToken,
+        body: { status: "ACTIVE" },
+      }),
+    );
+    expect(restored.status).toBe(200);
+    expect(((await restored.json()) as { status: string }).status).toBe("ACTIVE");
   });
 
   test("main category change replaces subcategory set atomically", async () => {

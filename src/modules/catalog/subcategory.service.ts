@@ -557,7 +557,7 @@ export class SubcategoryService {
             "Subcategory not found",
           );
         }
-        if (peek.status === "ARCHIVED") {
+        if (peek.status === "ARCHIVED" && nextStatus !== "ACTIVE") {
           throw new AppError(
             409,
             "SUBCATEGORY_ARCHIVED",
@@ -602,7 +602,7 @@ export class SubcategoryService {
             "Subcategory not found",
           );
         }
-        if (locked.status === "ARCHIVED") {
+        if (locked.status === "ARCHIVED" && nextStatus !== "ACTIVE") {
           throw new AppError(
             409,
             "SUBCATEGORY_ARCHIVED",
@@ -654,10 +654,14 @@ export class SubcategoryService {
             main_category_id = ${moving ? nextParentId! : locked.main_category_id},
             name = coalesce(${name}, name),
             status = coalesce(${nextStatus}::main_category_status, status),
+            archived_at = case when ${nextStatus}::main_category_status = 'ACTIVE' then null else archived_at end,
             display_order = coalesce(${displayOrder}, display_order),
             image_asset_id = ${nextImageId},
             updated_at = now()
           where id = ${subcategoryId} and city_id = ${cityId}`;
+        if (locked.status === "ARCHIVED" && nextStatus === "ACTIVE") {
+          await tx`update subcategory_translations set archived_at=null,updated_at=now() where subcategory_id=${subcategoryId}`;
+        }
         if (translations) await upsertNameTranslations(tx, "subcategory_translations", "subcategory_id", subcategoryId, { city_id: cityId, main_category_id: moving ? nextParentId! : locked.main_category_id }, translations);
 
         if (releaseOld) {

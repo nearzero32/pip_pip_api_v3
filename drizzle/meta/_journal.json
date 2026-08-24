@@ -373,6 +373,7 @@
       "tag": "0052_driver_management_details",
       "breakpoints": true
     },
-    { "idx": 53, "version": "7", "when": 1786540000013, "tag": "0053_merchant_operational_payout_details", "breakpoints": true }
+    { "idx": 53, "version": "7", "when": 1786540000013, "tag": "0053_merchant_operational_payout_details", "breakpoints": true },
+    { "idx": 54, "version": "7", "when": 1787540000014, "tag": "0054_restore_delivery_pricing_versions", "breakpoints": true }
   ]
 }

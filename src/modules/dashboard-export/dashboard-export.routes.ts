@@ -13,7 +13,7 @@ import type { DashboardExportService } from "./dashboard-export.service";
 const detail = (summary: string, description: string) => ({
   tags: ["Dashboard — Exports"],
   summary,
-  description: `${description} Response Content-Type is application/vnd.openxmlformats-officedocument.spreadsheetml.sheet. Requires the resource read permission plus the matching export permission. City-scoped exports use the signed token city; SUPER_ADMIN cannot export city operations.`,
+  description: `${description} Response Content-Type is application/vnd.openxmlformats-officedocument.spreadsheetml.sheet. Requires the resource read permission plus the matching export permission. City-scoped exports use the signed token city unless this endpoint explicitly accepts cityId for SUPER_ADMIN.`,
   security: [{ bearerAuth: [] }],
 });
 
@@ -150,14 +150,14 @@ export const dashboardExportRoutes = (
     .get("/api/v1/dashboard/stores/export", async ({ request, set, query }) =>
       service.stores(await identityOf(request, set), query as Query, requestIdOf(set)),
       { query: eq({
-        status: opt(), mainCategoryId: opt(), zoneId: opt(),
+        cityId: opt(), status: opt(), mainCategoryId: opt(), zoneId: opt(),
         commissionRateMin: opt(), commissionRateMax: opt(), createdFrom: opt(), createdTo: opt(),
       }), detail: detail("Export stores", "Requires stores.read and stores.export.") },
     )
     .get("/api/v1/dashboard/store-commissions/export", async ({ request, set, query }) =>
       service.storeCommissions(await identityOf(request, set), query as Query, requestIdOf(set)),
       { query: eq({
-        status: opt(), commissionRateMin: opt(), commissionRateMax: opt(), createdFrom: opt(), createdTo: opt(),
+        cityId: opt(), status: opt(), commissionRateMin: opt(), commissionRateMax: opt(), createdFrom: opt(), createdTo: opt(),
       }), detail: detail("Export store commission rates", "Requires stores.commission.read and stores.commission.export.") },
     )
     .get("/api/v1/dashboard/store-commission-history/export", async ({ request, set, query }) =>
@@ -172,7 +172,7 @@ export const dashboardExportRoutes = (
     )
     .get("/api/v1/dashboard/subcategories/export", async ({ request, set, query }) =>
       service.subcategories(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { query: eq({ mainCategoryId: opt(), status: opt() }),
+      { query: eq({ cityId: opt(), mainCategoryId: opt(), status: opt() }),
         detail: detail("Export subcategories", "Requires subcategories.read and subcategories.export.") },
     )
     .get("/api/v1/dashboard/stores/:storeId/categories/export", async ({ request, set, params, query }) =>
@@ -194,7 +194,7 @@ export const dashboardExportRoutes = (
     )
     .get("/api/v1/dashboard/merchants/export", async ({ request, set, query }) =>
       service.merchants(await identityOf(request, set), query as Query, requestIdOf(set)),
-      { query: eq({ status: opt(), storeId: opt(), createdFrom: opt(), createdTo: opt() }),
+      { query: eq({ cityId: opt(), status: opt(), storeId: opt(), createdFrom: opt(), createdTo: opt() }),
         detail: detail("Export merchants", "Requires merchants.read and merchants.export.") },
     )
     .get("/api/v1/dashboard/orders/export", async ({ request, set, query }) =>
@@ -247,6 +247,11 @@ export const dashboardExportRoutes = (
       { query: eq({ activeOrderCount: opt() }),
         detail: detail("Export assignment-candidate drivers", "Requires orders.assign and drivers.export.") },
     )
+    .get("/api/v1/dashboard/drivers/export", async ({ request, set, query }) =>
+      service.managedDrivers(await identityOf(request, set), query as Query, requestIdOf(set)),
+      { query: eq({ cityId: t.String({ format: "uuid" }), status: opt() }),
+        detail: { tags: ["Dashboard — Exports"], summary: "Export managed drivers", description: "SUPER_ADMIN only. cityId is required and the export follows the driver-management filters.", security: [{ bearerAuth: [] }] } },
+    )
     .get("/api/v1/dashboard/employees/export", async ({ request, set, query }) =>
       service.employees(await identityOf(request, set), query as Query, requestIdOf(set)),
       { query: eq({ status: opt(), role: opt(), permission: opt(), createdFrom: opt(), createdTo: opt() }),
@@ -263,5 +268,9 @@ export const dashboardExportRoutes = (
         status: opt(), createdByAccountId: opt(), createdFrom: opt(), createdTo: opt(),
         activatedFrom: opt(), activatedTo: opt(),
       }), detail: detail("Export delivery pricing versions", "SUPER_ADMIN plus delivery_pricing.versions.export.") },
+    )
+    .get("/api/v1/dashboard/cities/:cityId/driver-pricing/export", async ({ request, set, params }) =>
+      service.driverPricing(await identityOf(request, set), params.cityId, requestIdOf(set)),
+      { detail: { tags: ["Dashboard — Exports"], summary: "Export driver pricing", description: "SUPER_ADMIN only. Exports the selected City's driver pricing and all stages.", security: [{ bearerAuth: [] }] } },
     );
 };

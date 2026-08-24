@@ -41,13 +41,16 @@ describe("M3-B1 Zones — SUPER_ADMIN explicit City contract", () => {
     expect(r?.typmod).toContain("Polygon,4326"); expect(r?.indexdef.toLowerCase()).toContain("using gist");
   });
 
-  test("SUPER_ADMIN creates, lists, gets, updates and archives with the correct selector", async () => {
+  test("SUPER_ADMIN creates, lists, gets, updates, archives, and restores with the correct selector", async () => {
     const made = await create("contract", square(40, 20)); expect(made.status).toBe(200);
     const zone = await made.json() as { id: string; cityId: string; boundary: { type: string } }; expect(zone.cityId).toBe(active); expect(zone.boundary.type).toBe("Polygon");
     expect((await h.app.handle(request("/api/v1/dashboard/zones", { token: superToken }))).status).toBe(200);
     expect((await h.app.handle(request(`/api/v1/dashboard/zones/${zone.id}`, { token: superToken }))).status).toBe(200);
     expect((await h.app.handle(request(`/api/v1/dashboard/zones/${zone.id}`, { method: "PATCH", token: superToken, body: { translations: [{ locale: "ar", name: "renamed" }, { locale: "en", name: "renamed" }] } }))).status).toBe(200);
     expect((await h.app.handle(request(`/api/v1/dashboard/zones/${zone.id}`, { method: "DELETE", token: superToken }))).status).toBe(200);
+    const restored = await h.app.handle(request(`/api/v1/dashboard/zones/${zone.id}`, { method: "PATCH", token: superToken, body: { status: "ACTIVE" } }));
+    expect(restored.status).toBe(200);
+    expect(((await restored.json()) as { status: string; archivedAt: string | null }).status).toBe("ACTIVE");
   });
 
   test("DRAFT, ACTIVE and SUSPENDED operate; ARCHIVED is rejected", async () => {

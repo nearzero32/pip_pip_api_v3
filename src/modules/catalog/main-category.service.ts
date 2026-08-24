@@ -440,7 +440,7 @@ export class MainCategoryService {
             "Main category not found",
           );
         }
-        if (locked.status === "ARCHIVED") {
+        if (locked.status === "ARCHIVED" && nextStatus !== "ACTIVE") {
           throw new AppError(
             409,
             "MAIN_CATEGORY_ARCHIVED",
@@ -468,6 +468,8 @@ export class MainCategoryService {
             update main_categories set
               name = coalesce(${name}, name),
               status = coalesce(${nextStatus}::main_category_status, status),
+              archived_at = case when ${nextStatus}::main_category_status = 'ACTIVE' then null else archived_at end,
+              archived_by_account_id = case when ${nextStatus}::main_category_status = 'ACTIVE' then null else archived_by_account_id end,
               display_order = coalesce(${displayOrder}, display_order),
               image_asset_id = ${nextImageId!},
               updated_by_account_id = ${identity.accountId},
@@ -483,10 +485,15 @@ export class MainCategoryService {
             update main_categories set
               name = coalesce(${name}, name),
               status = coalesce(${nextStatus}::main_category_status, status),
+              archived_at = case when ${nextStatus}::main_category_status = 'ACTIVE' then null else archived_at end,
+              archived_by_account_id = case when ${nextStatus}::main_category_status = 'ACTIVE' then null else archived_by_account_id end,
               display_order = coalesce(${displayOrder}, display_order),
               updated_by_account_id = ${identity.accountId},
               updated_at = now()
             where id = ${mainCategoryId} and city_id = ${cityId}`;
+        }
+        if (locked.status === "ARCHIVED" && nextStatus === "ACTIVE") {
+          await tx`update main_category_translations set archived_at=null,updated_at=now() where main_category_id=${mainCategoryId}`;
         }
         if (translations) await upsertNameTranslations(tx, "main_category_translations", "main_category_id", mainCategoryId, { city_id: cityId }, translations);
         await tx`insert into audit_logs(event_type,actor_account_id,outcome,request_correlation_id,redacted_metadata) values(${imageReplaced ? "MAIN_CATEGORY_IMAGE_REPLACED" : "MAIN_CATEGORY_UPDATED"},${identity.accountId},'SUCCESS',${requestId},${JSON.stringify({targetCityId:cityId,mainCategoryId,changedFields:[hasTranslations?"translations":null,hasStatus?"status":null,hasOrder?"displayOrder":null,hasImage?"imageAssetId":null].filter(Boolean),oldImageAssetId,newImageAssetId:nextImageId})}::jsonb)`;

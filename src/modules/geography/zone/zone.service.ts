@@ -382,19 +382,23 @@ export class ZoneService {
       if (state.cityStatus === "ARCHIVED") throw new AppError(409, "CITY_ARCHIVED", "City is archived");
       await lockZoneOverlap(tx, cityId);
       if (translations) await validateTranslationInput(tx, translations, { requireAllRequired: false, maxName: 200 });
-      const [existing] = await tx<{ id: string; status: string }[]>`
-        select id::text as id, status::text as status
+      const [existing] = await tx<{ id: string; status: string; boundary_geojson: string }[]>`
+        select id::text as id, status::text as status, ST_AsGeoJSON(boundary)::text as boundary_geojson
         from zones
         where id = ${zoneId} and city_id = ${cityId}
         for update`;
       if (!existing) throw new AppError(404, "ZONE_NOT_FOUND", "Zone not found");
-      if (existing.status === "ARCHIVED") {
+      if (existing.status === "ARCHIVED" && status !== "ACTIVE") {
         throw new AppError(409, "ZONE_ARCHIVED", "Zone is archived");
       }
 
       let geojson: string | null = null;
       if (polygon) {
         geojson = await buildValidatedGeometry(tx, polygon);
+        await assertInsideCityBoundary(tx, cityId, geojson);
+        await assertNoPositiveAreaOverlap(tx, cityId, geojson, zoneId);
+      } else if (existing.status === "ARCHIVED" && status === "ACTIVE") {
+        geojson = existing.boundary_geojson;
         await assertInsideCityBoundary(tx, cityId, geojson);
         await assertNoPositiveAreaOverlap(tx, cityId, geojson, zoneId);
       }
@@ -406,6 +410,8 @@ export class ZoneService {
             update zones set
               name = coalesce(${name}, name),
               status = coalesce(${status}::zone_status, status),
+              archived_at = case when ${status}::zone_status = 'ACTIVE' then null else archived_at end,
+              archived_by_account_id = case when ${status}::zone_status = 'ACTIVE' then null else archived_by_account_id end,
               boundary = ST_SetSRID(ST_GeomFromGeoJSON(${geojson}), 4326),
               updated_by_account_id = ${identity.accountId},
               updated_at = now()
@@ -415,6 +421,8 @@ export class ZoneService {
             update zones set
               name = coalesce(${name}, name),
               status = coalesce(${status}::zone_status, status),
+              archived_at = case when ${status}::zone_status = 'ACTIVE' then null else archived_at end,
+              archived_by_account_id = case when ${status}::zone_status = 'ACTIVE' then null else archived_by_account_id end,
               updated_by_account_id = ${identity.accountId},
               updated_at = now()
             where id = ${zoneId} and city_id = ${cityId}`;
@@ -424,6 +432,9 @@ export class ZoneService {
           throw new AppError(409, "ZONE_NAME_CONFLICT", "Zone name already exists");
         }
         throw error;
+      }
+      if (existing.status === "ARCHIVED" && status === "ACTIVE") {
+        await tx`update zone_translations set archived_at=null,updated_at=now() where zone_id=${zoneId}`;
       }
       if (translations) await upsertNameTranslations(tx, "zone_translations", "zone_id", zoneId, { city_id: cityId }, translations);
 

@@ -230,12 +230,6 @@ export class DeliveryPricingService {
           "DELIVERY_PRICING_NOT_FOUND",
           "Pricing version not found",
         );
-      if (target.status === "INACTIVE")
-        throw new AppError(
-          409,
-          "DELIVERY_PRICING_REACTIVATION_FORBIDDEN",
-          "Inactive pricing versions cannot be reactivated",
-        );
       if (target.status === "ACTIVE")
         return { row: mapRow(target), previousId: null, changed: false };
       const [previous] = await tx<
@@ -243,7 +237,7 @@ export class DeliveryPricingService {
       >`select id from city_delivery_pricing_versions where city_id=${cityId} and status='ACTIVE' for update`;
       await tx`update city_delivery_pricing_versions set status='INACTIVE',deactivated_at=now() where city_id=${cityId} and status='ACTIVE'`;
       const rows = (await tx.unsafe(
-        `update city_delivery_pricing_versions set status='ACTIVE',activated_at=now(),activation_revision=nextval('delivery_pricing_activation_revision_seq') where id=$1 and city_id=$2 returning ${columns}`,
+        `update city_delivery_pricing_versions set status='ACTIVE',activated_at=now(),deactivated_at=null,activation_revision=nextval('delivery_pricing_activation_revision_seq') where id=$1 and city_id=$2 returning ${columns}`,
         [id, cityId],
       )) as PricingRow[];
       const row = mapRow(rows[0]);

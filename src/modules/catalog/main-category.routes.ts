@@ -256,7 +256,7 @@ export const mainCategoryRoutes = (
           tags: ["Dashboard — Main Categories"],
           summary: "Update a Main Category in an explicitly targeted City",
           description:
-            "SUPER_ADMIN only. cityId is required in query. Image replacement claims the new asset and releases the old asset in one transaction. ARCHIVED status is rejected — use DELETE to archive.",
+            "SUPER_ADMIN only. cityId is required in query. Image replacement claims the new asset and releases the old asset in one transaction. An archived category may only be restored by setting status ACTIVE; use DELETE to archive.",
           security: [{ bearerAuth: [] }],
         },
       },

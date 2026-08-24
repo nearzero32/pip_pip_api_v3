@@ -428,12 +428,9 @@ export class DashboardExportService {
     query: Record<string, string | undefined>,
     requestId: string,
   ) {
-    const cityId = await requireCityReadAndExport(
-      this.client,
-      identity,
-      "stores.read",
-      "stores.export",
-    );
+    const cityId = query.cityId
+      ? await this.requireExplicitTargetCity(identity, query.cityId)
+      : await requireCityReadAndExport(this.client, identity, "stores.read", "stores.export");
     const filters = parseStoreListQuery(query);
     const params = storeListParams(cityId, filters);
     const [count] = (await this.client.unsafe(
@@ -517,12 +514,9 @@ export class DashboardExportService {
     query: Record<string, string | undefined>,
     requestId: string,
   ) {
-    const cityId = await requireCityReadAndExport(
-      this.client,
-      identity,
-      "stores.commission.read",
-      "stores.commission.export",
-    );
+    const cityId = query.cityId
+      ? await this.requireExplicitTargetCity(identity, query.cityId)
+      : await requireCityReadAndExport(this.client, identity, "stores.commission.read", "stores.commission.export");
     const filters = parseStoreListQuery(query);
     const params = commissionStoreParams(cityId, filters);
     const [count] = (await this.client.unsafe(
@@ -773,15 +767,12 @@ export class DashboardExportService {
 
   async subcategories(
     identity: AuthIdentity,
-    query: { search?: string; status?: string; mainCategoryId?: string },
+    query: { cityId?: string; search?: string; status?: string; mainCategoryId?: string },
     requestId: string,
   ) {
-    const cityId = await requireCityReadAndExport(
-      this.client,
-      identity,
-      "subcategories.read",
-      "subcategories.export",
-    );
+    const cityId = query.cityId
+      ? await this.requireExplicitTargetCity(identity, query.cityId)
+      : await requireCityReadAndExport(this.client, identity, "subcategories.read", "subcategories.export");
     const search = query.search?.trim() || null;
     const status = parseOptionalAllowlisted(
       query.status,
@@ -1079,6 +1070,7 @@ export class DashboardExportService {
   async merchants(
     identity: AuthIdentity,
     query: {
+      cityId?: string;
       status?: string;
       storeId?: string;
       search?: string;
@@ -1089,12 +1081,9 @@ export class DashboardExportService {
     },
     requestId: string,
   ) {
-    const cityId = await requireCityReadAndExport(
-      this.client,
-      identity,
-      "merchants.read",
-      "merchants.export",
-    );
+    const cityId = query.cityId
+      ? await this.requireExplicitTargetCity(identity, query.cityId)
+      : await requireCityReadAndExport(this.client, identity, "merchants.read", "merchants.export");
     const status = parseOptionalAllowlisted(
       query.status,
       MERCHANT_STATUSES,
@@ -1808,6 +1797,78 @@ export class DashboardExportService {
     );
   }
 
+  async managedDrivers(
+    identity: AuthIdentity,
+    query: Record<string, string | undefined>,
+    requestId: string,
+  ) {
+    requireSuperAdmin(identity);
+    const cityId = await this.requireExplicitTargetCity(identity, query.cityId);
+    const status = parseOptionalAllowlisted(
+      query.status,
+      ["PENDING_ACTIVATION", "ACTIVE", "SUSPENDED", "CLOSED"] as const,
+      "status",
+    );
+    const search = parseOptionalSearch(query.search);
+    const pattern = search ? likeContains(search) : null;
+    const uuid = searchUuid(search);
+    const where = `dp.city_id = $1::uuid
+      and ($2::text is null or dp.operational_status = $2::driver_operational_status)
+      and ($3::text is null or ph.phone_e164 ilike $3 escape '\\'
+        or coalesce(dp.driver_name,'') ilike $3 escape '\\'
+        or coalesce(dp.legacy_vehicle_description,'') ilike $3 escape '\\'
+        or ($4::uuid is not null and dp.account_id = $4::uuid))`;
+    const params = [cityId, status, pattern, uuid];
+    const [count] = (await this.client.unsafe(
+      `select count(*)::int total from driver_profiles dp
+       join account_phones ph on ph.account_id = dp.account_id and ph.is_primary = true
+       where ${where}`,
+      params,
+    )) as { total: number }[];
+    this.assertLimit(count?.total ?? 0);
+    const rows = (await this.client.unsafe(
+      `select dp.account_id::text, ph.phone_e164, dp.driver_name, dp.father_name,
+              dp.mother_name, dp.alternate_phone, dp.vehicle_type, dp.vehicle_number,
+              dp.legacy_vehicle_description, dp.approval_status::text,
+              dp.operational_status::text, a.status::text account_status,
+              dp.created_at, dp.updated_at
+       from driver_profiles dp
+       join accounts a on a.id = dp.account_id
+       join account_phones ph on ph.account_id = dp.account_id and ph.is_primary = true
+       where ${where} order by dp.created_at desc, dp.account_id desc`,
+      params,
+    )) as Record<string, unknown>[];
+    return this.file(
+      identity,
+      { resource: "managed-drivers", endpoint: "/api/v1/dashboard/drivers/export", permission: "drivers.export", filename: "drivers.xlsx", filters: { cityId, search, status }, cityId },
+      "السائقون",
+      [
+        { key: "id", header: "معرف السائق", type: "text", width: 38 },
+        { key: "name", header: "اسم السائق", type: "text", width: 24 },
+        { key: "phone", header: "رقم الهاتف", type: "text", width: 18 },
+        { key: "alternatePhone", header: "رقم الهاتف الآخر", type: "text", width: 18 },
+        { key: "fatherName", header: "اسم الأب", type: "text", width: 22 },
+        { key: "motherName", header: "اسم الأم", type: "text", width: 22 },
+        { key: "vehicleType", header: "نوع الدراجة", type: "text", width: 18 },
+        { key: "vehicleNumber", header: "رقم الدراجة", type: "text", width: 18 },
+        { key: "vehicleDescription", header: "وصف المركبة", type: "text", width: 28 },
+        { key: "approvalStatus", header: "حالة الاعتماد", type: "text", width: 16 },
+        { key: "operationalStatus", header: "الحالة التشغيلية", type: "text", width: 18 },
+        { key: "accountStatus", header: "حالة الحساب", type: "text", width: 16 },
+        { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
+        { key: "updatedAt", header: "آخر تحديث", type: "datetime", width: 24 },
+      ],
+      rows.map((row) => ({
+        id: text(row.account_id), name: text(row.driver_name), phone: text(row.phone_e164),
+        alternatePhone: text(row.alternate_phone), fatherName: text(row.father_name), motherName: text(row.mother_name),
+        vehicleType: text(row.vehicle_type), vehicleNumber: text(row.vehicle_number), vehicleDescription: text(row.legacy_vehicle_description),
+        approvalStatus: text(row.approval_status), operationalStatus: text(row.operational_status), accountStatus: text(row.account_status),
+        createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
+      })),
+      requestId,
+    );
+  }
+
   async employees(
     identity: AuthIdentity,
     query: {
@@ -2111,6 +2172,53 @@ export class DashboardExportService {
         createdAt: iso(row.created_at),
         activatedAt: iso(row.activated_at),
       })),
+      requestId,
+    );
+  }
+
+  async driverPricing(
+    identity: AuthIdentity,
+    cityIdInput: string,
+    requestId: string,
+  ) {
+    requireSuperAdmin(identity);
+    const cityId = await this.requireExplicitTargetCity(identity, cityIdInput);
+    const rows = await this.client<Record<string, unknown>[]>`
+      select p.id::text, p.version, p.pricing_base, p.rounding_unit,
+             p.pricing_stages, p.updated_by_account_id::text,
+             p.created_at, p.updated_at, c.name_ar city_name
+      from city_driver_pricing p join cities c on c.id = p.city_id
+      where p.city_id = ${cityId}`;
+    const pricing = rows[0];
+    const stages = Array.isArray(pricing?.pricing_stages)
+      ? pricing.pricing_stages as Array<{ afterSeconds?: unknown; increasePercentage?: unknown }>
+      : [];
+    const exportRows = pricing
+      ? (stages.length ? stages : [{}]).map((stage, index) => ({
+          id: text(pricing.id), city: text(pricing.city_name), version: int(pricing.version),
+          pricingBase: int(pricing.pricing_base), roundingUnit: int(pricing.rounding_unit),
+          stage: index + 1, afterSeconds: int(stage.afterSeconds), increasePercentage: int(stage.increasePercentage),
+          updatedBy: text(pricing.updated_by_account_id), createdAt: iso(pricing.created_at), updatedAt: iso(pricing.updated_at),
+        }))
+      : [];
+    return this.file(
+      identity,
+      { resource: "driver-pricing", endpoint: "/api/v1/dashboard/cities/:cityId/driver-pricing/export", permission: "city_driver_pricing.read", filename: "driver-pricing.xlsx", filters: { cityId }, cityId: null },
+      "تسعير السائقين",
+      [
+        { key: "id", header: "المعرف", type: "text", width: 38 },
+        { key: "city", header: "المدينة", type: "text", width: 20 },
+        { key: "version", header: "الإصدار", type: "integer" },
+        { key: "pricingBase", header: "السعر الأساسي", type: "integer", width: 16 },
+        { key: "roundingUnit", header: "وحدة التقريب", type: "integer", width: 16 },
+        { key: "stage", header: "المرحلة", type: "integer" },
+        { key: "afterSeconds", header: "بعد (ثانية)", type: "integer", width: 16 },
+        { key: "increasePercentage", header: "نسبة الزيادة", type: "percent", width: 16 },
+        { key: "updatedBy", header: "آخر تعديل بواسطة", type: "text", width: 38 },
+        { key: "createdAt", header: "تاريخ الإنشاء", type: "datetime", width: 24 },
+        { key: "updatedAt", header: "آخر تحديث", type: "datetime", width: 24 },
+      ],
+      exportRows,
       requestId,
     );
   }

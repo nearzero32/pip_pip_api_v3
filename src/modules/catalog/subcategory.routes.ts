@@ -283,7 +283,7 @@ export const subcategoryRoutes = (
           tags: ["Dashboard — Subcategories"],
           summary: "Update or move a Subcategory in the authenticated City",
           description:
-            "imageAssetId omitted keeps the image; UUID attaches/replaces; null removes. ARCHIVED status is rejected — use DELETE. Movement requires a non-archived same-City parent.",
+            "imageAssetId omitted keeps the image; UUID attaches/replaces; null removes. An archived Subcategory may only be restored by setting status ACTIVE; use DELETE to archive. Movement requires a non-archived same-City parent.",
           security: [{ bearerAuth: [] }],
         },
       },

@@ -454,7 +454,7 @@ export class CityService {
         DRAFT: ["ACTIVE", "ARCHIVED"],
         ACTIVE: ["SUSPENDED", "ARCHIVED"],
         SUSPENDED: ["ACTIVE", "ARCHIVED"],
-        ARCHIVED: [],
+        ARCHIVED: ["ACTIVE"],
       };
       if (!allowed[state.cityStatus]?.includes(target))
         throw new AppError(
