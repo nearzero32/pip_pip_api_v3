@@ -1,6 +1,6 @@
 import type { SQL } from "bun";
 import { AppError } from "../../../errors/app-error";
-import { requireCityPermission } from "../staff/authorization";
+import { requireCityPermission, requireSuperAdmin } from "../staff/authorization";
 import { assertActiveCity } from "../staff/dashboard-scope";
 import type { AuthIdentity } from "../sessions/session-service";
 import type { Argon2PasswordHasher } from "../staff/password";
@@ -27,6 +27,7 @@ import {
 
 type MerchantStatus = "ACTIVE" | "INACTIVE" | "SUSPENDED";
 const MERCHANT_STATUSES = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
+const PAYOUT_METHODS = ["CASH", "MONEY_TRANSFER", "BANK_ACCOUNT", "QI_CARD", "ALQASAH_CARD", "ZAIN_CASH", "OTHER_CARD"] as const;
 
 const cleanDisplayName = (raw: unknown): string | null => {
   if (raw === null) return null;
@@ -59,7 +60,14 @@ export class MerchantOrganizationService {
   private async authorize(
     identity: AuthIdentity,
     permission: "merchants.read" | "merchants.create" | "merchants.update",
+    requestedCityId?: string,
   ) {
+    if (identity.applicationType === "DASHBOARD" && identity.roles.includes("SUPER_ADMIN") && identity.scopeType === "GLOBAL") {
+      requireSuperAdmin(identity);
+      if (!requestedCityId) throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
+      await assertActiveCity(this.client, requestedCityId);
+      return requestedCityId;
+    }
     const cityId = await requireCityPermission(
       this.client,
       identity,
@@ -136,12 +144,12 @@ export class MerchantOrganizationService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "merchants.create");
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
     const input = body as Record<string, unknown>;
-    for (const forbidden of ["cityId", "accountId"]) {
+    const cityId = await this.authorize(identity, "merchants.create", typeof input.cityId === "string" ? input.cityId : undefined);
+    for (const forbidden of ["accountId"]) {
       if (forbidden in input) {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
@@ -154,6 +162,18 @@ export class MerchantOrganizationService {
     const password = assertPassword(input.password);
     const displayName =
       "displayName" in input ? cleanDisplayName(input.displayName) : null;
+    const name = cleanDisplayName(input.name ?? input.displayName);
+    if (!name) throw new AppError(422, "VALIDATION_FAILED", "Merchant name is required");
+    const payoutMethod = String(input.payoutMethod ?? "");
+    if (!(PAYOUT_METHODS as readonly string[]).includes(payoutMethod)) throw new AppError(422, "VALIDATION_FAILED", "Invalid payout method");
+    const text = (key: string) => typeof input[key] === "string" ? input[key].trim() : "";
+    if (!text("managerName") || !text("managerPhone") || !text("ownerPhone") || !text("restaurantSupportName") || !text("restaurantSupportPhone")) throw new AppError(422, "VALIDATION_FAILED", "Merchant contact details are required");
+    if (payoutMethod === "CASH" && !text("cashRecipientName")) throw new AppError(422, "VALIDATION_FAILED", "Cash recipient is required");
+    if (payoutMethod === "MONEY_TRANSFER" && (!text("transferCity") || !text("transferRecipientName"))) throw new AppError(422, "VALIDATION_FAILED", "Transfer city and recipient are required");
+    if (payoutMethod === "BANK_ACCOUNT" && !text("iban")) throw new AppError(422, "VALIDATION_FAILED", "IBAN is required");
+    if (["QI_CARD", "ALQASAH_CARD", "ZAIN_CASH", "OTHER_CARD"].includes(payoutMethod) && !text("cardNumber")) throw new AppError(422, "VALIDATION_FAILED", "Card number is required");
+    if (payoutMethod === "OTHER_CARD" && !text("otherCardName")) throw new AppError(422, "VALIDATION_FAILED", "Card name is required");
+    if (input.isAgencyAffiliate === true && !text("agencyName")) throw new AppError(422, "VALIDATION_FAILED", "Agency name is required");
     const status = (input.status as MerchantStatus | undefined) ?? "ACTIVE";
     if (!["ACTIVE", "INACTIVE", "SUSPENDED"].includes(status)) {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid merchant status");
@@ -231,12 +251,13 @@ export class MerchantOrganizationService {
 
         await tx`
           insert into merchant_profiles (
-            account_id, store_id, city_id, display_name, status, created_by_account_id
+            account_id, store_id, city_id, display_name, name, manager_name, manager_phone, owner_phone, restaurant_support_name, restaurant_support_phone, cash_recipient_name, payout_method, transfer_city, transfer_recipient_name, iban, card_number, other_card_name, is_agency_affiliate, agency_name, status, created_by_account_id
           ) values (
             ${id},
             ${storeId},
             ${cityId},
             ${displayName},
+            ${name}, ${text("managerName")}, ${text("managerPhone")}, ${text("ownerPhone")}, ${text("restaurantSupportName")}, ${text("restaurantSupportPhone")}, ${text("cashRecipientName") || null}, ${payoutMethod}, ${text("transferCity") || null}, ${text("transferRecipientName") || null}, ${text("iban") || null}, ${text("cardNumber") || null}, ${text("otherCardName") || null}, ${input.isAgencyAffiliate === true}, ${text("agencyName") || null},
             ${status}::merchant_profile_status,
             ${identity.accountId}
           )`;
@@ -277,9 +298,10 @@ export class MerchantOrganizationService {
       sortOrder?: string;
       page?: number;
       limit?: number;
+      cityId?: string;
     },
   ) {
-    const cityId = await this.authorize(identity, "merchants.read");
+    const cityId = await this.authorize(identity, "merchants.read", input.cityId);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const status = parseOptionalAllowlisted(
@@ -374,8 +396,8 @@ export class MerchantOrganizationService {
     );
   }
 
-  async get(identity: AuthIdentity, accountId: string) {
-    const cityId = await this.authorize(identity, "merchants.read");
+  async get(identity: AuthIdentity, accountId: string, requestedCityId?: string) {
+    const cityId = await this.authorize(identity, "merchants.read", requestedCityId);
     return this.merchantDto(await this.loadMerchant(accountId, cityId));
   }
 
@@ -385,12 +407,12 @@ export class MerchantOrganizationService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "merchants.update");
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
     const input = body as Record<string, unknown>;
-    for (const forbidden of ["cityId", "accountId", "phone", "password", "storeId"]) {
+    const cityId = await this.authorize(identity, "merchants.update", typeof input.cityId === "string" ? input.cityId : undefined);
+    for (const forbidden of ["accountId", "phone", "password", "storeId"]) {
       if (forbidden in input) {
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
       }
@@ -470,11 +492,12 @@ export class MerchantOrganizationService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "merchants.update");
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
-    const password = assertPassword((body as Record<string, unknown>).password);
+    const input = body as Record<string, unknown>;
+    const cityId = await this.authorize(identity, "merchants.update", typeof input.cityId === "string" ? input.cityId : undefined);
+    const password = assertPassword(input.password);
 
     await beginWithGeographyRetry(this.client, async (tx) => {
       const state = await lockCityGeography(tx, cityId);
@@ -521,11 +544,12 @@ export class MerchantOrganizationService {
     body: unknown,
     requestId: string,
   ) {
-    const cityId = await this.authorize(identity, "merchants.update");
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
-    const storeId = (body as Record<string, unknown>).storeId;
+    const input = body as Record<string, unknown>;
+    const cityId = await this.authorize(identity, "merchants.update", typeof input.cityId === "string" ? input.cityId : undefined);
+    const storeId = input.storeId;
     if (typeof storeId !== "string") {
       throw new AppError(422, "VALIDATION_FAILED", "Invalid storeId");
     }

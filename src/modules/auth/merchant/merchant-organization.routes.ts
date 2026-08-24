@@ -16,10 +16,10 @@ import {
 
 const tag = ["Dashboard — Merchants"];
 
-const createKeys = new Set(["phone", "password", "storeId", "displayName", "status"]);
-const patchKeys = new Set(["displayName", "status"]);
-const passwordKeys = new Set(["password"]);
-const transferKeys = new Set(["storeId"]);
+const createKeys = new Set(["phone", "password", "storeId", "displayName", "name", "status", "cityId", "managerName", "managerPhone", "ownerPhone", "restaurantSupportName", "restaurantSupportPhone", "cashRecipientName", "payoutMethod", "transferCity", "transferRecipientName", "iban", "cardNumber", "otherCardName", "isAgencyAffiliate", "agencyName"]);
+const patchKeys = new Set(["displayName", "status", "cityId"]);
+const passwordKeys = new Set(["password", "cityId"]);
+const transferKeys = new Set(["storeId", "cityId"]);
 
 const parseMerchantBody = async (context: {
   request: Request;
@@ -105,7 +105,9 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
             password: t.String({ minLength: 12, maxLength: 128 }),
             storeId: t.String({ format: "uuid" }),
             displayName: t.Optional(t.Nullable(t.String({ maxLength: 100 }))),
+            name: t.Optional(t.Nullable(t.String({ maxLength: 100 }))), managerName: t.Optional(t.String({ maxLength: 100 })), managerPhone: t.Optional(t.String({ maxLength: 32 })), ownerPhone: t.Optional(t.String({ maxLength: 32 })), restaurantSupportName: t.Optional(t.String({ maxLength: 100 })), restaurantSupportPhone: t.Optional(t.String({ maxLength: 32 })), cashRecipientName: t.Optional(t.String({ maxLength: 100 })), payoutMethod: t.Optional(t.String({ maxLength: 32 })), transferCity: t.Optional(t.String({ maxLength: 100 })), transferRecipientName: t.Optional(t.String({ maxLength: 100 })), iban: t.Optional(t.String({ maxLength: 64 })), cardNumber: t.Optional(t.String({ maxLength: 64 })), otherCardName: t.Optional(t.String({ maxLength: 100 })), isAgencyAffiliate: t.Optional(t.Boolean()), agencyName: t.Optional(t.String({ maxLength: 100 })),
             status: t.Optional(merchantStatus),
+            cityId: t.Optional(t.String({ format: "uuid" })),
           },
           { additionalProperties: false },
         ),
@@ -136,6 +138,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
             storeId: t.Optional(t.String({ format: "uuid" })),
             createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
             createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
+            cityId: t.Optional(t.String({ format: "uuid" })),
           },
           { additionalProperties: false },
         ),
@@ -149,17 +152,17 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
     )
     .get(
       "/api/v1/dashboard/merchants/:accountId",
-      async ({ request, set, params }) =>
+      async ({ request, set, params, query }) =>
         auth.merchants.get(
           await auth.sessions.authenticate(
             bearer(request),
             dashboardContext,
             requestIdOf(set),
           ),
-          params.accountId,
+          params.accountId, query.cityId,
         ),
       {
-        params: accountParam,
+        params: accountParam, query: t.Object({ cityId: t.Optional(t.String({ format: "uuid" })) }, { additionalProperties: false }),
         response: { 200: merchantDto, ...merchantErrors },
         detail: {
           tags: tag,
@@ -188,6 +191,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
           {
             displayName: t.Optional(t.Nullable(t.String({ maxLength: 100 }))),
             status: t.Optional(merchantStatus),
+            cityId: t.Optional(t.String({ format: "uuid" })),
           },
           { additionalProperties: false },
         ),
@@ -219,6 +223,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
         body: t.Object(
           {
             password: t.String({ minLength: 12, maxLength: 128 }),
+            cityId: t.Optional(t.String({ format: "uuid" })),
           },
           { additionalProperties: false },
         ),
@@ -255,6 +260,7 @@ export const merchantOrganizationRoutes = (auth: AuthModule) =>
         body: t.Object(
           {
             storeId: t.String({ format: "uuid" }),
+            cityId: t.Optional(t.String({ format: "uuid" })),
           },
           { additionalProperties: false },
         ),

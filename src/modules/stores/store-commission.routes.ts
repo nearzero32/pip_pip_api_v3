@@ -54,7 +54,7 @@ const historyDto = t.Object({
   changedByEmail: t.Nullable(t.String()),
   changedAt: dateSchema,
 });
-const patchKeys = new Set(["platformCommissionRate", "reason", "note"]);
+const patchKeys = new Set(["platformCommissionRate", "reason", "note", "cityId"]);
 const idempotencyKeyOf = (request: Request) => {
   const key = request.headers.get("idempotency-key");
   if (!key?.trim())
@@ -94,6 +94,7 @@ export const storeCommissionRoutes = (
             commissionRateMax: t.Optional(t.Integer({ minimum: 0, maximum: 100 })),
             createdFrom: t.Optional(t.String({ examples: ["2026-08-01"] })),
             createdTo: t.Optional(t.String({ examples: ["2026-08-16"] })),
+            cityId: t.Optional(uuid),
           },
           { additionalProperties: false },
         ),
@@ -117,7 +118,7 @@ export const storeCommissionRoutes = (
         ),
       {
         params: t.Object({ storeId: uuid }, { additionalProperties: false }),
-        query: t.Object(dashboardListQuery, { additionalProperties: false }),
+        query: t.Object({ ...dashboardListQuery, cityId: t.Optional(uuid) }, { additionalProperties: false }),
         response: {
           200: dashboardPaginated(historyDto),
           ...dashboardDetailErrors,
@@ -132,13 +133,14 @@ export const storeCommissionRoutes = (
     )
     .get(
       "/api/v1/dashboard/store-commissions/:storeId",
-      async ({ request, set, params }) =>
+      async ({ request, set, params, query }) =>
         service.get(
           await authIdentity(auth, request, dashboardContext, requestIdOf(set)),
-          params.storeId,
+          params.storeId, query.cityId,
         ),
       {
         params: t.Object({ storeId: uuid }, { additionalProperties: false }),
+        query: t.Object({ cityId: t.Optional(uuid) }, { additionalProperties: false }),
         response: { 200: commissionDto, ...dashboardDetailErrors, 403: errorResponse },
         detail: {
           tags: ["Dashboard — Store Commissions"],
@@ -168,6 +170,7 @@ export const storeCommissionRoutes = (
               platformCommissionRate: t.Integer({ minimum: 0, maximum: 100 }),
               reason: t.String({ minLength: 1, maxLength: 1000 }),
               note: t.Optional(t.String({ maxLength: 1000 })),
+              cityId: t.Optional(uuid),
             },
             { additionalProperties: true },
           ),

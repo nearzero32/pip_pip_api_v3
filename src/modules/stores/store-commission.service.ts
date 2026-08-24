@@ -1,7 +1,8 @@
 import type { SQL } from "bun";
 import { AppError } from "../../errors/app-error";
 import type { AuthIdentity } from "../auth/sessions/session-service";
-import { requireCityPermission } from "../auth/staff/authorization";
+import { requireCityPermission, requireSuperAdmin } from "../auth/staff/authorization";
+import { assertActiveCity } from "../auth/staff/dashboard-scope";
 import {
   beginOrderCommandIdempotency,
   completeOrderCommandIdempotency,
@@ -108,6 +109,16 @@ const COMMISSION_FROM = `
 export class StoreCommissionService {
   constructor(private client: SQL) {}
 
+  private async authorize(identity: AuthIdentity, permission: "stores.commission.read" | "stores.commission.update", requestedCityId?: string) {
+    if (identity.applicationType === "DASHBOARD" && identity.roles.includes("SUPER_ADMIN") && identity.scopeType === "GLOBAL") {
+      requireSuperAdmin(identity);
+      if (!requestedCityId) throw new AppError(422, "CITY_ID_REQUIRED", "City selection is required");
+      await assertActiveCity(this.client, requestedCityId);
+      return requestedCityId;
+    }
+    return requireCityPermission(this.client, identity, permission);
+  }
+
   async list(
     identity: AuthIdentity,
     input: {
@@ -121,13 +132,10 @@ export class StoreCommissionService {
       sortOrder?: string;
       page?: number;
       limit?: number;
+      cityId?: string;
     },
   ) {
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      "stores.commission.read",
-    );
+    const cityId = await this.authorize(identity, "stores.commission.read", input.cityId);
     const { page, limit } = dashboardPageOf(input.page, input.limit);
     const offset = (page - 1) * limit;
     const filters = parseStoreListQuery(input);
@@ -154,12 +162,8 @@ export class StoreCommissionService {
     );
   }
 
-  async get(identity: AuthIdentity, storeId: string) {
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      "stores.commission.read",
-    );
+  async get(identity: AuthIdentity, storeId: string, requestedCityId?: string) {
+    const cityId = await this.authorize(identity, "stores.commission.read", requestedCityId);
     const [row] = (await this.client.unsafe(
       `select ${COMMISSION_SELECT}
        ${COMMISSION_FROM}
@@ -179,13 +183,10 @@ export class StoreCommissionService {
       limit?: number;
       sortBy?: string;
       sortOrder?: string;
+      cityId?: string;
     },
   ) {
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      "stores.commission.read",
-    );
+    const cityId = await this.authorize(identity, "stores.commission.read", input.cityId);
     const [store] = await this.client<{ id: string }[]>`
       select id::text from stores where id = ${storeId} and city_id = ${cityId}`;
     if (!store) throw new AppError(404, "STORE_NOT_FOUND", "Store not found");
@@ -260,16 +261,12 @@ export class StoreCommissionService {
     idempotencyKeyInput: string,
     requestId: string,
   ) {
-    const cityId = await requireCityPermission(
-      this.client,
-      identity,
-      "stores.commission.update",
-    );
     if (!body || typeof body !== "object" || Array.isArray(body))
       throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     const input = body as Record<string, unknown>;
+    const cityId = await this.authorize(identity, "stores.commission.update", typeof input.cityId === "string" ? input.cityId : undefined);
     for (const key of Object.keys(input)) {
-      if (!["platformCommissionRate", "reason", "note"].includes(key))
+      if (!["platformCommissionRate", "reason", "note", "cityId"].includes(key))
         throw new AppError(422, "VALIDATION_FAILED", "The request is invalid");
     }
     if (!("platformCommissionRate" in input))

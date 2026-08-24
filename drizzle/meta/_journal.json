@@ -372,6 +372,7 @@
       "when": 1786540000012,
       "tag": "0052_driver_management_details",
       "breakpoints": true
-    }
+    },
+    { "idx": 53, "version": "7", "when": 1786540000013, "tag": "0053_merchant_operational_payout_details", "breakpoints": true }
   ]
 }
