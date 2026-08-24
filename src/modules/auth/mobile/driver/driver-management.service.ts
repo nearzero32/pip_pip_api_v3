@@ -235,6 +235,10 @@ export class DriverManagementService {
     const where = `
       ($1::text is null or ph.phone_e164 ilike $1 escape '\\'
         or coalesce(dp.legacy_vehicle_description, '') ilike $1 escape '\\'
+        or coalesce(dp.driver_name, '') ilike $1 escape '\\'
+        or coalesce(dp.alternate_phone, '') ilike $1 escape '\\'
+        or coalesce(dp.vehicle_type, '') ilike $1 escape '\\'
+        or coalesce(dp.vehicle_number, '') ilike $1 escape '\\'
         or ($4::uuid is not null and dp.account_id = $4::uuid))
       and ($2::uuid is null or dp.city_id = $2::uuid)
       and ($3::text is null or dp.operational_status = $3::driver_operational_status)`;
